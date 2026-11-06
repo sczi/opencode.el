@@ -1,0 +1,492 @@
+;;; opencode-session-input.el --- Composing and sending opencode prompts  -*- lexical-binding: t; -*-
+
+;; Copyright (C) 2026  Scott Zimmermann
+
+;; Author: Scott Zimmermann <sczi@disroot.org>
+;; Keywords: internal
+
+;;; Commentary:
+
+;; The prompt of session buffers: attachments, slash commands, and the
+;; agent and model it's sent with.
+
+;;; Code:
+
+(require 'cl-lib)
+(require 'comint)
+(require 'dired)
+(require 'opencode-api)
+(require 'opencode-common)
+(require 'opencode-session-output)
+(require 'project)
+(require 'url-util)
+
+(defvar-local opencode-session-agent nil
+  "Currently active agent for this buffer's session.")
+
+(defvar-local opencode-session-agents nil
+  "List of agents for the current session.
+Buffer local so we can configure models and variants per agent per session.")
+
+(defvar-local opencode--server-agent nil
+  "Id of the agent the server has selected for this buffer's session.")
+
+(defvar-local opencode--temp-files nil
+  "Temporary files to delete after sending or killing a session buffer.")
+
+(defun opencode--selectable-agent-p (agent)
+  "Return non-nil if AGENT can be the agent of a session."
+  (not (equal "subagent" (alist-get 'mode agent))))
+
+(defun opencode-cycle-session-agent ()
+  "Switch to the next agent in `opencode-session-agents'."
+  (interactive)
+  (let* ((id (alist-get 'id opencode-session-agent))
+         (agents opencode-session-agents)
+         (pos (and id (cl-position-if
+                       (lambda (agent)
+                         (string= id (alist-get 'id agent)))
+                       agents))))
+    (when pos
+      (setcar (nthcdr pos agents) opencode-session-agent)
+      (when-let* ((next (seq-find
+                         #'opencode--selectable-agent-p
+                         (append (nthcdr (1+ pos) agents)
+                                 (seq-take agents (1+ pos))))))
+        (setq opencode-session-agent next))))
+  (force-mode-line-update))
+
+(defun opencode--model-ref (model)
+  "Return the Model.Ref for MODEL, a Model.Info."
+  `((id . ,(alist-get 'id model))
+    (providerID . ,(alist-get 'providerID model))))
+
+(defun opencode--find-model (ref)
+  "Return the enabled Model.Info that the Model.Ref REF refers to, or nil."
+  (seq-find (lambda (model)
+              (and (equal (alist-get 'providerID ref) (alist-get 'providerID model))
+                   (equal (alist-get 'id ref) (alist-get 'id model))))
+            opencode-models))
+
+(defun opencode--collect-all-models ()
+  "Collect all models from `opencode-models' as a list.
+Each element is (display-name model-ref provider-id)."
+  (mapcar (lambda (model)
+            (list (alist-get 'name model)
+                  (opencode--model-ref model)
+                  (alist-get 'providerID model)))
+          opencode-models))
+
+(defun opencode--model-variant-p (model variant)
+  "Return non-nil if MODEL, a Model.Info, has a variant with id VARIANT."
+  (seq-find (lambda (candidate)
+              (equal variant (alist-get 'id candidate)))
+            (alist-get 'variants model)))
+
+(defun opencode-select-model ()
+  "Select a model for the current session and agent using completion."
+  (interactive)
+  (unless opencode-session-agent
+    (user-error "not in a session"))
+  (when-let* ((ref (opencode--annotated-completion
+                    "Model: "
+                    (opencode--collect-all-models))))
+    (let ((variant (map-nested-elt opencode-session-agent '(model variant))))
+      (when (opencode--model-variant-p (opencode--find-model ref) variant)
+        (setf (alist-get 'variant ref) variant))
+      (setf (alist-get 'model opencode-session-agent) ref
+            opencode-last-model (copy-alist ref)))))
+
+(defun opencode--current-model ()
+  "Return the active model for this session, as a Model.Info."
+  (opencode--find-model (alist-get 'model opencode-session-agent)))
+
+(defun opencode-select-variant ()
+  "Select a variant for the current model."
+  (interactive)
+  (unless opencode-session-agent
+    (user-error "not in a session"))
+  (let ((variants (alist-get 'variants (opencode--current-model))))
+    (if variants
+        (let ((variant (opencode--annotated-completion
+                        "Variant: "
+                        (cl-loop for variant in variants
+                                 for id = (alist-get 'id variant)
+                                 collect (list id id
+                                               (format "%s" (or (alist-get 'settings variant)
+                                                                "")))))))
+          (setf (alist-get 'model opencode-session-agent)
+                (copy-alist (alist-get 'model opencode-session-agent)))
+          (setf (alist-get 'variant (alist-get 'model opencode-session-agent))
+                variant))
+      (message "No variants"))))
+
+(defun opencode--download-slash-commands (directory &optional force)
+  "Download slash commands for DIRECTORY, unless already downloaded or FORCE."
+  (setf directory (opencode--normalize-directory directory))
+  (when (or force (not (assoc directory opencode--slash-commands-by-directory)))
+    (let ((default-directory directory))
+      (opencode-api-commands commands
+        (setf (alist-get directory opencode--slash-commands-by-directory
+                         nil nil #'string=)
+              commands)))))
+
+(defun opencode-insert-slash-command ()
+  "Insert an opencode slash command."
+  (interactive)
+  (if (= (point) (cdr comint-last-prompt))
+      (let* ((directory (opencode--normalize-directory default-directory))
+             (commands (alist-get directory opencode--slash-commands-by-directory
+                                  nil nil #'string=))
+             (command (opencode--annotated-completion
+                       "Slash command: "
+                       (cl-loop for command in commands
+                                collect (let-alist command
+                                          (list
+                                           .name
+                                           .name
+                                           .description))))))
+        (when command
+          (insert (concat "/" command))))
+    (call-interactively #'self-insert-command)))
+
+(defun opencode--attachable-file-p (file)
+  "Return non-nil if the model can be sent FILE.
+The server silently drops all but directories, text, PDFs and some images."
+  (or (file-directory-p file)
+      (let ((bytes (with-temp-buffer
+                     (set-buffer-multibyte nil)
+                     (insert-file-contents-literally file nil 0 (* 1024 1024))
+                     (buffer-string))))
+        (or (string-match-p "\\`\\(?:\x89PNG\\|\xff\xd8\xff\\|GIF8\\|BM\\|%PDF-\\|RIFF[^z-a]\\{4\\}WEBP\\)"
+                            bytes)
+            (and (not (string-search "\0" bytes))
+                 (not (memq 'eight-bit
+                            (find-charset-string
+                             (decode-coding-string
+                              ;; the size limit can cut the last character in half
+                              (replace-regexp-in-string "[\xc0-\xff][\x80-\xbf]*\\'" "" bytes)
+                              'utf-8 t)))))))))
+
+(defun opencode--insert-label (name part)
+  "Insert a label showing NAME that sends PART with the prompt.
+The label is a single character, so it is deleted as a unit, and undo
+restores it together with PART."
+  (insert (propertize "￼"
+                      'display (propertize name 'face 'markdown-ts-code-span)
+                      'opencode-label-name name
+                      'opencode-part part
+                      'rear-nonsticky t)))
+
+(defun opencode--code-span (text)
+  "Return TEXT as a Markdown code span."
+  (let ((delimiter (make-string (1+ (opencode--longest-backtick-run text)) ?`))
+        (padding (if (or (string-prefix-p "`" text)
+                         (string-suffix-p "`" text))
+                     " "
+                   "")))
+    (concat delimiter padding text padding delimiter)))
+
+(defun opencode--input-text-and-parts (start end)
+  "Return (TEXT . PARTS) for the input between START and END.
+PARTS are those of the labels in the input, which TEXT shows as code."
+  (let ((pos start)
+        chunks
+        parts)
+    (while (< pos end)
+      (if-let* ((name (get-text-property pos 'opencode-label-name)))
+          (progn
+            (push (opencode--code-span name) chunks)
+            (push (get-text-property pos 'opencode-part) parts)
+            (cl-incf pos))
+        (let ((next (next-single-property-change pos 'opencode-part nil end)))
+          (push (buffer-substring-no-properties pos next) chunks)
+          (setq pos next))))
+    (cons (apply #'concat (nreverse chunks))
+          ;; a label yanked twice shares its part
+          (delete-dups (nreverse parts)))))
+
+(defun opencode--file-attachment (file name)
+  "Return a label part attaching FILE as NAME."
+  `(files . ((uri . ,(concat "file://"
+                             (url-hexify-string (expand-file-name file)
+                                                url-path-allowed-chars)))
+             (name . ,name))))
+
+(defun opencode--text-attachment (text name)
+  "Return a label part attaching TEXT as NAME."
+  `(files . ((uri . ,(concat "data:text/plain;base64,"
+                             (base64-encode-string
+                              (encode-coding-string text 'utf-8) t)))
+             (name . ,name))))
+
+(defun opencode--add-file-to-context (file &optional display-name)
+  "Add FILE to context with optional DISPLAY-NAME."
+  (unless (opencode--attachable-file-p file)
+    (user-error "Can't attach %s: unsupported file type" file))
+  (let ((display-name (or display-name
+                          (opencode--relative-path-for-display file))))
+    (opencode--insert-label display-name
+                            (opencode--file-attachment file display-name))
+    (insert " ")))
+
+(defun opencode--image-extension (mime)
+  "Return a file extension for image MIME."
+  (or (cadr (split-string mime "[/;+]" t))
+      "img"))
+
+(defun opencode--yank-image (type data)
+  "Add pasted image DATA of MIME TYPE to the next prompt."
+  (unless (comint-after-pmark-p)
+    (user-error "Images can only be pasted into the current prompt"))
+  (let* ((mime (symbol-name type))
+         (extension (opencode--image-extension mime))
+         (file (make-temp-file "opencode-image-" nil
+                               (concat "." extension))))
+    (condition-case error
+        (progn
+          (let ((coding-system-for-write 'no-conversion))
+            (write-region data nil file nil 'silent))
+          (push file opencode--temp-files)
+          (opencode--add-file-to-context file (file-name-nondirectory file)))
+      (error
+       (ignore-errors (delete-file file))
+       (signal (car error) (cdr error))))))
+
+(defun opencode--delete-temp-files (files)
+  "Delete temporary FILES created by opencode."
+  (dolist (file files)
+    (when (and file (file-exists-p file))
+      (ignore-errors (delete-file file)))))
+
+(defmacro with-last-opencode-session (&rest body)
+  "Run BODY with the last used opencode session buffer active."
+  `(if opencode-last-session-buffer
+       (if (buffer-live-p opencode-last-session-buffer)
+           (with-current-buffer opencode-last-session-buffer
+             (unless (comint-after-pmark-p)
+               (goto-char (point-max)))
+             ,@body)
+         (user-error "Last selected OpenCode session buffer is no longer active"))
+     (user-error "Open an OpenCode session first")))
+
+(defun opencode-add-file (&optional file prompt-directories)
+  "Add a FILE to context, or prompt for file in current project.
+With a prefix argument (PROMPT-DIRECTORIES), show project directories instead of files."
+  (interactive (list nil current-prefix-arg))
+  (with-last-opencode-session
+   (let* ((project (project-current t))
+          (root (project-root project))
+          (all-files (project-files project)))
+     (opencode--add-file-to-context
+      (or file
+          (project--read-file-name
+           project
+           "Add to context"
+           (if prompt-directories
+               (delete root
+                       (delete-dups
+                        (cons
+                         (concat root "./")
+                         (mapcar #'file-name-directory all-files))))
+             all-files)
+           nil
+           'file-name-history))))))
+
+(defun opencode-add-file-dwim ()
+  "If in Dired, add all marked files, or file at point if none marked.
+Otherwise add the current buffer's file.
+Otherwise prompt for file in current project."
+  (interactive)
+  (if (derived-mode-p 'dired-mode)
+      (if-let* ((files (dired-get-marked-files)))
+          (mapc #'opencode-add-file files)
+        (if-let* ((file (dired-get-filename nil t)))
+            (opencode-add-file file)
+          (user-error "No file at point, and no marked files")))
+    (opencode-add-file (buffer-file-name))))
+
+(defun opencode-add-buffer-dwim ()
+  "Add current buffer or prompt for one to add."
+  (interactive)
+  (let ((buffer (if opencode-session-id
+                    (read-buffer "Add to context: ")
+                  (buffer-name))))
+    (with-last-opencode-session
+     (opencode--insert-label
+      buffer
+      (opencode--text-attachment
+       (with-current-buffer buffer
+         (buffer-substring-no-properties (point-min) (point-max)))
+       buffer))
+     (insert " "))))
+
+(defun opencode-add-region ()
+  "Add the active region to context."
+  (interactive)
+  (if (use-region-p)
+      (let ((region (buffer-substring-no-properties (region-beginning)
+                                                    (region-end))))
+        (with-last-opencode-session
+         (let ((name (format "region: %s"
+                             (truncate-string-to-width
+                              region 24 0 nil (truncate-string-ellipsis)))))
+           (opencode--insert-label name (opencode--text-attachment region name)))
+         (insert " ")))
+    (user-error "No active region")))
+
+(defun opencode-add-subagent ()
+  "Insert a subagent mention into the current input."
+  (interactive)
+  (call-interactively #'self-insert-command)
+  (when (comint-after-pmark-p)
+    (let ((subagents (cl-loop for agent in opencode-agents
+                              when (string= "subagent" (alist-get 'mode agent))
+                              collect agent)))
+      (unless subagents
+        (user-error "No subagents available"))
+      (let ((name (opencode--annotated-completion
+                   "Subagent: "
+                   (cl-loop for agent in subagents
+                            collect (let-alist agent
+                                      (list .name .name .description))))))
+        (delete-char -1)
+        (opencode--insert-label (concat "@" name)
+                                `(agents . ((name . ,name))))))))
+
+(defun opencode--adopt-selection (agent model)
+  "Make the local agent and model AGENT and MODEL, if non-nil."
+  (when (and agent (not (equal agent (alist-get 'id opencode-session-agent))))
+    (setq opencode-session-agent
+          (or (seq-find (lambda (candidate)
+                          (equal agent (alist-get 'id candidate)))
+                        opencode-session-agents)
+              ;; a hidden agent
+              `((id . ,agent) (name . ,agent)))))
+  (when model
+    (setf (alist-get 'model opencode-session-agent) (copy-alist model)))
+  (force-mode-line-update))
+
+(defun opencode--send-failed (error-msg)
+  "Display ERROR-MSG of input that wasn't accepted, and go back to a prompt.
+No events will follow to do so."
+  (opencode--insert-error error-msg)
+  (opencode--show-prompt))
+
+(defun opencode--sync-agent-and-model (callback)
+  "Make the server select the local agent and model, then run CALLBACK.
+The server ignores a switch to the same model, but a switch of agent always
+records a message, so that's only done if it differs."
+  (let ((agent (alist-get 'id opencode-session-agent))
+        (model (alist-get 'model opencode-session-agent)))
+    (cl-flet ((sync-model ()
+                (if model
+                    (opencode-api-session-model (opencode-session-id)
+                        `((model . ,model))
+                        _response
+                      :else #'opencode--send-failed
+                      (funcall callback))
+                  (funcall callback))))
+      (if (or (null agent) (equal agent opencode--server-agent))
+          (sync-model)
+        (opencode-api-session-agent (opencode-session-id)
+            `((agent . ,agent))
+            _response
+          :else #'opencode--send-failed
+          (setq opencode--server-agent agent)
+          (sync-model))))))
+
+(defun opencode--unless-session-active (session-id function)
+  "Call FUNCTION unless the server is still running SESSION-ID."
+  (opencode-api-sessions-active
+    active
+    (unless (assq (intern session-id) active)
+      (funcall function))))
+
+(defun opencode--prompt-body (text parts)
+  "Return the body of a prompt with TEXT and the label PARTS."
+  (let ((files (cl-loop for (kind . part) in parts
+                        when (eq kind 'files) collect part))
+        (agents (cl-loop for (kind . part) in parts
+                         when (eq kind 'agents) collect part)))
+    `((text . ,text)
+      ,@(when files `((files . ,(vconcat files))))
+      ,@(when agents `((agents . ,(vconcat agents)))))))
+
+(defun opencode--send-input (_proc string)
+  "Send STRING as input to current opencode session."
+  (opencode--highlight-input)
+  (opencode--output "\n")
+  ;; STRING is the buffer text of the input, where each label is one character
+  (pcase-let ((`(,string . ,extra-parts)
+               (opencode--input-text-and-parts
+                comint-last-input-start
+                (+ comint-last-input-start (length string))))
+              (temp-files opencode--temp-files))
+    (setf opencode--temp-files nil)
+    (cond
+     ((string-prefix-p "/" string)
+      (let ((space-pos (seq-position string ?\s)))
+        (opencode--sync-agent-and-model
+         (lambda ()
+           (opencode-api-session-command (opencode-session-id)
+               `((name . ,(substring string 1 space-pos))
+                 (text . ,(if space-pos
+                              (substring string (1+ space-pos))
+                            "")))
+               _response
+             :else #'opencode--send-failed
+             ;; Commands can just run a callback, then no events follow to do so.
+             (opencode--unless-session-active
+              opencode-session-id
+              (lambda ()
+                (unless (equal opencode-session-status "busy")
+                  (opencode--show-prompt))))))))
+      (opencode--delete-temp-files temp-files))
+     ((string-prefix-p "!" string)
+      (opencode-api-session-shell (opencode-session-id)
+          `((command . ,(substring string 1)))
+          _response
+        :else #'opencode--send-failed)
+      (opencode--delete-temp-files temp-files))
+     (t
+      (opencode--sync-agent-and-model
+       (lambda ()
+         (opencode-api-session-prompt (opencode-session-id)
+             (opencode--prompt-body string extra-parts)
+             _result
+           :else (lambda (error-msg)
+                   (opencode--delete-temp-files temp-files)
+                   (opencode--send-failed error-msg))
+           (opencode--delete-temp-files temp-files))))))))
+
+(defun opencode-session--send-synthetic-input (string)
+  "Send STRING to the current opencode session.
+Preserve any pending input context while sending STRING as a plain prompt."
+  (let* ((process (get-buffer-process (current-buffer)))
+         (pending-prompt (copy-marker (process-mark process) t))
+         (original-point (copy-marker (point) t))
+         (prompt-start (opencode--session-process-position))
+         start
+         end)
+    (unwind-protect
+        (progn
+          (let ((inhibit-read-only t))
+            (save-excursion
+              (goto-char prompt-start)
+              (setq start (point))
+              (insert string)
+              (setq end (point))))
+          (set-marker (process-mark process) end)
+          (let ((comint-last-input-start start)
+                (comint-last-input-end end)
+                (opencode--temp-files nil))
+            (opencode--send-input process string)
+            (opencode--maybe-insert-block-spacing)))
+      (set-marker (process-mark process) pending-prompt)
+      (goto-char original-point)
+      (set-marker pending-prompt nil)
+      (set-marker original-point nil))))
+
+(provide 'opencode-session-input)
+;;; opencode-session-input.el ends here

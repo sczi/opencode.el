@@ -19,9 +19,11 @@
 (require 'magit)
 (require 'opencode-api)
 (require 'opencode-common)
-(require 'opencode-diff-parser)
+(require 'opencode-edit-hooks)
+(require 'opencode-flycheck)
 (require 'opencode-permission)
 (require 'opencode-question)
+(require 'opencode-session-control)
 (require 'opencode-sessions)
 (require 'plz-media-type)
 (require 'plz-event-source)
@@ -190,30 +192,6 @@ Call ON-CONNECT once connected."
   (opencode--fetch-models (lambda () (opencode--fetch-agents on-connect)))
   (message "Connected to %s" opencode-api-url))
 
-(defun opencode-open-project (directory)
-  "Open the session control buffer for the project of DIRECTORY.
-Worktrees of a project share one, and new sessions started from it go in the
-directory it was last opened for."
-  (let* ((directory (file-name-as-directory directory))
-         (default-directory directory))
-    (opencode-api--cached-location
-     (lambda (location)
-       (let-alist location
-         (with-current-buffer
-             (get-buffer-create
-              (format "*OpenCode Sessions: %s*"
-                      (if (equal .project.id "global")
-                          "global"
-                        (file-name-nondirectory
-                         (directory-file-name .project.canonical)))))
-           (unless (derived-mode-p 'opencode-session-control-mode)
-             (opencode-session-control-mode)
-             (push (current-buffer) opencode--session-control-buffers))
-           (setq default-directory directory
-                 opencode-session-control-project-id .project.id)
-           (opencode-sessions-redisplay)
-           (switch-to-buffer (current-buffer))))))))
-
 (defun opencode-reload-locations ()
   "Make the server resolve the project of each directory again.
 Run this after a directory's project changes, such as on `git init', its
@@ -260,214 +238,18 @@ Then open an opencode session in it."
                                  (opencode--time-ago
                                   project 'updated))))))))))
 
-(defvar opencode-event-log-max-lines nil
-  "Maximum number of lines to log in the opencode event log buffer.
-Or nil to disable logging.")
-
-(defun opencode--log-event (type event)
-  "Log EVENT of TYPE to the opencode log buffer."
-  (when opencode-event-log-max-lines
-    (with-current-buffer (get-buffer-create "*opencode-event-log*")
-      (save-excursion
-        (goto-char (point-max))
-        (insert (format "[%s] %s: %s\n"
-                        (format-time-string "%Y-%m-%d %H:%M:%S")
-                        type
-                        event))
-        (opencode--truncate-at-max-lines opencode-event-log-max-lines)))))
-
-(defun opencode--maybe-run-file-edited-hook (session-id tool input metadata)
-  "Record files edited by a completed TOOL call and run per-file hooks.
-INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
-  (dolist (file-ranges
-           (pcase tool
-             ("write"
-              (when-let* ((path (alist-get 'path input)))
-                (list (cons path nil))))
-             ((or "edit" "patch")
-              ;; The patch tool's diff headers have absolute paths, so trust .file
-              (mapcar (lambda (file)
-                        (cons (alist-get 'file file)
-                              (mapcan (lambda (entry) (copy-sequence (cdr entry)))
-                                      (opencode-diff->source-line-ranges
-                                       (alist-get 'patch file)))))
-                      (alist-get 'files metadata)))))
-    (when-let* ((file (opencode--resolve-file-reference (car file-ranges))))
-      (opencode--with-session-buffer session-id
-        (cl-pushnew file opencode--files-edited-this-turn :test #'equal))
-      (run-hook-with-args 'opencode-file-edited-functions
-                          file (cdr file-ranges)))))
-
-(defvar opencode--files-finished-editing-current nil
-  "Current `opencode-files-finished-editing-functions' run context.")
-
-(defvar opencode--files-finished-editing-queue nil
-  "Queued `opencode-files-finished-editing-functions' run contexts.")
-
-(defun opencode-report-diagnostic (message)
-  "Queue diagnostic MESSAGE for the active finished-editing hook."
-  (unless opencode--files-finished-editing-current
-    (error "`opencode-report-diagnostic' called outside a finished-editing hook"))
-  (when (and message (not (string= message "")))
-    (push message
-          (plist-get opencode--files-finished-editing-current :diagnostics))))
-
-(defun opencode-hook-finished ()
-  "Mark the active finished-editing hook as complete."
-  (let ((context opencode--files-finished-editing-current))
-    (unless context
-      (error "`opencode-hook-finished' called outside a finished-editing hook"))
-    (unless (plist-get context :active-hook)
-      (error "`opencode-hook-finished' called without an active hook"))
-    (plist-put context :active-hook nil)
-    (opencode--run-next-files-finished-editing-hook)))
-
-(defun opencode--files-finished-editing-diagnostic-message (diagnostics)
-  "Return a synthetic input message for DIAGNOSTICS."
-  (concat
-   "Diagnostics were reported after editing files. "
-   "Please fix any problems caused by your changes.\n\n"
-   (mapconcat #'identity diagnostics "\n\n")))
-
-(defun opencode--maybe-start-files-finished-editing-hook ()
-  "Start the next queued finished-editing hook run if none is active."
-  (unless opencode--files-finished-editing-current
-    (when opencode--files-finished-editing-queue
-      (let ((context (pop opencode--files-finished-editing-queue)))
-        (setq opencode--files-finished-editing-current context)
-        (opencode--run-next-files-finished-editing-hook)))))
-
-(defun opencode--finish-files-finished-editing-hook-run (context)
-  "Finish finished-editing hook run CONTEXT and send queued diagnostics."
-  (let ((diagnostics (nreverse (plist-get context :diagnostics)))
-        (buffer (plist-get context :session-buffer)))
-    (setq opencode--files-finished-editing-current nil)
-    (when (and diagnostics (buffer-live-p buffer))
-      (with-current-buffer buffer
-        (opencode-session--send-synthetic-input
-         (opencode--files-finished-editing-diagnostic-message diagnostics)))))
-  (opencode--maybe-start-files-finished-editing-hook))
-
-(defun opencode--run-next-files-finished-editing-hook ()
-  "Run the next hook in the active finished-editing context."
-  (let ((context opencode--files-finished-editing-current))
-    (unless context
-      (error "No active finished-editing hook context"))
-    (when-let* ((buffer (plist-get context :session-buffer)))
-      (when (buffer-live-p buffer)
-        (with-current-buffer buffer
-          (if-let* ((hook (car (plist-get context :hooks))))
-              (let (result errored)
-                (plist-put context :hooks (cdr (plist-get context :hooks)))
-                (plist-put context :active-hook hook)
-                (condition-case err
-                    (setq result (funcall hook (plist-get context :files)))
-                  (error
-                   (setq errored t)
-                   (opencode--log-event
-                    "WARNING FINISHED EDITING HOOK"
-                    (format "%S failed: %s" hook (error-message-string err)))
-                   (when (and (eq opencode--files-finished-editing-current context)
-                              (eq (plist-get context :active-hook) hook))
-                     (plist-put context :active-hook nil)
-                     (opencode--run-next-files-finished-editing-hook))))
-                (when (and (not errored)
-                           (not (eq result :opencode-async))
-                           (eq opencode--files-finished-editing-current context)
-                           (eq (plist-get context :active-hook) hook))
-                  (plist-put context :active-hook nil)
-                  (opencode--run-next-files-finished-editing-hook)))
-            (opencode--finish-files-finished-editing-hook-run context)))))))
-
-(defun opencode--maybe-run-files-finished-editing-hook (session-id)
-  "Run `opencode-files-finished-editing-functions' for SESSION-ID's pending files."
-  (opencode--with-session-buffer session-id
-    (when opencode--files-edited-this-turn
-      (let ((files opencode--files-edited-this-turn))
-        (setq opencode--files-edited-this-turn nil)
-        (when-let* ((hooks (append opencode-files-finished-editing-functions
-                                   opencode-project-files-finished-editing-functions)))
-          (setq opencode--files-finished-editing-queue
-                (append opencode--files-finished-editing-queue
-                        (list (list :session-buffer (current-buffer)
-                                    :files files
-                                    :hooks hooks
-                                    :diagnostics nil
-                                    :active-hook nil))))
-          (opencode--maybe-start-files-finished-editing-hook))))))
-
-(defun opencode--indent-files (files)
-  "Indent FILES with Emacs."
-  (dolist (file files)
-    (with-current-buffer (find-file-noselect file)
-      (unless (opencode--indent-sensitive-buffer-p)
-        (let ((inhibit-message t))
-          (revert-buffer t t t)
-          (indent-region (point-min) (point-max)))
-        (when (buffer-modified-p)
-          (message "opencode indented %s" file)
-          (save-buffer))))))
-
-(defun opencode-run-command-diagnostic (command)
-  "Run COMMAND asynchronously and report diagnostics.
-For use within `opencode-files-finished-editing-functions' or
-`opencode-project-files-finished-editing-functions'."
-  (let* ((command-name (car command))
-         (buffer (generate-new-buffer (format "*%s*" command-name)))
-         (command-string (string-join command " ")))
-    (condition-case err
-        (progn
-          (make-process
-           :name command-name
-           :buffer buffer
-           :command command
-           :connection-type 'pipe
-           :noquery t
-           :sentinel
-           (lambda (process _event)
-             (when (memq (process-status process) '(exit signal))
-               (unwind-protect
-                   (unless (zerop (process-exit-status process))
-                     (let ((output (with-current-buffer (process-buffer process)
-                                     (string-trim (buffer-string)))))
-                       (opencode-report-diagnostic
-                        (if (equal output "")
-                            (format "`%s` failed" command-string)
-                          (format "`%s` failed:\n\n%s"
-                                  command-string
-                                  output)))))
-                 (kill-buffer buffer)
-                 (opencode-hook-finished)))))
-          :opencode-async)
-      (error
-       (kill-buffer buffer)
-       (opencode-report-diagnostic
-        (format "Failed to start `%s`: %s"
-                command-string
-                (error-message-string err)))
-       nil))))
-
-(defun opencode--emacs-ert-command ()
-  "Return the batch Emacs command used to test with ERT."
-  (append
-   (list (concat invocation-directory invocation-name) "--batch")
-   (cl-loop for path in (delete-dups (append (list default-directory) load-path nil))
-            when (and (stringp path) (file-directory-p path))
-            append (list "-L" (expand-file-name path)))
-   (cl-loop for file in (directory-files-recursively default-directory
-                                                     "\\(?:-test\\|-tests\\)\\.el\\'")
-            append (list "-l" file))
-   (list "-f" "ert-run-tests-batch-and-exit")))
-
-(defun opencode-uv-pytest (_files)
-  "Run pytest with uv and report diagnostics."
-  (opencode-run-command-diagnostic
-   '("uv" "run" "python3" "-m" "pytest")))
-
-(defun opencode-emacs-ert (_files)
-  "Run ERT and report diagnostics."
-  (opencode-run-command-diagnostic
-   (opencode--emacs-ert-command)))
+(defun opencode-select-session ()
+  "Select and open a session from the current project using completion."
+  (interactive)
+  (opencode-autoconnect
+   (lambda ()
+     (opencode-api--cached-location
+      (lambda (location)
+        (opencode-api-root-sessions-for-project ((map-nested-elt location '(project id)))
+            sessions
+          (opencode--select-sessions "Session: "
+                                     sessions
+                                     (format "No sessions in %s" default-directory))))))))
 
 (defun opencode--selection-change-hook (&optional frame)
   "Hook to remove session for FRAME from the alerted sessions list when it's visited.
@@ -513,14 +295,6 @@ Also prompts for pending questions or permissions if any."
     "form.created" "form.replied" "form.cancelled" "tui.toast.show"
     "command.updated")
   "Types of the events to subscribe to.")
-
-(defun opencode--redisplay-session-control-buffers ()
-  "Refresh all live session control buffers."
-  (setq opencode--session-control-buffers
-        (seq-filter #'buffer-live-p opencode--session-control-buffers))
-  (dolist (buffer opencode--session-control-buffers)
-    (with-current-buffer buffer
-      (opencode-sessions-redisplay))))
 
 (defun opencode--session-finished (session-id)
   "Handle the end of SESSION-ID's execution."
@@ -627,10 +401,13 @@ Also prompts for pending questions or permissions if any."
            (opencode--with-session-buffer .sessionID
              (opencode-session--display-tool-call tool-key)))
           ((session.tool.success session.tool.failed)
-           (opencode-session--tool-finished
-            .sessionID tool-key
-            `((status . ,(if (eq type 'session.tool.success) "completed" "error"))
-              (error . ,.error) (content . ,.content) (metadata . ,.metadata))))
+           (let ((call (opencode-session--tool-finished
+                        .sessionID tool-key
+                        `((status . ,(if (eq type 'session.tool.success) "completed" "error"))
+                          (error . ,.error) (content . ,.content) (metadata . ,.metadata)))))
+             (when (eq type 'session.tool.success)
+               (opencode--maybe-run-file-edited-hook
+                .sessionID (plist-get call :name) (plist-get call :input) .metadata))))
           (session.shell.ended
            (opencode--with-session-buffer .sessionID
              (opencode--insert-shell-output (or .output.output "")

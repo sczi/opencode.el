@@ -15,7 +15,6 @@
 (require 'cl-lib)
 (require 'map)
 (require 'notifications)
-(require 'opencode-flycheck)
 (require 'project)
 (require 'savehist)
 
@@ -44,9 +43,6 @@ When nil or not available, connecting sets it to the server's default model.")
 
 (defvar opencode--event-subscription nil
   "SSE event process for the global event stream.")
-
-(defvar opencode--session-control-buffers nil
-  "List of session control buffers.")
 
 (defun opencode--normalize-directory (directory)
   "Return DIRECTORY as a canonical directory name."
@@ -81,41 +77,6 @@ for title, message, variant (error/warning/info/success), and duration"
 (defcustom opencode-server-password nil
   "Password to connect to opencode server."
   :type 'string
-  :group 'opencode)
-
-(defcustom opencode-file-edited-functions
-  '(opencode--fix-parens
-    opencode--reload-elisp-file)
-  "Hook run after opencode edits a file.
-This is an abnormal hook.  Each function receives two arguments, FILE and
-RANGES, after a completed write, edit, or patch tool call.  FILE is the
-edited file path.  RANGES is a list of (START-LINE . END-LINE) cons cells in
-the post-edit file, or nil when the whole file was written.  For deletion-only
-edits, END-LINE is nil."
-  :type 'hook
-  :group 'opencode)
-
-(defcustom opencode-files-finished-editing-functions
-  '(opencode--indent-files
-    opencode--flycheck-edited-files)
-  "Run hooks after opencode finishes editing files.
-This is an abnormal hook.  Each entry receives one argument, FILES,
-the list of file paths from completed write, edit, or patch tool calls.
-Hooks run when the session becomes idle.  Hooks that finish
-synchronously can just return.  Hooks that finish asynchronously must
-return `:opencode-async' and call `opencode-hook-finished' when done.
-While a hook is active, it may call `opencode-report-diagnostic' zero
-or more times to queue diagnostic messages; all queued diagnostics are
-sent to the session together after all hooks finish."
-  :type 'hook
-  :group 'opencode)
-
-(defcustom opencode-project-files-finished-editing-functions
-  nil
-  "Like `opencode-files-finished-editing-functions', but per-project.
-Designed to be set in `.dir-locals.el'"
-  :local t
-  :type 'hook
   :group 'opencode)
 
 (defcustom opencode-open-session-same-window t
@@ -336,48 +297,39 @@ the optional fourth element is a number to sort by."
        (eq buffer (window-buffer (selected-window)))
        (frame-focus-state (window-frame (selected-window)))))
 
-(defun opencode--reload-elisp-file (file &optional _ranges)
-  "Reload elisp FILE after LLM edits."
-  (when (string-suffix-p ".el" file)
-    (condition-case err
-        (load-file file)
-      (error
-       (message "Error reloading %s after LLM edit: %s" file err)))))
+(defvar-local opencode-session-id nil
+  "Session id for the current opencode session buffer.")
 
-(defvar flycheck-checkers)
+(defvar-local opencode-session-status "idle"
+  "Status of the current opencode session (busy or idle).")
 
-(defun opencode--fix-parens (file &optional _ranges)
-  "Use parinfer to fix parens in FILE after LLM edits."
-  (when (and (or (string-suffix-p ".el" file)
-                 (string-suffix-p ".lisp" file))
-             (require 'parinfer-rust-mode nil t))
-    (declare-function parinfer-rust--set-default-state "parinfer-rust-mode")
-    (declare-function parinfer-rust--execute "parinfer-rust-mode")
-    (defvar parinfer-rust--mode)
-    (with-current-buffer (find-file-noselect file)
-      (revert-buffer t t t)
-      (condition-case nil
-          (check-parens)
-        (error
-         (let ((flycheck-checkers (delq 'parinfer-rust
-                                        (and (boundp 'flycheck-checkers)
-                                             flycheck-checkers))))
-           (parinfer-rust--set-default-state)
-           (let ((parinfer-rust--mode "indent"))
-             (parinfer-rust--execute)))
-         (save-buffer))))))
+(defvar opencode-session-buffers
+  (make-hash-table :test 'equal)
+  "A mapping of session ids to Emacs buffers.")
 
-(defun opencode--indent-sensitive-buffer-p ()
-  "Return non-nil if the current buffer is indentation-sensitive."
-  (derived-mode-p '(python-base-mode
-                    haskell-mode
-                    haskell-ts-mode
-                    fsharp-mode
-                    fsharp-ts-mode
-                    yaml-mode
-                    yaml-ts-mode
-                    nim-mode
-                    nim-ts-mode)))
+(defmacro opencode--with-session-buffer (session-id &rest body)
+  "Run BODY in the live session buffer for SESSION-ID."
+  (declare (indent 1))
+  `(when-let* ((buffer (gethash ,session-id opencode-session-buffers)))
+     (when (buffer-live-p buffer)
+       (with-current-buffer buffer
+         ,@body))))
+
+(defvar opencode-event-log-max-lines nil
+  "Maximum number of lines to log in the opencode event log buffer.
+Or nil to disable logging.")
+
+(defun opencode--log-event (type event)
+  "Log EVENT of TYPE to the opencode log buffer."
+  (when opencode-event-log-max-lines
+    (with-current-buffer (get-buffer-create "*opencode-event-log*")
+      (save-excursion
+        (goto-char (point-max))
+        (insert (format "[%s] %s: %s\n"
+                        (format-time-string "%Y-%m-%d %H:%M:%S")
+                        type
+                        event))
+        (opencode--truncate-at-max-lines opencode-event-log-max-lines)))))
 
 (provide 'opencode-common)
 ;;; opencode-common.el ends here

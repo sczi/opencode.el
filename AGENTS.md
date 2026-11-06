@@ -38,7 +38,7 @@ This codebase uses macro-generated async API calls:
 
 ### Opencode 
 
-The OpenAPI spec for the OpenCode server is in opencode-openapi.json.
+The OpenAPI spec for the OpenCode server is in ~/opencode/packages/protocol/openapi.json
 
 The source code to OpenCode itself is in ~/opencode, if you need to look at it's
 source code to find how it does something, use the explore subagent.

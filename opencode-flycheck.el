@@ -11,6 +11,8 @@
 
 ;;; Code:
 
+(require 'opencode-edit-hooks)
+
 (declare-function flycheck-buffer "flycheck")
 (declare-function flycheck-mode "flycheck" (&optional arg))
 (declare-function flycheck-running-p "flycheck")
@@ -21,8 +23,6 @@
 (declare-function flycheck-error-format "flycheck" (err &optional with-file-name))
 (declare-function flycheck-error-level "flycheck" (err))
 (declare-function flycheck-error-line "flycheck" (err))
-(declare-function opencode-hook-finished "opencode" ())
-(declare-function opencode-report-diagnostic "opencode" (message))
 
 (defvar flycheck-current-errors)
 (defvar flycheck-mode)

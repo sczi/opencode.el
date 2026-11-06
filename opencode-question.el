@@ -25,8 +25,6 @@
 (require 'opencode-common)
 (require 'opencode-sessions)
 
-(declare-function opencode--log-event "opencode")
-
 ;;; Per-question display state (global, since transient is not buffer-local)
 
 (defvar opencode-question--marked nil
@@ -353,6 +351,15 @@ which fetches and queues its pending forms once it's displayed."
             session
           (push session opencode-alerted-sessions)
           (opencode-open-session session))))))
+
+(defun opencode--fetch-pending-forms (session-id)
+  "Queue SESSION-ID's pending forms.
+Events are lost when not connected, so this is the only way to see them."
+  (opencode-api-session-forms (session-id)
+      forms
+    (mapc #'opencode--form-request forms)))
+
+(add-hook 'opencode-session-loaded-functions #'opencode--fetch-pending-forms)
 
 (defun opencode--form-settled (session-id form-id)
   "Clear the pending form FORM-ID of SESSION-ID, which was answered or cancelled."

@@ -224,6 +224,18 @@ which fetches and queues its pending requests once it's displayed."
         session
       (opencode-open-session session))))
 
+(defun opencode--fetch-pending-permissions (session-id)
+  "Queue SESSION-ID's pending permission requests.
+Events are lost when not connected, so this is the only way to see them."
+  (opencode-api-session-permissions (session-id)
+      requests
+    (dolist (request requests)
+      (let-alist request
+        (opencode--permission-request
+         .id .sessionID .action .metadata .resources .save .message)))))
+
+(add-hook 'opencode-session-loaded-functions #'opencode--fetch-pending-permissions)
+
 (defun opencode--permission-label (perm choice)
   "Append a label for CHOICE to the output line of the permission request PERM."
   (when-let* ((marker (plist-get perm :marker))

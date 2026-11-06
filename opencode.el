@@ -296,12 +296,12 @@ Also prompts for pending questions or permissions if any."
     "command.updated")
   "Types of the events to subscribe to.")
 
-(defun opencode--session-finished (session-id)
-  "Handle the end of SESSION-ID's execution."
+(defun opencode--session-finished (session-id &optional interrupted)
+  "Handle the end of SESSION-ID's execution.
+INTERRUPTED means it was interrupted rather than finishing on its own."
   (opencode-session--set-status session-id "idle")
   (opencode--redisplay-session-control-buffers)
-  (unless (opencode--defer-files-finished-editing-hook session-id)
-    (opencode--maybe-run-files-finished-editing-hook session-id))
+  (opencode--maybe-run-files-finished-editing-hook session-id interrupted)
   (opencode-api-session (session-id)
       session
     (opencode--with-session-buffer session-id
@@ -340,9 +340,9 @@ Also prompts for pending questions or permissions if any."
            ;; user interrupted it.
            (if (equal .reason "shutdown")
                (opencode--unless-session-active
-                .sessionID (lambda () (opencode--session-finished .sessionID)))
+                .sessionID (lambda () (opencode--session-finished .sessionID t)))
              (opencode-session--display-error .sessionID "Interrupted")
-             (opencode--session-finished .sessionID)))
+             (opencode--session-finished .sessionID t)))
           (session.execution.failed
            (opencode-session--display-error .sessionID .error.message)
            (opencode--session-finished .sessionID))

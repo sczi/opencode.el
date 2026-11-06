@@ -57,15 +57,6 @@ Designed to be set in `.dir-locals.el'"
 (defvar-local opencode--files-edited-this-turn nil
   "Files edited by opencode during the current turn.")
 
-(defvar-local opencode--skip-files-finished-editing-hook-on-next-idle nil
-  "Non-nil means the next session idle should not run finished-editing hooks.")
-
-(defun opencode--defer-files-finished-editing-hook (session-id)
-  "Return and clear SESSION-ID's next-idle finished-editing hook skip flag."
-  (opencode--with-session-buffer session-id
-    (prog1 opencode--skip-files-finished-editing-hook-on-next-idle
-      (setq opencode--skip-files-finished-editing-hook-on-next-idle nil))))
-
 (defun opencode--maybe-run-file-edited-hook (session-id tool input metadata)
   "Record files edited by a completed TOOL call and run per-file hooks.
 INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
@@ -135,15 +126,19 @@ session supersedes this one."
                      (nreverse diagnostics)))))))))
       (next))))
 
-(defun opencode--maybe-run-files-finished-editing-hook (session-id)
-  "Run `opencode-files-finished-editing-functions' for SESSION-ID's pending files."
+(defun opencode--maybe-run-files-finished-editing-hook (session-id interrupted)
+  "Run `opencode-files-finished-editing-functions' for SESSION-ID's pending files.
+If the session was INTERRUPTED, cancel any running hooks instead, and
+keep the pending files for the next turn that finishes."
   (opencode--with-session-buffer session-id
-    (when opencode--files-edited-this-turn
-      (let ((files opencode--files-edited-this-turn))
-        (setq opencode--files-edited-this-turn nil)
-        (when-let* ((hooks (append opencode-files-finished-editing-functions
-                                   opencode-project-files-finished-editing-functions)))
-          (opencode--run-files-finished-editing-hooks files hooks))))))
+    (if interrupted
+        (setq opencode--files-finished-editing-run nil)
+      (when opencode--files-edited-this-turn
+        (let ((files opencode--files-edited-this-turn))
+          (setq opencode--files-edited-this-turn nil)
+          (when-let* ((hooks (append opencode-files-finished-editing-functions
+                                     opencode-project-files-finished-editing-functions)))
+            (opencode--run-files-finished-editing-hooks files hooks)))))))
 
 (defun opencode-indent-files (files done)
   "Indent FILES with Emacs, then call DONE."

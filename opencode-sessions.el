@@ -468,11 +468,9 @@ Prompts are user messages and shell commands, in order."
 (defun opencode-abort-session ()
   "Abort a busy session and go back to prompt."
   (interactive)
-  (setq opencode--skip-files-finished-editing-hook-on-next-idle t)
   (opencode-api-interrupt-session (opencode-session-id)
       result
     (when (opencode--json-falsy (alist-get 'interrupted result))
-      (setq opencode--skip-files-finished-editing-hook-on-next-idle nil)
       (message "Failed to abort session."))))
 
 (defun opencode-compact-session ()

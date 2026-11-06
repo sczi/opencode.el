@@ -66,6 +66,10 @@ BODY is evaluated inside `(let-alist tool-args ...)'."
 (opencode-define-tool-formatter "shell"
   (format "$ %s" .command))
 
+(opencode-define-tool-formatter "execute"
+    (concat "⚡ Code Mode:\n"
+            (opencode--fenced-block .code "js")))
+
 (opencode-define-tool-formatter "websearch"
   (format "🌐 websearch \"%s\"" .query))
 

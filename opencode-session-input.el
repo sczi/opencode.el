@@ -178,15 +178,6 @@ restores it together with PART."
                       'opencode-part part
                       'rear-nonsticky t)))
 
-(defun opencode--code-span (text)
-  "Return TEXT as a Markdown code span."
-  (let ((delimiter (make-string (1+ (opencode--longest-backtick-run text)) ?`))
-        (padding (if (or (string-prefix-p "`" text)
-                         (string-suffix-p "`" text))
-                     " "
-                   "")))
-    (concat delimiter padding text padding delimiter)))
-
 (defun opencode--input-text-and-parts (start end)
   "Return (TEXT . PARTS) for the input between START and END.
 PARTS are those of the labels in the input, which TEXT shows as code."

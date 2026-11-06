@@ -389,14 +389,14 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
                                    "agent-shell")
       (opencode-session-test--tool "eval" "completed" eval "result")
       (should (opencode-session-test--folded-p "grep \"foo\""))
-      (should (opencode-session-test--folded-p "$ ls"))
-      (should (opencode-session-test--folded-p "$ uname"))
+      (should (opencode-session-test--folded-p "\nls"))
+      (should (opencode-session-test--folded-p "\nuname"))
       (should (opencode-session-test--folded-p "  nil)"))
       (should-not (opencode-session-test--folded-p "eval\n"))
       (should (string-suffix-p
                (concat "grep \"foo\"\n```text\na.el:1\nb.el:2\n```\n\n"
-                       "$ ls\n```text\nls-file\n```\n\n"
-                       "$ uname\n```text\nagent-file\n```\n\n"
+                       "```bash\nls\n```\n```text\nls-file\n```\n\n"
+                       "```bash\nuname\n```\n```text\nagent-file\n```\n\n"
                        "eval\n(progn\n  nil)\n```text\nresult\n```\n\n")
                (buffer-substring-no-properties
                 (point-min) (opencode--session-process-position))))
@@ -481,11 +481,11 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (let ((opencode-shown-outputs nil))
         (funcall run "bad2" "out6" 1))
       ;; Each search stops at the first match, before any later "2" command.
-      (should (opencode-session-test--folded-p "$ good"))
-      (should-not (opencode-session-test--folded-p "$ bad"))
-      (should (opencode-session-test--folded-p "$ killed"))
-      (should-not (opencode-session-test--folded-p "$ good2"))
-      (should (opencode-session-test--folded-p "$ bad2"))
+      (should (opencode-session-test--folded-p "\ngood"))
+      (should-not (opencode-session-test--folded-p "\nbad"))
+      (should (opencode-session-test--folded-p "\nkilled"))
+      (should-not (opencode-session-test--folded-p "\ngood2"))
+      (should (opencode-session-test--folded-p "\nbad2"))
       ;; Only non-zero exits are styled as errors.
       (should (opencode-session-test--error-styled-p "out2"))
       (should-not (opencode-session-test--error-styled-p "out5")))))
@@ -1044,7 +1044,7 @@ A failure or user interrupt shows an error."
                        (state . ((status . "completed")
                                  (input . ((filePath . "x.el")))
                                  (content . (((type . "text") (text . "out"))))))))))))
-      (should (string-search "$ ls" (buffer-string)))
+      (should (string-search "```bash\nls\n```" (buffer-string)))
       (should (string-search "read x.el" (buffer-string))))))
 
 (ert-deftest opencode-session-prompt-body-test ()

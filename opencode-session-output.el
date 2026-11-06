@@ -467,6 +467,17 @@ extra margin line, and the line after a fold would join its first line."
               (overlay-put overlay 'evaporate t))
             (goto-char (max header-end end))))))))
 
+(defun opencode--add-shell-prompt (start)
+  "Display a `$ ' prompt before the shell command in the block at START."
+  (save-excursion
+    (goto-char start)
+    ;; Skip the hidden opening fence line
+    (forward-line 1)
+    (let ((overlay (make-overlay (point) (1+ (point)))))
+      (overlay-put overlay 'before-string
+                   (propertize "$ " 'face 'comint-highlight-prompt))
+      (overlay-put overlay 'evaporate t))))
+
 (defun opencode--insert-tool-block (tool input)
   "Insert TOOL call with INPUT as margin-highlighted block.
 Return a marker at the end of the call, where its output goes."
@@ -479,6 +490,8 @@ Return a marker at the end of the call, where its output goes."
              (skip-chars-backward "\n")
              (point-marker))
       (opencode--maybe-insert-block-spacing)
+      (when (and (equal tool "shell") (alist-get 'command input))
+        (opencode--add-shell-prompt start))
       (when (member tool '("edit" "patch"))
         (opencode--refine-diff-hunks start)
         (opencode--fold start nil (memq (intern tool) opencode-shown-outputs))))))

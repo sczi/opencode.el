@@ -64,7 +64,9 @@ BODY is evaluated inside `(let-alist tool-args ...)'."
      (format " in %s" (or .include .path)))))
 
 (opencode-define-tool-formatter "shell"
-  (format "$ %s" .command))
+  ;; `opencode--insert-tool-block' displays the `$ ' prompt, so it's not
+  ;; parsed as bash or as Markdown math
+  (opencode--fenced-block .command "bash"))
 
 (opencode-define-tool-formatter "execute"
     (concat "⚡ Code Mode:\n"

@@ -57,6 +57,15 @@ When nil or not available, connecting sets it to the server's default model.")
             start (match-end 0)))
     longest))
 
+(defun opencode--code-span (text)
+  "Return TEXT as a Markdown code span."
+  (let ((delimiter (make-string (1+ (opencode--longest-backtick-run text)) ?`))
+        (padding (if (or (string-prefix-p "`" text)
+                         (string-suffix-p "`" text))
+                     " "
+                   "")))
+    (concat delimiter padding text padding delimiter)))
+
 (defun opencode--fenced-block (text &optional language)
   "Return TEXT in a Markdown fenced block labeled LANGUAGE."
   (let* ((text (or text ""))

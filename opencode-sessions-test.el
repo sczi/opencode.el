@@ -24,6 +24,138 @@ for session \"session\" render here."
            (progn ,@body)
          (delete-process process)))))
 
+(defmacro opencode-session-test--with-stubbed-api (active &rest body)
+  "Run BODY with api requests answered, and toasts and alerts discarded.
+Requests for active sessions return ACTIVE, and others a session."
+  (declare (indent 1))
+  `(let ((opencode-toast-function #'ignore)
+         (opencode-alerted-sessions nil)
+         (opencode-file-edited-functions nil)
+         (opencode--session-control-buffers nil))
+     (cl-letf (((symbol-function 'opencode-api--request)
+                (lambda (_method path &rest args)
+                  (funcall (plist-get args :then)
+                           (if (equal path "/api/session/active")
+                               ,active
+                             '((id . "session") (title . "Title")))))))
+       ,@body)))
+
+(defconst opencode-session-test--edit
+  '((path . "opencode-sessions.el") (oldString . "old") (newString . "new"))
+  "Input of an edit tool call.")
+
+(defconst opencode-session-test--questions
+  '((questions . [((question . "One?")) ((question . "Two?")) ((question . "Three?"))]))
+  "Input of a question tool call.")
+
+(defun opencode-session-test--assistant (content &optional id)
+  "Return a completed assistant message with CONTENT, and ID or \"msg_1\"."
+  `((id . ,(or id "msg_1")) (type . "assistant") (agent . "build")
+    (time . ((created . 1) (completed . 2)))
+    (tokens . ((input . 0) (output . 0) (reasoning . 0)
+               (cache . ((read . 0) (write . 0)))))
+    (content . ,content)))
+
+(defun opencode-session-test--output ()
+  "Return the session's output, without pending input."
+  (buffer-substring-no-properties
+   (point-min) (process-mark (get-buffer-process (current-buffer)))))
+
+(defun opencode-session-test--at-prompt-p ()
+  "Return non-nil if the session's output ends with a prompt."
+  (string-suffix-p "> " (opencode-session-test--output)))
+
+(defun opencode-session-test--margin-p (pos)
+  "Return non-nil if POS has a margin."
+  (seq-some (lambda (ov) (overlay-get ov 'line-prefix)) (overlays-at pos)))
+
+(defun opencode-session-test--refontify ()
+  "Refontify the buffer, checking it keeps its text, process mark and point."
+  (let ((text (buffer-substring-no-properties (point-min) (point-max)))
+        (mark (marker-position (process-mark (get-buffer-process (current-buffer)))))
+        (position (point)))
+    (font-lock-ensure)
+    ;; Refontifying code blocks must not clear earlier inline
+    ;; Markdown, even with normal JIT font-lock enabled.
+    (font-lock-flush)
+    (font-lock-ensure)
+    (should (equal text (buffer-substring-no-properties (point-min) (point-max))))
+    (should (= mark (process-mark (get-buffer-process (current-buffer)))))
+    (should (= position (point)))))
+
+(defun opencode-session-test--folded-p (text)
+  "Return non-nil if the block whose first line contains TEXT is folded."
+  (save-excursion
+    (goto-char (point-min))
+    (search-forward text)
+    (eq 'hs (get-char-property (pos-eol) 'invisible))))
+
+(defun opencode-session-test--error-face-p (text)
+  "Return non-nil if TEXT has the `error' face."
+  (save-excursion
+    (goto-char (point-min))
+    (and (search-forward text nil t)
+         (eq 'error (get-char-property (match-beginning 0) 'face)))))
+
+(defun opencode-session-test--error-styled-p (text)
+  "Return non-nil if TEXT has the `error' face and margin, and is visible."
+  (save-excursion
+    (goto-char (point-min))
+    (search-forward text)
+    (let ((pos (match-beginning 0)))
+      (and (eq 'error (get-char-property pos 'face))
+           (not (invisible-p pos))
+           (seq-some (lambda (ov)
+                       (when-let* ((prefix (overlay-get ov 'line-prefix))
+                                   (display (get-text-property 0 'display prefix)))
+                         (eq 'error (get-text-property 0 'face (cadr display)))))
+                     (overlays-at pos))))))
+
+(defun opencode-session-test--delta (type delta &optional ordinal)
+  "Output DELTA of the block of TYPE and ORDINAL, through the event dispatcher."
+  (opencode--handle-message
+   `((type . ,(format "session.%s.delta" type))
+     (data . ((sessionID . "session")
+              (assistantMessageID . "message")
+              (ordinal . ,(or ordinal 0))
+              (delta . ,delta))))))
+
+(defun opencode-session-test--ended (type text &optional ordinal)
+  "End the block of TYPE and ORDINAL with TEXT, through the event dispatcher."
+  (opencode--handle-message
+   `((type . ,(format "session.%s.ended" type))
+     (data . ((sessionID . "session")
+              (assistantMessageID . "message")
+              (ordinal . ,(or ordinal 0))
+              (text . ,text))))))
+
+(defun opencode-session-test--tool (tool status input &optional output call-id exit)
+  "Send the events of the TOOL call with STATUS, INPUT, OUTPUT and EXIT status.
+OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL."
+  (let* ((id (or call-id tool))
+         (data `((sessionID . "session") (assistantMessageID . "message") (id . ,id))))
+    (pcase status
+      ("running"
+       (opencode--handle-message
+        `((type . "session.tool.input.started")
+          (data . ((name . ,tool) ,@data))))
+       (opencode--handle-message
+        `((type . "session.tool.called")
+          (data . ((input . ,input) (executed . :false) ,@data)))))
+      ("completed"
+       (opencode--handle-message
+        `((type . "session.tool.success")
+          (data . ((content . (((type . "text") (text . ,output))))
+                   (metadata . ((exit . ,exit)))
+                   (executed . :false)
+                   ,@data)))))
+      ("error"
+       (opencode--handle-message
+        `((type . "session.tool.failed")
+          (data . ((error . ((type . "unknown") (message . ,output)))
+                   (executed . :false)
+                   ,@data))))))))
+
 (ert-deftest opencode-read-tool-file-location-button-test ()
   "Format read offsets as working file-and-line buttons."
   (let* ((file-directory (file-name-directory
@@ -52,9 +184,7 @@ for session \"session\" render here."
     (font-lock-mode 1)
     (opencode--output "# Heading\n\nSee `opencode-sessions")
     (opencode--output ".el` and *emphasis*.\n\n")
-    (opencode--insert-tool-block
-     "edit" '((path . "opencode-sessions.el")
-              (oldString . "old") (newString . "new")))
+    (opencode--insert-tool-block "edit" opencode-session-test--edit)
     (opencode--output "**Testing button behavior**\n\n")
     (opencode--insert-block-with-margin
      (concat "emacs_eval_elisp:\n"
@@ -63,20 +193,7 @@ for session \"session\" render here."
     (opencode--maybe-insert-block-spacing)
     (opencode--show-prompt)
     (insert "pending input")
-    (let ((text (buffer-substring-no-properties (point-min) (point-max)))
-          (mark (marker-position (process-mark process)))
-          (position (point)))
-      (font-lock-ensure)
-      ;; Refontifying code blocks must not clear earlier inline
-      ;; Markdown, even with normal JIT font-lock enabled.
-      (font-lock-flush)
-      (font-lock-ensure)
-      (should (equal text (buffer-substring-no-properties
-                           (point-min) (point-max))))
-      (should (= mark (marker-position (process-mark process))))
-      (should (= position (point)))
-      (should (equal "pending input" (buffer-substring-no-properties
-                                      mark (point-max)))))
+    (opencode-session-test--refontify)
     (save-excursion
       (goto-char (point-min))
       (search-forward "Heading")
@@ -92,24 +209,20 @@ for session \"session\" render here."
       (search-forward "-old")
       (should (memq 'diff-removed
                     (get-text-property (1- (point)) 'face)))
-      (should (cl-some (lambda (ov) (overlay-get ov 'line-prefix))
-                       (overlays-at (1- (point)))))
+      (should (opencode-session-test--margin-p (1- (point))))
       (search-forward "```")
-      (should-not (cl-some (lambda (ov) (overlay-get ov 'line-prefix))
-                           (overlays-at (- (point) 2))))
+      (should-not (opencode-session-test--margin-p (match-beginning 0)))
       (search-forward "**Testing button behavior**")
       (should (memq 'markdown-ts-bold
-                    (get-text-property (- (point) 27) 'face)))
-      (should (get-char-property (- (point) 27) 'invisible))
+                    (get-text-property (match-beginning 0) 'face)))
+      (should (get-char-property (match-beginning 0) 'invisible))
       (search-forward "(+ 1 2)")
-      (should (cl-some (lambda (ov) (overlay-get ov 'line-prefix))
-                       (overlays-at (1- (point)))))
+      (should (opencode-session-test--margin-p (1- (point))))
       (search-forward "```")
-      (should-not (cl-some (lambda (ov) (overlay-get ov 'line-prefix))
-                           (overlays-at (- (point) 2))))
+      (should-not (opencode-session-test--margin-p (match-beginning 0)))
       (goto-char (point-min))
       (search-forward "> ")
-      (should (get-char-property (- (point) 2) 'invisible)))))
+      (should (get-char-property (match-beginning 0) 'invisible)))))
 
 (ert-deftest opencode-session-label-test ()
   "Show the label name, and send it as code along with the label's part."
@@ -156,17 +269,10 @@ for session \"session\" render here."
       (opencode--insert-tool-block
        "patch"
        '((patchText . "*** Begin Patch\n*** Update File: example.el\n@@\n-old first value\n-old second value\n+new first value\n+new second value\n@@\n-before last value\n+after last value\n*** End Patch")))
-      (let ((text (buffer-substring-no-properties (point-min) (point-max)))
-            (mark (marker-position (process-mark process)))
-            (position (point)))
-        (font-lock-ensure)
-        (font-lock-flush)
-        (font-lock-ensure)
-        (should (equal text (buffer-substring-no-properties (point-min) (point-max))))
-        (should (= mark (process-mark process)))
-        (should (= position (point)))
-        (should (equal "pending input"
-                       (buffer-substring-no-properties mark (point-max)))))
+      (opencode-session-test--refontify)
+      (should (equal "pending input"
+                     (buffer-substring-no-properties (process-mark process)
+                                                     (point-max))))
       (save-excursion
         (goto-char (point-min))
         (should-not (get-char-property (point) 'invisible))
@@ -178,18 +284,16 @@ for session \"session\" render here."
           (should (cl-some
                    (lambda (overlay)
                      (eq (overlay-get overlay 'face) (cdr change)))
-                   (overlays-at (- (point) (length (car change)))))))
+                   (overlays-at (match-beginning 0)))))
         (goto-char (point-min))
         (while (search-forward "@@ -0 +0 @@" nil t)
-          (should (get-char-property (- (point) 11) 'invisible)))))))
+          (should (get-char-property (match-beginning 0) 'invisible)))))))
 
 (ert-deftest opencode-session-diff-line-background-test ()
   "Show diff faces' backgrounds, keeping the code block background elsewhere."
   (with-opencode-session-test-buffer
     (opencode--output "```diff\n-old\n+new\n```\n\n```python\nx = 1\n```\n\n")
-    (font-lock-ensure)
-    (font-lock-flush)
-    (font-lock-ensure)
+    (opencode-session-test--refontify)
     (cl-flet ((check-diff-faces ()
                 (dolist (change '(("old" . diff-removed)
                                   ("new" . diff-added)))
@@ -229,30 +333,8 @@ for session \"session\" render here."
     (insert (opencode--fenced-block "```\ntext\n" "text") "\n")
     (goto-char (point-min))
     (search-forward "text" nil nil 2)
-    (let ((node (treesit-node-at (point) 'markdown)))
-      (while (and node (not (equal (treesit-node-type node) "fenced_code_block")))
-        (setq node (treesit-node-parent node)))
-      (should node))
     (opencode-yank-code-block)
     (should (equal (current-kill 0 t) "```\ntext\n"))))
-
-(defun opencode-session-test--delta (type delta &optional ordinal)
-  "Output DELTA of the block of TYPE and ORDINAL, through the event dispatcher."
-  (opencode--handle-message
-   `((type . ,(format "session.%s.delta" type))
-     (data . ((sessionID . "session")
-              (assistantMessageID . "message")
-              (ordinal . ,(or ordinal 0))
-              (delta . ,delta))))))
-
-(defun opencode-session-test--ended (type text &optional ordinal)
-  "End the block of TYPE and ORDINAL with TEXT, through the event dispatcher."
-  (opencode--handle-message
-   `((type . ,(format "session.%s.ended" type))
-     (data . ((sessionID . "session")
-              (assistantMessageID . "message")
-              (ordinal . ,(or ordinal 0))
-              (text . ,text))))))
 
 (ert-deftest opencode-session-completed-tables-test ()
   "Align completed streamed tables once without disturbing pending input."
@@ -273,8 +355,7 @@ for session \"session\" render here."
         (should (= calls 0))
         (opencode-session-test--delta 'text " prose.\n")
         (should (= calls 1))
-        (let ((output (buffer-substring-no-properties
-                       (point-min) (process-mark process))))
+        (let ((output (opencode-session-test--output)))
           (should (string-match-p "| +7|" output))
           (should (string-suffix-p "Following prose.\n" output)))
         (should (equal (buffer-substring-no-properties
@@ -286,7 +367,7 @@ for session \"session\" render here."
           (search-forward "opencode-sessions.el")
           (should (button-at (1- (point))))
           (search-forward "7|")
-          (should (eq (get-text-property (- (point) 3) 'field) 'output)))
+          (should (eq (get-text-property (match-beginning 0) 'field) 'output)))
         ;; A fenced table is code and must never be aligned.
         (opencode-session-test--delta
          'text "\n```markdown\n| Code | Value |\n| --- | --- |\n| x | y |\n```\n\n")
@@ -315,57 +396,17 @@ for session \"session\" render here."
     (opencode--output "request\n\n")
     (opencode-session-test--delta 'reasoning "\n")
     (opencode-session-test--delta 'reasoning "Thinking")
-    (should (equal (buffer-substring-no-properties
-                    (point-min) (process-mark process))
-                   "request\n\nThinking"))
+    (should (equal (opencode-session-test--output) "request\n\nThinking"))
     (dolist (pos (number-sequence (point-min) (+ (point-min) 8)))
-      (should-not (seq-some (lambda (ov) (overlay-get ov 'line-prefix))
-                            (overlays-at pos))))
-    (should (seq-some (lambda (ov) (overlay-get ov 'line-prefix))
-                      (overlays-at (+ (point-min) 9))))))
-
-(defun opencode-session-test--folded-p (text)
-  "Return non-nil if the block whose first line contains TEXT is folded."
-  (save-excursion
-    (goto-char (point-min))
-    (search-forward text)
-    (eq 'hs (get-char-property (pos-eol) 'invisible))))
-
-(defun opencode-session-test--tool (tool status input &optional output call-id exit)
-  "Send the events of the TOOL call with STATUS, INPUT, OUTPUT and EXIT status.
-OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL."
-  (let* ((id (or call-id tool))
-         (data `((sessionID . "session") (assistantMessageID . "message") (id . ,id))))
-    (pcase status
-      ("running"
-       (opencode--handle-message
-        `((type . "session.tool.input.started")
-          (data . ((name . ,tool) ,@data))))
-       (opencode--handle-message
-        `((type . "session.tool.called")
-          (data . ((input . ,input) (executed . :false) ,@data)))))
-      ("completed"
-       (opencode--handle-message
-        `((type . "session.tool.success")
-          (data . ((content . (((type . "text") (text . ,output))))
-                   (metadata . ((exit . ,exit)))
-                   (executed . :false)
-                   ,@data)))))
-      ("error"
-       (opencode--handle-message
-        `((type . "session.tool.failed")
-          (data . ((error . ((type . "unknown") (message . ,output)))
-                   (executed . :false)
-                   ,@data))))))))
+      (should-not (opencode-session-test--margin-p pos)))
+    (should (opencode-session-test--margin-p (+ (point-min) 9)))))
 
 (ert-deftest opencode-session-folding-test ()
   "Fold reasoning, edit diffs and tool output, but not user shell output."
   (with-opencode-session-test-buffer
     (let ((opencode-shown-outputs '(shell-non-zero error))
           (comint-prompt-read-only t)
-          (edit '((path . "opencode-sessions.el")
-                  (oldString . "old")
-                  (newString . "new")))
+          (edit opencode-session-test--edit)
           (grep '((pattern . "foo")))
           (shell '((command . "ls")))
           (agent-shell '((command . "uname")))
@@ -398,8 +439,7 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
                        "```bash\nls\n```\n```text\nls-file\n```\n\n"
                        "```bash\nuname\n```\n```text\nagent-file\n```\n\n"
                        "eval\n(progn\n  nil)\n```text\nresult\n```\n\n")
-               (buffer-substring-no-properties
-                (point-min) (opencode--session-process-position))))
+               (opencode-session-test--output)))
       (should (eq (get-text-property (point-min) 'field) 'output))
       (goto-char (point-min))
       (search-forward "b.el")
@@ -435,13 +475,10 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
   "`opencode-shown-outputs' picks what starts unfolded; all of it can be folded."
   (with-opencode-session-test-buffer
     (let ((opencode-shown-outputs '(reasoning grep edit))
-          (edit '((path . "opencode-sessions.el")
-                  (oldString . "old")
-                  (newString . "new")))
           (patch '((patchText . "*** Update File: a.el\n@@\n-old\n+new"))))
       (opencode--output "request\n\n")
       (opencode-session-test--delta 'reasoning "Thinking\nmore thoughts")
-      (opencode-session-test--tool "edit" "running" edit)
+      (opencode-session-test--tool "edit" "running" opencode-session-test--edit)
       (opencode-session-test--tool "patch" "running" patch)
       (opencode-session-test--tool "grep" "running" '((pattern . "foo")))
       (opencode-session-test--tool "glob" "running" '((pattern . "*.el")))
@@ -496,12 +533,9 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
     (let ((replay
            (lambda (text)
              (opencode--replay-session-messages
-              `(((id . "msg_1") (type . "assistant") (agent . "build")
-                 (time . ((created . 1) (completed . 2)))
-                 (tokens . ((input . 0) (output . 0) (reasoning . 0)
-                            (cache . ((read . 0) (write . 0)))))
-                 (content . (((type . "reasoning")
-                              (text . ,(concat text "\nmore thoughts")))))))))))
+              (list (opencode-session-test--assistant
+                     `(((type . "reasoning")
+                        (text . ,(concat text "\nmore thoughts"))))))))))
       (let ((opencode-shown-outputs '(reasoning)))
         (funcall replay "Shown"))
       (let ((opencode-shown-outputs nil))
@@ -520,72 +554,43 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
     (should (opencode-session-test--error-face-p "It broke"))
     (should (opencode-session-test--error-face-p "Interrupted"))))
 
-(defun opencode-session-test--error-face-p (text)
-  "Return non-nil if TEXT has the `error' face."
-  (save-excursion
-    (goto-char (point-min))
-    (and (search-forward text nil t)
-         (eq 'error (get-char-property (match-beginning 0) 'face)))))
-
-(defun opencode-session-test--error-styled-p (text)
-  "Return non-nil if TEXT has the `error' face and margin, and is visible."
-  (save-excursion
-    (goto-char (point-min))
-    (search-forward text)
-    (let ((pos (match-beginning 0)))
-      (and (eq 'error (get-char-property pos 'face))
-           (not (invisible-p pos))
-           (seq-some (lambda (ov)
-                       (when-let* ((prefix (overlay-get ov 'line-prefix))
-                                   (display (get-text-property 0 'display prefix)))
-                         (eq 'error (get-text-property 0 'face (cadr display)))))
-                     (overlays-at pos))))))
-
 (ert-deftest opencode-session-tool-error-test ()
-  "Failed calls show their error, including tools that normally hide output."
+  "Failed calls show their error, including tools that normally hide output.
+Unless `error' is not in `opencode-shown-outputs', when they start folded."
   (with-opencode-session-test-buffer
     (let ((opencode-shown-outputs '(error))
           (eval '((expression . "(car 1)")))
-          (edit '((path . "opencode-sessions.el")
-                  (oldString . "old")
-                  (newString . "new"))))
+          (folded-eval '((expression . "(car 2)"))))
       (opencode--output "request\n\n")
       (opencode-session-test--tool "emacs_eval_elisp" "running" eval)
-      (opencode-session-test--tool "edit" "running" edit)
+      (opencode-session-test--tool "edit" "running" opencode-session-test--edit)
       (opencode-session-test--tool "emacs_eval_elisp" "error" eval "Wrong type")
-      (opencode-session-test--tool "edit" "error" edit "oldString not found")
+      (opencode-session-test--tool "edit" "error" opencode-session-test--edit
+                                   "oldString not found")
       (should-not (opencode-session-test--folded-p "(car 1)"))
       (should (opencode-session-test--error-styled-p "Wrong type"))
       ;; The edit's diff is folded, but its error stays visible below it.
       (should (opencode-session-test--folded-p "edit opencode-sessions.el:"))
-      (should (opencode-session-test--error-styled-p "oldString not found")))))
-
-(ert-deftest opencode-session-tool-error-folded-test ()
-  "Errors start folded when `error' is not in `opencode-shown-outputs'."
-  (with-opencode-session-test-buffer
-    (let ((opencode-shown-outputs nil)
-          (eval '((expression . "(car 1)"))))
-      (opencode--output "request\n\n")
-      (opencode-session-test--tool "emacs_eval_elisp" "running" eval)
-      (opencode-session-test--tool "emacs_eval_elisp" "error" eval "Wrong type")
-      (should (opencode-session-test--folded-p "(car 1)")))))
+      (should (opencode-session-test--error-styled-p "oldString not found"))
+      (let ((opencode-shown-outputs nil))
+        (opencode-session-test--tool "emacs_eval_elisp" "running" folded-eval nil "folded")
+        (opencode-session-test--tool "emacs_eval_elisp" "error" folded-eval "Wrong type"
+                                     "folded"))
+      (should (opencode-session-test--folded-p "(car 2)")))))
 
 (ert-deftest opencode-session-tool-error-replay-test ()
   "Replayed failed calls show their error."
   (with-opencode-session-test-buffer
     (let ((opencode-shown-outputs '(error)))
       (opencode--replay-session-messages
-       '(((id . "msg_1") (type . "assistant") (agent . "build")
-          (time . ((created . 1) (completed . 2)))
-          (tokens . ((input . 0) (output . 0) (reasoning . 0)
-                     (cache . ((read . 0) (write . 0)))))
-          (content . (((type . "tool")
-                       (id . "call")
-                       (name . "emacs_eval_elisp")
-                       (state . ((status . "error")
-                                 (input . ((expression . "(car 1)")))
-                                 (error . ((type . "unknown")
-                                           (message . "Wrong type")))))))))))
+       (list (opencode-session-test--assistant
+              '(((type . "tool")
+                 (id . "call")
+                 (name . "emacs_eval_elisp")
+                 (state . ((status . "error")
+                           (input . ((expression . "(car 1)")))
+                           (error . ((type . "unknown")
+                                     (message . "Wrong type"))))))))))
       (should-not (opencode-session-test--folded-p "(car 1)"))
       (should (opencode-session-test--error-styled-p "Wrong type")))))
 
@@ -609,8 +614,7 @@ The first visible output line starts at that hidden fence."
                (goto-char (point-min))
                (search-forward "1 + 2")
                (search-forward "```")
-               (seq-some (lambda (ov) (overlay-get ov 'line-prefix))
-                         (overlays-at (- (point) 3)))))))
+               (opencode-session-test--margin-p (match-beginning 0))))))
       (opencode--output "request\n\n")
       (opencode-session-test--tool "execute" "running" input)
       (should-not (funcall fence-margin-p))
@@ -644,12 +648,10 @@ The first visible output line starts at that hidden fence."
            (fenced (concat "```markdown\n" table "\n```"))
            (messages
             `(((id . "msg_1") (type . "user") (text . ,table))
-              ((id . "msg_2") (type . "assistant") (agent . "build")
-               (time . ((created . 1) (completed . 2)))
-               (tokens . ((input . 0) (output . 0) (reasoning . 0)
-                          (cache . ((read . 0) (write . 0)))))
-               (content . (((type . "text") (text . ,table))
-                           ((type . "text") (text . ,fenced))))))))
+              ,(opencode-session-test--assistant
+                `(((type . "text") (text . ,table))
+                  ((type . "text") (text . ,fenced)))
+                "msg_2"))))
       ;; Capture the request separately to verify it reaches the user
       ;; renderer without going through the table alignment path.
       (cl-letf (((symbol-function 'opencode--replay-user-request)
@@ -662,30 +664,7 @@ The first visible output line starts at that hidden fence."
         (should (string-match-p "|x +| +y|" output))
         (should (string-suffix-p (concat fenced "\n\n") output)))
       (should-not opencode--table-scan-marker)
-      (should (= (process-mark process) (point-max)))
-      (should-not markdown-ts-in-table-mode))))
-
-(defmacro opencode-session-test--with-stubbed-api (active &rest body)
-  "Run BODY with api requests answered, and toasts and alerts discarded.
-Requests for active sessions return ACTIVE, and others a session."
-  (declare (indent 1))
-  `(let ((opencode-toast-function #'ignore)
-         (opencode-alerted-sessions nil)
-         (opencode-file-edited-functions nil)
-         (opencode--session-control-buffers nil))
-     (cl-letf (((symbol-function 'opencode-api--request)
-                (lambda (_method path &rest args)
-                  (funcall (plist-get args :then)
-                           (if (equal path "/api/session/active")
-                               ,active
-                             '((id . "session") (title . "Title")))))))
-       ,@body)))
-
-(defun opencode-session-test--at-prompt-p ()
-  "Return non-nil if the session's output ends with a prompt."
-  (string-suffix-p "> " (buffer-substring-no-properties
-                         (point-min) (process-mark (get-buffer-process
-                                                    (current-buffer))))))
+      (should (= (process-mark process) (point-max))))))
 
 (ert-deftest opencode-session-event-text-deltas-test ()
   "Text is output from its deltas, trimming only the start of the block."
@@ -694,21 +673,16 @@ Requests for active sessions return ACTIVE, and others a session."
     (opencode-session-test--delta 'text "\n\n  Hello")
     (opencode-session-test--delta 'text " world\n")
     (opencode-session-test--ended 'text "\n\n  Hello world\n")
-    (should (equal "request\n\nHello world\n"
-                   (buffer-substring-no-properties
-                    (point-min) (process-mark process))))))
+    (should (equal "request\n\nHello world\n" (opencode-session-test--output)))))
 
 (ert-deftest opencode-session-event-only-ended-text-test ()
   "A block that only has final text, and no deltas, is output once."
   (with-opencode-session-test-buffer
     (opencode--output "request\n\n")
-    (opencode-session-test--delta 'text "First.")
     (opencode-session-test--ended 'text "First.")
     (opencode-session-test--ended 'text "Second." 1)
     (opencode-session-test--ended 'text "  \n" 2)
-    (should (equal "request\n\nFirst.\n\nSecond."
-                   (buffer-substring-no-properties
-                    (point-min) (process-mark process))))))
+    (should (equal "request\n\nFirst.\n\nSecond." (opencode-session-test--output)))))
 
 (ert-deftest opencode-session-event-reasoning-then-text-test ()
   "Text and reasoning number their ordinals separately, so are different blocks."
@@ -718,9 +692,7 @@ Requests for active sessions return ACTIVE, and others a session."
       (opencode-session-test--delta 'reasoning "thinking")
       (opencode-session-test--ended 'reasoning "thinking")
       (opencode-session-test--ended 'text "answer")
-      (should (equal "request\n\nthinking\n\nanswer"
-                     (buffer-substring-no-properties
-                      (point-min) (process-mark process))))
+      (should (equal "request\n\nthinking\n\nanswer" (opencode-session-test--output)))
       (should opencode-last-response-start))))
 
 (ert-deftest opencode-session-event-parallel-tools-test ()
@@ -736,8 +708,7 @@ Call ids are only unique within a step, so they're keyed with the message too."
       (should (string-suffix-p
                (concat "grep \"one\"\n```text\nout-a\n```\n\n"
                        "🔍 grep \"two\"\n```text\nout-b\n```\n\n")
-               (buffer-substring-no-properties
-                (point-min) (process-mark process))))
+               (opencode-session-test--output)))
       (should (zerop (hash-table-count opencode--tool-calls))))))
 
 (ert-deftest opencode-session-event-tool-failed-without-called-test ()
@@ -751,13 +722,8 @@ Call ids are only unique within a step, so they're keyed with the message too."
                   (id . "call") (name . "edit")))))
       (opencode-session-test--tool "edit" "error" nil "Malformed input" "call")
       (should (string-match-p "\\`request\n\nedit\n```text\nMalformed input\n```"
-                              (buffer-substring-no-properties
-                               (point-min) (process-mark process))))
+                              (opencode-session-test--output)))
       (should (opencode-session-test--error-styled-p "Malformed input")))))
-
-(defconst opencode-session-test--questions
-  '((questions . [((question . "One?")) ((question . "Two?")) ((question . "Three?"))]))
-  "Input of a question tool call.")
 
 (ert-deftest opencode-session-event-question-tool-test ()
   "A question tool call is a block, its answers shown from its metadata."
@@ -772,7 +738,7 @@ Call ids are only unique within a step, so they're keyed with the message too."
                   (content . (((type . "text") (text . "User has answered"))))
                   (metadata . ((answers . [["A"] ["B" "C"] []])))
                   (executed . :false)))))
-      (let ((text (buffer-substring-no-properties (point-min) (process-mark process))))
+      (let ((text (opencode-session-test--output)))
         (should (string-search (concat "❓ One?\n❓ Two?\n❓ Three?\n"
                                        "```text\n→ A\n→ B, C\n→ Unanswered\n```")
                                text))
@@ -790,8 +756,7 @@ Call ids are only unique within a step, so they're keyed with the message too."
        "question" "running" opencode-session-test--questions nil "call")
       (opencode-session-test--tool "question" "error" nil "dismissed" "call")
       (should (string-search "❓ Three?\n```text\ndismissed\n```"
-                             (buffer-substring-no-properties
-                              (point-min) (process-mark process))))
+                             (opencode-session-test--output)))
       (should (opencode-session-test--error-styled-p "dismissed")))))
 
 (ert-deftest opencode-session-event-question-after-reasoning-test ()
@@ -873,8 +838,9 @@ A failure or user interrupt shows an error."
        (data . ((sessionID . "session") (agent . "plan")))))
     (should (equal "build" (alist-get 'id opencode-session-agent)))))
 
-(ert-deftest opencode-session-status-indicator-agent-test ()
-  "The mode line never shows nil for an agent."
+(ert-deftest opencode-session-status-indicator-test ()
+  "The mode line never shows nil for an agent.
+The server reports no variant as \"default\", which is no selection."
   (with-opencode-session-test-buffer
     (cl-flet ((indicator (agent)
                 (let ((opencode-session-agent agent))
@@ -882,7 +848,16 @@ A failure or user interrupt shows an error."
       (should (string-search "🤖 Plan" (indicator '((id . "plan") (name . "Plan")))))
       (should (string-search "🤖 plan" (indicator '((id . "plan")))))
       (should (string-search "🤖 -" (indicator '((model . ((id . "m")))))))
-      (should-not (string-search "nil" (indicator nil))))))
+      (should-not (string-search "nil" (indicator nil)))
+      (cl-letf (((symbol-function 'opencode--current-model)
+                 (lambda () '((name . "Model"))))
+                ((symbol-function 'window-width) (lambda () 200)))
+        (should-not (string-search
+                     "default"
+                     (indicator '((id . "a") (model . ((id . "m") (variant . "default")))))))
+        (should (string-search
+                 "Model high"
+                 (indicator '((id . "a") (model . ((id . "m") (variant . "high")))))))))))
 
 (ert-deftest opencode-open-project-buffers-test ()
   "A control buffer is named after the main checkout of its project."
@@ -919,19 +894,6 @@ A failure or user interrupt shows an error."
             (opencode-open-project "/scratch/")
             (should (equal "*OpenCode Sessions: global*" (buffer-name (car buffers)))))
         (mapc #'kill-buffer (delete-dups buffers))))))
-
-(ert-deftest opencode-session-default-variant-test ()
-  "The server reports no variant as \"default\", which is no selection."
-  (with-opencode-session-test-buffer
-    (cl-letf (((symbol-function 'opencode--current-model)
-               (lambda () '((name . "Model"))))
-              ((symbol-function 'window-width) (lambda () 200)))
-      (cl-flet ((indicator (variant)
-                  (let ((opencode-session-agent
-                         `((id . "a") (model . ((id . "m") (variant . ,variant))))))
-                    (opencode--session-status-indicator))))
-        (should-not (string-search "default" (indicator "default")))
-        (should (string-search "Model high" (indicator "high")))))))
 
 (ert-deftest opencode-session-sync-only-what-differs-test ()
   "Switching agent always records a message, so is only done if it differs."
@@ -1095,7 +1057,7 @@ A failure or user interrupt shows an error."
                              (options . (((value . "A") (label . "A")))))
                             ((key . "q1") (title . "Numbers") (description . "Pick numbers")
                              (type . "multiselect") (custom . t)
-                             (options . (((value . "1") (label . "One"))))))))) 
+                             (options . (((value . "1") (label . "One")))))))))
          (opencode-question--questions (opencode--form-questions form))
          (opencode-question--answers '(("1" "custom") ("A"))))
     (should (equal "Pick a letter"

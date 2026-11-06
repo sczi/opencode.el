@@ -67,10 +67,9 @@ isn't focused, reverting edits, and forking the session.
 
 * Installation
 When this package is a bit more stable I'll package it on MELPA, for now install
-from git. This package requires Emacs 31.1 with the =markdown= and
-=markdown-inline= Tree-sitter grammars (install with
-=M-x markdown-ts-mode-install-parsers=), plus [[https://github.com/magit/magit][magit]], [[https://github.com/alphapapa/plz.el][plz]], [[https://github.com/r0man/plz-media-type][plz-media-type]],
-and a bugfix branch of [[https://github.com/sczi/plz-event-source/tree/long-lines-fix][plz-event-source]].
+from git. This package requires Emacs 31.1 with the =markdown= and =markdown-inline=
+Tree-sitter grammars (install with =M-x markdown-ts-mode-install-parsers=), plus
+[[https://github.com/magit/magit][magit]], [[https://github.com/alphapapa/plz.el][plz]], [[https://github.com/r0man/plz-media-type][plz-media-type]], and [[https://github.com/r0man/plz-event-source/][plz-event-source]].
 ** Manual
 
 Clone this repository and add it to your load path.
@@ -254,8 +253,8 @@ and non AI-infected development environment, review and then pull the changes
 from the shared folder.
 
 * Performance
-Make sure you are using my branch of [[https://github.com/sczi/plz-event-source/tree/long-lines-fix][plz-event-source]] with a major performance
-fix, and set both =comint-scroll-show-maximum-output= and
+Make sure you are using [[https://github.com/r0man/plz-event-source/][plz-event-source]] version >0.1.5-pre with a major
+performance fix, and set both =comint-scroll-show-maximum-output= and
 =comint-move-point-for-output= to nil.
 
 * Configuration

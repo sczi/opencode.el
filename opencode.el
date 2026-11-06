@@ -562,10 +562,12 @@ Also prompts for pending questions or permissions if any."
           (session.execution.interrupted
            ;; On a real shutdown the drain resumes after the restart, but the
            ;; server also reports any interrupt without a reason this way, like
-           ;; rejecting a permission, and then nothing follows.
+           ;; rejecting a permission, and then nothing follows.  Otherwise the
+           ;; user interrupted it.
            (if (equal .reason "shutdown")
                (opencode--unless-session-active
                 .sessionID (lambda () (opencode--session-finished .sessionID)))
+             (opencode-session--display-error .sessionID "Interrupted")
              (opencode--session-finished .sessionID)))
           (session.execution.failed
            (opencode-session--display-error .sessionID .error.message)

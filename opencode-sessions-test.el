@@ -508,6 +508,24 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (should-not (opencode-session-test--folded-p "Shown"))
       (should (opencode-session-test--folded-p "Hidden")))))
 
+(ert-deftest opencode-session-replay-idle-test ()
+  "Replayed failed and interrupted executions show an error."
+  (with-opencode-session-test-buffer
+    (opencode--replay-session-messages
+     '(((id . "msg_1") (type . "idle") (outcome . "succeeded"))
+       ((id . "msg_2") (type . "idle") (outcome . "failed")
+        (error . ((type . "unknown") (message . "It broke"))))
+       ((id . "msg_3") (type . "idle") (outcome . "interrupted"))))
+    (should (opencode-session-test--error-face-p "It broke"))
+    (should (opencode-session-test--error-face-p "Interrupted"))))
+
+(defun opencode-session-test--error-face-p (text)
+  "Return non-nil if TEXT has the `error' face."
+  (save-excursion
+    (goto-char (point-min))
+    (and (search-forward text nil t)
+         (eq 'error (get-char-property (match-beginning 0) 'face)))))
+
 (defun opencode-session-test--error-styled-p (text)
   "Return non-nil if TEXT has the `error' face and margin, and is visible."
   (save-excursion
@@ -789,12 +807,13 @@ Call ids are only unique within a step, so they're keyed with the message too."
                                  (search-forward "❓ One?")))))))
 
 (ert-deftest opencode-session-event-execution-test ()
-  "Ending an execution goes back to a prompt, unless it'll resume after a shutdown."
+  "Ending an execution goes back to a prompt, unless it'll resume after a shutdown.
+A failure or user interrupt shows an error."
   (dolist (case '(("session.execution.succeeded" nil t)
-                  ("session.execution.interrupted" ((reason . "user")) t)
+                  ("session.execution.interrupted" ((reason . "user")) t "Interrupted")
                   ("session.execution.interrupted" ((reason . "shutdown")) t)
                   ("session.execution.failed"
-                   ((error . ((type . "unknown") (message . "It broke")))) t)))
+                   ((error . ((type . "unknown") (message . "It broke")))) t "It broke")))
     (with-opencode-session-test-buffer
       (opencode-session-test--with-stubbed-api nil
         (opencode--output "request\n\n")
@@ -804,8 +823,9 @@ Call ids are only unique within a step, so they're keyed with the message too."
            (data . ((sessionID . "session") ,@(cadr case)))))
         (should (equal opencode-session-status "idle"))
         (should (eq (opencode-session-test--at-prompt-p) (caddr case)))
-        (when (equal (car case) "session.execution.failed")
-          (should (string-search "It broke" (buffer-string)))))))
+        (if-let* ((error (cadddr case)))
+            (should (opencode-session-test--error-face-p error))
+          (should-not (string-search "Interrupted" (buffer-string)))))))
   ;; A real shutdown leaves the drain running, to resume after the restart.
   (with-opencode-session-test-buffer
     (opencode-session-test--with-stubbed-api '((session . ((type . "running"))))

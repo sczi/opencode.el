@@ -1499,8 +1499,9 @@ Calls not yet finished are recorded so that later events finish them."
          ("completed" (opencode--insert-compaction-summary .summary))
          ("failed" (opencode--insert-error .error.message))))
       ("idle"
-       (when (equal .outcome "failed")
-         (opencode--insert-error (or .error.message "Session failed")))))))
+       (pcase .outcome
+         ("failed" (opencode--insert-error (or .error.message "Session failed")))
+         ("interrupted" (opencode--insert-error "Interrupted")))))))
 
 (defun opencode--replay-session-messages (messages &optional revert-message-id)
   "Display past session MESSAGES.
@@ -1694,7 +1695,9 @@ Prompts are user messages and shell commands, in order."
 
 (defun opencode--insert-error (message)
   "Insert error MESSAGE in the current session buffer."
-  (opencode--output (propertize message 'face 'error))
+  (let ((start (opencode--session-process-position)))
+    (opencode--output message)
+    (opencode--add-error-face start (opencode--session-process-position)))
   (opencode--output "\n\n"))
 
 (defun opencode-session--display-error (session-id message)

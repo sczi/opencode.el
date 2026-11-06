@@ -62,17 +62,19 @@ BASE-DIRECTORY is used to shorten FILE in the report."
             (file-relative-name file base-directory)
             status)))
 
-(defun opencode-flycheck-edited-files (files)
-  "Run Flycheck on FILES and report diagnostics for the active hook."
-  (when (and files (require 'flycheck nil t))
+(defun opencode-flycheck-edited-files (files done)
+  "Run Flycheck on FILES, then call DONE with the diagnostics."
+  (if (not (and files (require 'flycheck nil t)))
+      (funcall done)
     (let ((base-directory default-directory)
-          (remaining (length files)))
+          (remaining (length files))
+          reports)
       (cl-labels ((finish (report)
                     (when report
-                      (opencode-report-diagnostic report))
+                      (push report reports))
                     (cl-decf remaining)
                     (when (zerop remaining)
-                      (opencode-hook-finished))))
+                      (funcall done (string-join (nreverse reports) "\n")))))
         (dolist (file files)
           (with-current-buffer (find-file-noselect file)
             (revert-buffer t t t)
@@ -110,8 +112,7 @@ BASE-DIRECTORY is used to shorten FILE in the report."
                 (flycheck-stop))
               (add-hook 'flycheck-after-syntax-check-hook after-hook nil t)
               (add-hook 'flycheck-status-changed-functions status-hook nil t)
-              (flycheck-buffer)))))
-      :opencode-async)))
+              (flycheck-buffer))))))))
 
 (provide 'opencode-flycheck)
 ;;; opencode-flycheck.el ends here

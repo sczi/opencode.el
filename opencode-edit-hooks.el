@@ -32,14 +32,17 @@ edits, END-LINE is nil."
 
 (defcustom opencode-files-finished-editing-functions nil
   "Run hooks after opencode finishes editing files.
-This is an abnormal hook.  Each entry receives one argument, FILES,
-the list of file paths from completed write, edit, or patch tool calls.
-Hooks run when the session becomes idle.  Hooks that finish
-synchronously can just return.  Hooks that finish asynchronously must
-return `:opencode-async' and call `opencode-hook-finished' when done.
-While a hook is active, it may call `opencode-report-diagnostic' zero
-or more times to queue diagnostic messages; all queued diagnostics are
-sent to the session together after all hooks finish."
+This is an abnormal hook.  Each entry receives two arguments, FILES and
+DONE.  FILES is the list of file paths from completed write, edit, or
+patch tool calls.  DONE is a function the hook must call exactly once
+when it finishes, either synchronously or asynchronously, optionally
+with a diagnostic message string.
+
+Hooks run in order when the session becomes idle; each starts after the
+previous one calls DONE.  All diagnostics are sent to the session
+together after the last hook finishes.  A new run in the same session
+supersedes a running one, whose remaining hooks and diagnostics are
+dropped."
   :type 'hook
   :group 'opencode)
 
@@ -85,29 +88,8 @@ INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
       (run-hook-with-args 'opencode-file-edited-functions
                           file (cdr file-ranges)))))
 
-(defvar opencode--files-finished-editing-current nil
-  "Current `opencode-files-finished-editing-functions' run context.")
-
-(defvar opencode--files-finished-editing-queue nil
-  "Queued `opencode-files-finished-editing-functions' run contexts.")
-
-(defun opencode-report-diagnostic (message)
-  "Queue diagnostic MESSAGE for the active finished-editing hook."
-  (unless opencode--files-finished-editing-current
-    (error "`opencode-report-diagnostic' called outside a finished-editing hook"))
-  (when (and message (not (string= message "")))
-    (push message
-          (plist-get opencode--files-finished-editing-current :diagnostics))))
-
-(defun opencode-hook-finished ()
-  "Mark the active finished-editing hook as complete."
-  (let ((context opencode--files-finished-editing-current))
-    (unless context
-      (error "`opencode-hook-finished' called outside a finished-editing hook"))
-    (unless (plist-get context :active-hook)
-      (error "`opencode-hook-finished' called without an active hook"))
-    (plist-put context :active-hook nil)
-    (opencode--run-next-files-finished-editing-hook)))
+(defvar-local opencode--files-finished-editing-run nil
+  "Token identifying the session's live finished-editing hook run.")
 
 (defun opencode--files-finished-editing-diagnostic-message (diagnostics)
   "Return a synthetic input message for DIAGNOSTICS."
@@ -116,55 +98,42 @@ INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
    "Please fix any problems caused by your changes.\n\n"
    (mapconcat #'identity diagnostics "\n\n")))
 
-(defun opencode--maybe-start-files-finished-editing-hook ()
-  "Start the next queued finished-editing hook run if none is active."
-  (unless opencode--files-finished-editing-current
-    (when opencode--files-finished-editing-queue
-      (let ((context (pop opencode--files-finished-editing-queue)))
-        (setq opencode--files-finished-editing-current context)
-        (opencode--run-next-files-finished-editing-hook)))))
-
-(defun opencode--finish-files-finished-editing-hook-run (context)
-  "Finish finished-editing hook run CONTEXT and send queued diagnostics."
-  (let ((diagnostics (nreverse (plist-get context :diagnostics)))
-        (buffer (plist-get context :session-buffer)))
-    (setq opencode--files-finished-editing-current nil)
-    (when (and diagnostics (buffer-live-p buffer))
-      (with-current-buffer buffer
-        (opencode-session--send-synthetic-input
-         (opencode--files-finished-editing-diagnostic-message diagnostics)))))
-  (opencode--maybe-start-files-finished-editing-hook))
-
-(defun opencode--run-next-files-finished-editing-hook ()
-  "Run the next hook in the active finished-editing context."
-  (let ((context opencode--files-finished-editing-current))
-    (unless context
-      (error "No active finished-editing hook context"))
-    (when-let* ((buffer (plist-get context :session-buffer)))
-      (when (buffer-live-p buffer)
-        (with-current-buffer buffer
-          (if-let* ((hook (car (plist-get context :hooks))))
-              (let (result errored)
-                (plist-put context :hooks (cdr (plist-get context :hooks)))
-                (plist-put context :active-hook hook)
-                (condition-case err
-                    (setq result (funcall hook (plist-get context :files)))
-                  (error
-                   (setq errored t)
-                   (opencode--log-event
-                    "WARNING FINISHED EDITING HOOK"
-                    (format "%S failed: %s" hook (error-message-string err)))
-                   (when (and (eq opencode--files-finished-editing-current context)
-                              (eq (plist-get context :active-hook) hook))
-                     (plist-put context :active-hook nil)
-                     (opencode--run-next-files-finished-editing-hook))))
-                (when (and (not errored)
-                           (not (eq result :opencode-async))
-                           (eq opencode--files-finished-editing-current context)
-                           (eq (plist-get context :active-hook) hook))
-                  (plist-put context :active-hook nil)
-                  (opencode--run-next-files-finished-editing-hook)))
-            (opencode--finish-files-finished-editing-hook-run context)))))))
+(defun opencode--run-files-finished-editing-hooks (files hooks)
+  "Run HOOKS on FILES in sequence, then send their diagnostics.
+Must be called in a session buffer.  Starting a new run in the same
+session supersedes this one."
+  (let ((buffer (current-buffer))
+        (run (gensym "run"))
+        diagnostics)
+    (setq opencode--files-finished-editing-run run)
+    (cl-labels
+        ((next ()
+           (when (and (buffer-live-p buffer)
+                      (eq run (buffer-local-value
+                               'opencode--files-finished-editing-run buffer)))
+             (with-current-buffer buffer
+               (if-let* ((hook (pop hooks)))
+                   (let* ((called nil)
+                          (done (lambda (&optional diagnostic)
+                                  (unless called
+                                    (setq called t)
+                                    (when (and diagnostic
+                                               (not (string-empty-p diagnostic)))
+                                      (push diagnostic diagnostics))
+                                    (next)))))
+                     (condition-case err
+                         (funcall hook files done)
+                       (error
+                        (opencode--log-event
+                         "WARNING FINISHED EDITING HOOK"
+                         (format "%S failed: %s" hook (error-message-string err)))
+                        (funcall done))))
+                 (setq opencode--files-finished-editing-run nil)
+                 (when diagnostics
+                   (opencode-session--send-synthetic-input
+                    (opencode--files-finished-editing-diagnostic-message
+                     (nreverse diagnostics)))))))))
+      (next))))
 
 (defun opencode--maybe-run-files-finished-editing-hook (session-id)
   "Run `opencode-files-finished-editing-functions' for SESSION-ID's pending files."
@@ -174,17 +143,10 @@ INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
         (setq opencode--files-edited-this-turn nil)
         (when-let* ((hooks (append opencode-files-finished-editing-functions
                                    opencode-project-files-finished-editing-functions)))
-          (setq opencode--files-finished-editing-queue
-                (append opencode--files-finished-editing-queue
-                        (list (list :session-buffer (current-buffer)
-                                    :files files
-                                    :hooks hooks
-                                    :diagnostics nil
-                                    :active-hook nil))))
-          (opencode--maybe-start-files-finished-editing-hook))))))
+          (opencode--run-files-finished-editing-hooks files hooks))))))
 
-(defun opencode-indent-files (files)
-  "Indent FILES with Emacs."
+(defun opencode-indent-files (files done)
+  "Indent FILES with Emacs, then call DONE."
   (dolist (file files)
     (with-current-buffer (find-file-noselect file)
       (unless (opencode--indent-sensitive-buffer-p)
@@ -193,68 +155,101 @@ INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
           (indent-region (point-min) (point-max)))
         (when (buffer-modified-p)
           (message "opencode indented %s" file)
-          (save-buffer))))))
+          (save-buffer)))))
+  (funcall done))
 
-(defun opencode-run-command-diagnostic (command)
-  "Run COMMAND asynchronously and report diagnostics.
+(defcustom opencode-command-diagnostic-timeout 60
+  "Seconds before `opencode-run-command-diagnostic' kills its command.
+Nil means no timeout."
+  :type '(choice (const :tag "No timeout" nil) number)
+  :group 'opencode)
+
+(defun opencode-run-command-diagnostic (command done)
+  "Run COMMAND asynchronously, then call DONE with a diagnostic on failure.
 For use within `opencode-files-finished-editing-functions' or
-`opencode-project-files-finished-editing-functions'."
+`opencode-project-files-finished-editing-functions'.  COMMAND is killed
+after `opencode-command-diagnostic-timeout' seconds."
   (let* ((command-name (car command))
          (buffer (generate-new-buffer (format "*%s*" command-name)))
-         (command-string (string-join command " ")))
+         (command-string (string-join command " "))
+         (timed-out nil)
+         timer)
     (condition-case err
-        (progn
-          (make-process
-           :name command-name
-           :buffer buffer
-           :command command
-           :connection-type 'pipe
-           :noquery t
-           :sentinel
-           (lambda (process _event)
-             (when (memq (process-status process) '(exit signal))
-               (unwind-protect
-                   (unless (zerop (process-exit-status process))
-                     (let ((output (with-current-buffer (process-buffer process)
-                                     (string-trim (buffer-string)))))
-                       (opencode-report-diagnostic
-                        (if (equal output "")
-                            (format "`%s` failed" command-string)
-                          (format "`%s` failed:\n\n%s"
-                                  command-string
-                                  output)))))
-                 (kill-buffer buffer)
-                 (opencode-hook-finished)))))
-          :opencode-async)
+        (let ((process
+               (make-process
+                :name command-name
+                :buffer buffer
+                :command command
+                :connection-type 'pipe
+                :noquery t
+                :sentinel
+                (lambda (process _event)
+                  (when (memq (process-status process) '(exit signal))
+                    (when timer (cancel-timer timer))
+                    (let ((output (with-current-buffer buffer
+                                    (string-trim (buffer-string)))))
+                      (kill-buffer buffer)
+                      (funcall
+                       done
+                       (cond
+                        (timed-out
+                         (format "`%s` timed out after %s seconds:\n\n%s"
+                                 command-string
+                                 opencode-command-diagnostic-timeout
+                                 output))
+                        ((zerop (process-exit-status process)) nil)
+                        ((equal output "")
+                         (format "`%s` failed" command-string))
+                        (t
+                         (format "`%s` failed:\n\n%s" command-string output))))))))))
+          ;; Commands that prompt for input fail instead of hanging
+          (process-send-eof process)
+          (when opencode-command-diagnostic-timeout
+            (setq timer (run-at-time opencode-command-diagnostic-timeout nil
+                                     (lambda ()
+                                       (when (process-live-p process)
+                                         (setq timed-out t)
+                                         (delete-process process)))))))
       (error
        (kill-buffer buffer)
-       (opencode-report-diagnostic
-        (format "Failed to start `%s`: %s"
-                command-string
-                (error-message-string err)))
-       nil))))
+       (funcall done (format "Failed to start `%s`: %s"
+                             command-string
+                             (error-message-string err)))))))
 
 (defun opencode--emacs-ert-command ()
   "Return the batch Emacs command used to test with ERT."
   (append
-   (list (concat invocation-directory invocation-name) "--batch")
+   (list (concat invocation-directory invocation-name) "--batch"
+         ;; Use this Emacs's tree-sitter grammars instead of prompting to install
+         "--eval"
+         (prin1-to-string
+          `(setq treesit-auto-install-grammar 'never
+                 treesit-extra-load-path
+                 ',(cons (expand-file-name "tree-sitter" user-emacs-directory)
+                         (bound-and-true-p treesit-extra-load-path)))))
    (cl-loop for path in (delete-dups (append (list default-directory) load-path nil))
             when (and (stringp path) (file-directory-p path))
             append (list "-L" (expand-file-name path)))
    (cl-loop for file in (directory-files-recursively default-directory
                                                      "\\(?:-test\\|-tests\\)\\.el\\'")
+            ;; Skip Flycheck's temporary copies, which may vanish before loading
+            unless (string-prefix-p "flycheck_" (file-name-nondirectory file))
             append (list "-l" file))
-   (list "-f" "ert-run-tests-batch-and-exit")))
+   ;; Set after loading, since libraries like dbus call `read-event' on load
+   (list "--eval" "(setq inhibit-interaction t)"
+         "-f" "ert-run-tests-batch-and-exit")))
 
-(defun opencode-uv-pytest (_files)
-  "Run pytest with uv and report diagnostics."
+(defun opencode-uv-pytest (_files done)
+  "Run pytest with uv, then call DONE with any diagnostics."
   (opencode-run-command-diagnostic
-   '("uv" "run" "python3" "-m" "pytest")))
+   '("uv" "run" "python3" "-m" "pytest")
+   done))
 
-(defun opencode-emacs-ert (_files)
-  "Run ERT and report diagnostics."
+(defun opencode-emacs-ert (_files done)
+  "Run ERT, then call DONE with any diagnostics."
   (opencode-run-command-diagnostic
-   (opencode--emacs-ert-command)))
+   (opencode--emacs-ert-command)
+   done))
 
 (defun opencode--reload-elisp-file (file &optional _ranges)
   "Reload elisp FILE after LLM edits."

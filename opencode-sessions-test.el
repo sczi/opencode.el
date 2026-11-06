@@ -736,15 +736,57 @@ Call ids are only unique within a step, so they're keyed with the message too."
                                (point-min) (process-mark process))))
       (should (opencode-session-test--error-styled-p "Malformed input")))))
 
+(defconst opencode-session-test--questions
+  '((questions . [((question . "One?")) ((question . "Two?")) ((question . "Three?"))]))
+  "Input of a question tool call.")
+
 (ert-deftest opencode-session-event-question-tool-test ()
-  "A question tool call has no block of its own, even when it's dismissed."
+  "A question tool call is a block, its answers shown from its metadata."
   (with-opencode-session-test-buffer
-    (opencode--output "request\n\n")
-    (opencode-session-test--tool "question" "running" '((questions)) nil "call")
-    (opencode-session-test--tool "question" "error" nil "dismissed" "call")
-    (should (equal "request\n\n"
-                   (buffer-substring-no-properties
-                    (point-min) (process-mark process))))))
+    (let ((opencode-shown-outputs '(question)))
+      (opencode--output "request\n\n")
+      (opencode-session-test--tool
+       "question" "running" opencode-session-test--questions nil "call")
+      (opencode--handle-message
+       '((type . "session.tool.success")
+         (data . ((sessionID . "session") (assistantMessageID . "message") (id . "call")
+                  (content . (((type . "text") (text . "User has answered"))))
+                  (metadata . ((answers . [["A"] ["B" "C"] []])))
+                  (executed . :false)))))
+      (let ((text (buffer-substring-no-properties (point-min) (process-mark process))))
+        (should (string-search (concat "❓ One?\n❓ Two?\n❓ Three?\n"
+                                       "```text\n→ A\n→ B, C\n→ Unanswered\n```")
+                               text))
+        (should-not (string-search "User has answered" text)))
+      (should-not (invisible-p (save-excursion
+                                 (goto-char (point-min))
+                                 (search-forward "→ A")))))))
+
+(ert-deftest opencode-session-event-question-tool-dismissed-test ()
+  "A dismissed question tool call shows its error."
+  (with-opencode-session-test-buffer
+    (let ((opencode-shown-outputs '(error)))
+      (opencode--output "request\n\n")
+      (opencode-session-test--tool
+       "question" "running" opencode-session-test--questions nil "call")
+      (opencode-session-test--tool "question" "error" nil "dismissed" "call")
+      (should (string-search "❓ Three?\n```text\ndismissed\n```"
+                             (buffer-substring-no-properties
+                              (point-min) (process-mark process))))
+      (should (opencode-session-test--error-styled-p "dismissed")))))
+
+(ert-deftest opencode-session-event-question-after-reasoning-test ()
+  "Reasoning before a question tool call is folded without the question."
+  (with-opencode-session-test-buffer
+    (let ((opencode-shown-outputs '(question)))
+      (opencode--output "request\n\n")
+      (opencode-session-test--delta 'reasoning "thinking")
+      (opencode-session-test--tool
+       "question" "running" opencode-session-test--questions nil "call")
+      (opencode-session-test--delta 'reasoning "more thinking" 1)
+      (should-not (invisible-p (save-excursion
+                                 (goto-char (point-min))
+                                 (search-forward "❓ One?")))))))
 
 (ert-deftest opencode-session-event-execution-test ()
   "Ending an execution goes back to a prompt, unless it'll resume after a shutdown."

@@ -296,19 +296,9 @@ On confirm, replies to the server.  On reject or dismiss, rejects."
         opencode-question--handled nil)
   (opencode-question--show-current))
 
-(defun opencode--output-questions (buffer questions)
-  "Output QUESTIONS to BUFFER with ❓ prefix for each question."
-  (when (and (buffer-live-p buffer)
-             (get-buffer-process buffer))
-    (with-current-buffer buffer
-      (opencode--maybe-insert-block-spacing)
-      (opencode--output (opencode--format-questions questions))
-      (opencode--output "\n"))))
-
 (defun opencode--queue-questions (buffer pending)
   "Queue the questions PENDING in BUFFER and prompt if active."
   (let ((questions (plist-get pending :questions)))
-    (opencode--output-questions buffer questions)
     (if (opencode--buffer-active-p buffer)
         (opencode--prompt-questions pending)
       (opencode--toast-show `((title . "OpenCode Questions")

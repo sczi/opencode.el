@@ -24,7 +24,7 @@
 (require 'vtable)
 (require 'yank-media)
 
-(defcustom opencode-shown-outputs '(shell-non-zero error edit patch)
+(defcustom opencode-shown-outputs '(shell-non-zero error edit patch question)
   "Outputs in session buffers to show unfolded when first displayed.
 A list of symbols: `reasoning', a tool name like `shell' or `grep',
 `shell-non-zero' to show shell tool output only if the command failed, or
@@ -1163,12 +1163,10 @@ send the whole block once it's done."
   (concat message-id "/" id))
 
 (defun opencode-session--display-tool-call (key)
-  "Start a block for the tool call KEY, unless it has one or is a question.
-Questions are displayed by their form."
+  "Start a block for the tool call KEY, unless it has one."
   (let* ((call (gethash key opencode--tool-calls))
          (name (or (plist-get call :name) "tool")))
-    (unless (or (plist-get call :marker)
-                (equal name "question"))
+    (unless (plist-get call :marker)
       (opencode-session--start-block 'tool key)
       (puthash key
                (plist-put call :marker
@@ -1349,9 +1347,16 @@ INFO has an optional status and exit, like the metadata of a tool call."
         (and (memq 'shell-non-zero opencode-shown-outputs)
              (opencode--shell-failed-p tool .metadata)))))
 
-(defconst opencode--ignore-output-for-tools '("edit" "write" "patch"
-                                              "question" "todowrite")
+(defconst opencode--ignore-output-for-tools '("edit" "write" "patch" "todowrite")
   "Don't show the output for these tools.")
+
+(defun opencode--format-question-answers (answers)
+  "Return ANSWERS of a question tool call, one line per question."
+  (mapconcat (lambda (answer)
+               (concat "→ " (if (seq-empty-p answer)
+                                "Unanswered"
+                              (string-join answer ", "))))
+             answers "\n"))
 
 (defun opencode--tool-content-text (content)
   "Return the text items of tool output CONTENT joined, or nil if there are none."
@@ -1379,10 +1384,12 @@ non-zero status are highlighted with the `error' face."
                call-end
                (marker-position call-end))
       (let* ((failed (string= .status "error"))
-             (output (if failed
-                         .error.message
-                       (and (not (member tool opencode--ignore-output-for-tools))
-                            (opencode--tool-content-text .content))))
+             (output (cond
+                      (failed .error.message)
+                      ((and (string= tool "question") .metadata.answers)
+                       (opencode--format-question-answers .metadata.answers))
+                      ((not (member tool opencode--ignore-output-for-tools))
+                       (opencode--tool-content-text .content))))
              (errorp (or failed (opencode--shell-failed-p tool .metadata))))
         (when output
           (let ((inhibit-read-only t)

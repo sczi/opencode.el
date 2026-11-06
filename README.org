@@ -27,9 +27,10 @@ of advantages over the official TUI:
        edits to emacs lisp and common lisp files
      + reload file after edits to emacs lisp files
    - calls =opencode-files-finished-editing-functions= with a list of all files
-     edited in the last assistant turn. The default hook will fix indentation
-     with =indent-region= and run flycheck and report all errors and warnings in
-     the edited files to the LLM if you have flycheck setup.
+     edited in the last assistant turn. Add =opencode-indent-files= here to
+     automatically fix indentation with =indent-region=, and
+     =opencode-flycheck-edited-files= to run flycheck and report all errors and
+     warnings in the edited files to the LLM.
 
      You can set project specific hooks in
      =opencode-project-files-finished-editing-functions=. We include

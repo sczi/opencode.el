@@ -62,7 +62,7 @@ BASE-DIRECTORY is used to shorten FILE in the report."
             (file-relative-name file base-directory)
             status)))
 
-(defun opencode--flycheck-edited-files (files)
+(defun opencode-flycheck-edited-files (files)
   "Run Flycheck on FILES and report diagnostics for the active hook."
   (when (and files (require 'flycheck nil t))
     (let ((base-directory default-directory)

@@ -30,9 +30,7 @@ edits, END-LINE is nil."
   :type 'hook
   :group 'opencode)
 
-(defcustom opencode-files-finished-editing-functions
-  '(opencode--indent-files
-    opencode--flycheck-edited-files)
+(defcustom opencode-files-finished-editing-functions nil
   "Run hooks after opencode finishes editing files.
 This is an abnormal hook.  Each entry receives one argument, FILES,
 the list of file paths from completed write, edit, or patch tool calls.
@@ -185,7 +183,7 @@ INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
                                     :active-hook nil))))
           (opencode--maybe-start-files-finished-editing-hook))))))
 
-(defun opencode--indent-files (files)
+(defun opencode-indent-files (files)
   "Indent FILES with Emacs."
   (dolist (file files)
     (with-current-buffer (find-file-noselect file)

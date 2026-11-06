@@ -362,6 +362,7 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
   "Fold reasoning, edit diffs and tool output, but not user shell output."
   (with-opencode-session-test-buffer
     (let ((opencode-shown-outputs '(shell-non-zero error))
+          (comint-prompt-read-only t)
           (edit '((path . "opencode-sessions.el")
                   (oldString . "old")
                   (newString . "new")))
@@ -601,19 +602,19 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
   "Output's margin covers a fenced call's closing fence, but only once it's there.
 The first visible output line starts at that hidden fence."
   (with-opencode-session-test-buffer
-    (let ((input '((expression . "(+ 1 2)")))
+    (let ((input '((code . "1 + 2")))
           (fence-margin-p
            (lambda ()
              (save-excursion
                (goto-char (point-min))
-               (search-forward "(+ 1 2)")
+               (search-forward "1 + 2")
                (search-forward "```")
                (seq-some (lambda (ov) (overlay-get ov 'line-prefix))
                          (overlays-at (- (point) 3)))))))
       (opencode--output "request\n\n")
-      (opencode-session-test--tool "emacs_eval_elisp" "running" input)
+      (opencode-session-test--tool "execute" "running" input)
       (should-not (funcall fence-margin-p))
-      (opencode-session-test--tool "emacs_eval_elisp" "completed" input "3")
+      (opencode-session-test--tool "execute" "completed" input "3")
       (should (funcall fence-margin-p)))))
 
 (ert-deftest opencode-session-table-alignment-context-test ()

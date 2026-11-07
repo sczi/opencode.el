@@ -193,22 +193,34 @@ the optional fourth element is a number to sort by."
             for question-text = (alist-get 'question q)
             collect (concat "❓ " question-text "\n"))))
 
+(defvar-local opencode--project-root nil
+  "Cons of `default-directory' and the project root found from it.")
+
+(defun opencode--project-root ()
+  "Return the expanded root of the current project, or nil if none.
+It's cached, as finding the project is costly and file references are
+resolved for all output."
+  (unless (equal (car opencode--project-root) default-directory)
+    (setq opencode--project-root
+          (cons default-directory
+                (when-let* ((project (project-current)))
+                  (file-name-as-directory
+                   (expand-file-name (project-root project)))))))
+  (cdr opencode--project-root))
+
 (defun opencode--relative-path-for-display (file)
   "Return FILE relative to project root when possible."
   (when file
-    (let* ((project (project-current))
-           (root (if project
-                     (project-root project)
-                   default-directory)))
+    (let ((root (or (opencode--project-root)
+                    (expand-file-name default-directory))))
       (if (and (file-name-absolute-p file)
-               root
-               (file-in-directory-p file root))
+               (string-prefix-p root (expand-file-name file)))
           (file-relative-name file root)
         file))))
 
 (defun opencode--resolve-file-reference (file)
   "Return absolute path for FILE, or nil if no file exists."
-  (let ((project (project-current)))
+  (let ((root (opencode--project-root)))
     (seq-find (lambda (candidate)
                 (and candidate
                      (file-exists-p candidate)
@@ -216,8 +228,8 @@ the optional fourth element is a number to sort by."
               (delete-dups
                (delq nil
                      (list (and (file-name-absolute-p file) file)
-                           (when project
-                             (expand-file-name file (project-root project)))
+                           (when root
+                             (expand-file-name file root))
                            (expand-file-name file default-directory)))))))
 
 (defun opencode--visit-file-location (location)

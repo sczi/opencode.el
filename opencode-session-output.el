@@ -188,6 +188,9 @@ properties and markers survive on unchanged text."
     (with-silent-modifications
       (put-text-property beg end 'read-only t))))
 
+(defvar opencode--table-query nil
+  "Compiled query for Markdown tables, compiled on first use.")
+
 (defun opencode--next-table (beg end)
   "Return the first Markdown table ending after BEG and starting before END."
   ;; Querying the tree reparses it, which is costly in large sessions, and
@@ -196,8 +199,14 @@ properties and markers survive on unchanged text."
           (goto-char beg)
           (search-forward "|" end t))
     (seq-find (lambda (node) (> (treesit-node-end node) beg))
-              (treesit-query-capture 'markdown '((pipe_table) @table)
-                                     beg end t))))
+              ;; An uncompiled query is recompiled on every call.
+              (treesit-query-capture
+               'markdown
+               (or opencode--table-query
+                   (setq opencode--table-query
+                         (treesit-query-compile
+                          'markdown '((pipe_table) @table) t)))
+               beg end t))))
 
 (defun opencode--align-finished-tables (&optional finished)
   "Align tables whose end is confirmed by subsequent complete output lines.

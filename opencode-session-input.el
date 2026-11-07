@@ -61,12 +61,26 @@ Buffer local so we can configure models and variants per agent per session.")
   `((id . ,(alist-get 'id model))
     (providerID . ,(alist-get 'providerID model))))
 
+(defvar opencode--models-by-ref nil
+  "Cons of `opencode-models' and a hash table indexing it by Model.Ref.
+The mode line looks up the current model on every update.")
+
+(defun opencode--models-by-ref ()
+  "Return a hash table of `opencode-models' by (providerID . id)."
+  (unless (and opencode--models-by-ref
+               (eq (car opencode--models-by-ref) opencode-models))
+    (let ((table (make-hash-table :test #'equal)))
+      (dolist (model opencode-models)
+        (let ((key (cons (alist-get 'providerID model) (alist-get 'id model))))
+          (unless (gethash key table)
+            (puthash key model table))))
+      (setq opencode--models-by-ref (cons opencode-models table))))
+  (cdr opencode--models-by-ref))
+
 (defun opencode--find-model (ref)
   "Return the enabled Model.Info that the Model.Ref REF refers to, or nil."
-  (seq-find (lambda (model)
-              (and (equal (alist-get 'providerID ref) (alist-get 'providerID model))
-                   (equal (alist-get 'id ref) (alist-get 'id model))))
-            opencode-models))
+  (gethash (cons (alist-get 'providerID ref) (alist-get 'id ref))
+           (opencode--models-by-ref)))
 
 (defun opencode--collect-all-models ()
   "Collect all models from `opencode-models' as a list.

@@ -188,6 +188,17 @@ properties and markers survive on unchanged text."
     (with-silent-modifications
       (put-text-property beg end 'read-only t))))
 
+(defun opencode--next-table (beg end)
+  "Return the first Markdown table ending after BEG and starting before END."
+  ;; Querying the tree reparses it, which is costly in large sessions, and
+  ;; there can't be a table without a pipe.
+  (when (save-excursion
+          (goto-char beg)
+          (search-forward "|" end t))
+    (seq-find (lambda (node) (> (treesit-node-end node) beg))
+              (treesit-query-capture 'markdown '((pipe_table) @table)
+                                     beg end t))))
+
 (defun opencode--align-finished-tables (&optional finished)
   "Align tables whose end is confirmed by subsequent complete output lines.
 If FINISHED is non-nil, also align a table at the end of the text part.
@@ -198,47 +209,45 @@ Retain one line of context for headers whose delimiter has yet to arrive."
         ;; Pending comint input is not part of the assistant's Markdown.
         (narrow-to-region (point-min) (opencode--session-process-position))
         (let* ((inhibit-field-text-motion t)
-               (limit (copy-marker (opencode--session-process-position)))
+               (limit (copy-marker (point-max)))
                (complete-end
                 (copy-marker
                  (if finished
                      limit
                    (goto-char limit)
                    (line-beginning-position))))
-               waiting)
+               table waiting)
           (unwind-protect
               (progn
-                (goto-char opencode--table-scan-marker)
-                (while (and (< (point) complete-end) (not waiting))
-                  (let ((node (treesit-node-at (point) 'markdown)))
-                    (while (and node (not (equal (treesit-node-type node) "pipe_table")))
-                      (setq node (treesit-node-parent node)))
-                    ;; At whitespace, `treesit-node-at' can return the table
-                    ;; immediately before point.  Never revisit that table.
-                    (if (and node (< (point) (treesit-node-end node)))
-                        (let ((beg (treesit-node-start node))
-                              (end (treesit-node-end node)))
-                          (if (and (<= end limit)
-                                   (or finished
-                                       (< (save-excursion
-                                            (goto-char end)
-                                            (if (bolp) (point)
-                                              (line-beginning-position 2)))
-                                          complete-end)))
-                              (let ((next (copy-marker end t)))
-                                (unwind-protect
-                                    (progn
-                                      (opencode--align-output-table beg end)
-                                      (goto-char next)
-                                      (set-marker opencode--table-scan-marker next))
-                                  (set-marker next nil)))
-                            (set-marker opencode--table-scan-marker beg)
-                            (setq waiting t)))
-                      (set-marker opencode--table-scan-marker (point))
-                      (forward-line 1))))
-                (when finished
-                  (set-marker opencode--table-scan-marker nil)
-                  (setq opencode--table-scan-marker nil)))
+                (while (and (not waiting)
+                            (setq table (opencode--next-table
+                                         opencode--table-scan-marker
+                                         complete-end)))
+                  (let ((beg (treesit-node-start table))
+                        (end (treesit-node-end table)))
+                    (if (or finished
+                            (< (save-excursion
+                                 (goto-char end)
+                                 (if (bolp) (point)
+                                   (line-beginning-position 2)))
+                               complete-end))
+                        (let ((next (copy-marker end t)))
+                          (unwind-protect
+                              (progn
+                                (opencode--align-output-table beg end)
+                                (set-marker opencode--table-scan-marker next))
+                            (set-marker next nil)))
+                      (set-marker opencode--table-scan-marker beg)
+                      (setq waiting t))))
+                (if finished
+                    (progn
+                      (set-marker opencode--table-scan-marker nil)
+                      (setq opencode--table-scan-marker nil))
+                  (unless waiting
+                    (goto-char complete-end)
+                    (forward-line -1)
+                    (when (> (point) opencode--table-scan-marker)
+                      (set-marker opencode--table-scan-marker (point))))))
             (set-marker limit nil)
             (set-marker complete-end nil)))))))
 

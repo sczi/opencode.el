@@ -29,6 +29,9 @@ When nil or not available, connecting sets it to the server's default model.")
 (defvar opencode--slash-commands-by-directory nil
   "Alist mapping normalized project directories to available slash commands.")
 
+(defvar opencode--skills-by-directory nil
+  "Alist mapping normalized project directories to available skills.")
+
 (defvar opencode--location-by-directory nil
   "Alist mapping normalized directories to their opencode location.")
 
@@ -102,14 +105,14 @@ symbols.  Columns are displayed in list order, required columns first.
 Optional columns are only displayed if the window is wide enough to
 show all columns."
   :type (let ((column '(choice (const title)
-                               (const branch)
-                               (const last-update)
-                               (const created-at)
-                               (const cost)
-                               (const tokens)
-                               (const cache))))
+                        (const branch)
+                        (const last-update)
+                        (const created-at)
+                        (const cost)
+                        (const tokens)
+                        (const cache))))
           `(list (const :required) (repeat ,column)
-                 (const :optional) (repeat ,column)))
+            (const :optional) (repeat ,column)))
   :group 'opencode)
 
 (defconst opencode--apply-patch-file-header-regexp

@@ -54,12 +54,12 @@
     "C-c F" 'opencode-fork-session
     "C-c R" 'opencode-revert-message
     "/" 'opencode-insert-slash-command
-    "@" 'opencode-add-subagent))
+    "@" 'opencode-add-mention))
 
 (with-eval-after-load 'evil
   (declare-function evil-define-key* "evil-core")
   (evil-define-key* 'insert opencode-session-mode-map
-    "@" 'opencode-add-subagent
+    "@" 'opencode-add-mention
     "/" 'opencode-insert-slash-command))
 
 (defvar-local opencode-session-pending-questions nil
@@ -375,6 +375,7 @@ If CALLBACK is given, it will be called with the session after it is initialized
                   mode-line-process '(:eval (opencode--session-status-indicator)))
             (hack-dir-local-variables-non-file-buffer)
             (opencode--download-slash-commands default-directory)
+            (opencode--download-skills default-directory)
             (puthash .id buffer opencode-session-buffers)
             (let ((proc (start-process "dummy" buffer nil)))
               (set-process-query-on-exit-flag proc nil)

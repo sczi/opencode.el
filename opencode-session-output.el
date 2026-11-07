@@ -406,6 +406,15 @@ Return the plist of the call, from `opencode--tool-calls'."
   (setq opencode-session-tokens 0)
   (force-mode-line-update))
 
+(defun opencode--insert-skills (skills)
+  "Insert the SKILLS loaded with a prompt, each with its text folded."
+  (dolist (skill skills)
+    (let-alist skill
+      (let ((start (opencode--session-process-position)))
+        (opencode--output (format "→ Skill \"%s\"\n%s" .name (string-trim .text)))
+        (opencode--output "\n\n")
+        (opencode--fold start)))))
+
 (defun opencode--add-margin (start end face)
   "Display margin from START (inclusive) to END (exclusive) with FACE."
   ;; a reversed range would highlight the lines before START
@@ -426,7 +435,8 @@ Return the plist of the call, from `opencode--tool-calls'."
 
 (defun opencode--replay-user-request (message)
   "Replay a user request MESSAGE."
-  (opencode--replay-input (alist-get 'text message)))
+  (opencode--replay-input (alist-get 'text message))
+  (opencode--insert-skills (alist-get 'skills message)))
 
 (defun opencode--insert-block-with-margin (text face)
   "Insert TEXT with FACE margin highlight."

@@ -145,6 +145,16 @@ Each element is (display-name model-ref provider-id)."
                          nil nil #'string=)
               commands)))))
 
+(defun opencode--download-skills (directory &optional force)
+  "Download skills available in DIRECTORY, unless they already were or FORCE."
+  (setf directory (opencode--normalize-directory directory))
+  (when (or force (not (assoc directory opencode--skills-by-directory)))
+    (let ((default-directory directory))
+      (opencode-api-skills skills
+        (setf (alist-get directory opencode--skills-by-directory
+                         nil nil #'string=)
+              skills)))))
+
 (defun opencode-insert-slash-command ()
   "Insert an opencode slash command."
   (interactive)
@@ -161,7 +171,7 @@ Each element is (display-name model-ref provider-id)."
                                            .name
                                            .description))))))
         (when command
-          (insert (concat "/" command))))
+          (insert (concat "/" command " "))))
     (call-interactively #'self-insert-command)))
 
 (defun opencode--attachable-file-p (file)
@@ -340,24 +350,34 @@ Otherwise prompt for file in current project."
          (insert " ")))
     (user-error "No active region")))
 
-(defun opencode-add-subagent ()
-  "Insert a subagent mention into the current input."
+(defun opencode-add-mention ()
+  "Insert a mention of a skill or subagent into the current input."
   (interactive)
   (call-interactively #'self-insert-command)
   (when (comint-after-pmark-p)
-    (let ((subagents (cl-loop for agent in opencode-agents
-                              when (string= "subagent" (alist-get 'mode agent))
-                              collect agent)))
-      (unless subagents
-        (user-error "No subagents available"))
-      (let ((name (opencode--annotated-completion
-                   "Subagent: "
-                   (cl-loop for agent in subagents
-                            collect (let-alist agent
-                                      (list .name .name .description))))))
+    (let ((candidates
+           (append
+            (cl-loop for skill in (alist-get (opencode--normalize-directory
+                                              default-directory)
+                                             opencode--skills-by-directory
+                                             nil nil #'string=)
+                     collect (let-alist skill
+                               (list .id
+                                     (cons .id `(skills . ((id . ,.id))))
+                                     (concat "skill     " (or .description "")))))
+            (cl-loop for agent in opencode-agents
+                     when (string= "subagent" (alist-get 'mode agent))
+                     collect (let-alist agent
+                               (list .name
+                                     (cons .name `(agents . ((name . ,.name))))
+                                     (concat "subagent  " (or .description ""))))))))
+      (unless candidates
+        (user-error "No skills or subagents available"))
+      (pcase-let ((`(,name . ,part)
+                   (opencode--annotated-completion "Mention: " candidates)))
         (delete-char -1)
-        (opencode--insert-label (concat "@" name)
-                                `(agents . ((name . ,name))))))))
+        (opencode--insert-label (concat "@" name) part)
+        (insert " ")))))
 
 (defun opencode--adopt-selection (agent model)
   "Make the local agent and model AGENT and MODEL, if non-nil."
@@ -413,10 +433,13 @@ records a message, so that's only done if it differs."
   (let ((files (cl-loop for (kind . part) in parts
                         when (eq kind 'files) collect part))
         (agents (cl-loop for (kind . part) in parts
-                         when (eq kind 'agents) collect part)))
+                         when (eq kind 'agents) collect part))
+        (skills (cl-loop for (kind . part) in parts
+                         when (eq kind 'skills) collect part)))
     `((text . ,text)
       ,@(when files `((files . ,(vconcat files))))
-      ,@(when agents `((agents . ,(vconcat agents)))))))
+      ,@(when agents `((agents . ,(vconcat agents))))
+      ,@(when skills `((skills . ,(vconcat skills)))))))
 
 (defun opencode--send-input (_proc string)
   "Send STRING as input to current opencode session."
@@ -459,11 +482,13 @@ records a message, so that's only done if it differs."
        (lambda ()
          (opencode-api-session-prompt (opencode-session-id)
              (opencode--prompt-body string extra-parts)
-             _result
+             inbox-item
            :else (lambda (error-msg)
                    (opencode--delete-temp-files temp-files)
                    (opencode--send-failed error-msg))
-           (opencode--delete-temp-files temp-files))))))))
+           (opencode--delete-temp-files temp-files)
+           (opencode--insert-skills
+            (map-nested-elt inbox-item '(payload skills))))))))))
 
 (defun opencode-session--send-synthetic-input (string)
   "Send STRING to the current opencode session.

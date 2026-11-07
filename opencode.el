@@ -187,6 +187,7 @@ Call ON-CONNECT once connected."
     (user-error "Already connected"))
   (setq opencode-api-url (format "http://%s:%d" host port))
   (setq opencode--slash-commands-by-directory nil
+        opencode--skills-by-directory nil
         opencode--location-by-directory nil)
   (opencode--subscribe-events)
   (opencode--fetch-models (lambda () (opencode--fetch-agents on-connect)))
@@ -293,7 +294,7 @@ Also prompts for pending questions or permissions if any."
     "session.compaction.failed"
     "permission.asked" "permission.replied"
     "form.created" "form.replied" "form.cancelled" "tui.toast.show"
-    "command.updated")
+    "command.updated" "skill.updated")
   "Types of the events to subscribe to.")
 
 (defun opencode--session-finished (session-id &optional interrupted)
@@ -431,6 +432,9 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           (command.updated
            (opencode--slash-commands-updated
             (map-nested-elt event '(location directory))))
+          (skill.updated
+           (opencode--skills-updated
+            (map-nested-elt event '(location directory))))
           (form.created (opencode--form-request .form))
           ((form.replied form.cancelled)
            (opencode--form-settled .sessionID .id))
@@ -503,6 +507,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
     (set-process-sentinel opencode--process nil)
     (kill-process opencode--process))
   (setq opencode--slash-commands-by-directory nil
+        opencode--skills-by-directory nil
         opencode--location-by-directory nil))
 
 (defun opencode--fetch-models (callback)
@@ -639,6 +644,12 @@ Its text is put back in the prompt to edit and resend."
   (let ((directory (opencode--normalize-directory directory)))
     (when (assoc directory opencode--slash-commands-by-directory)
       (opencode--download-slash-commands directory t))))
+
+(defun opencode--skills-updated (directory)
+  "Refetch the skills of DIRECTORY if they were downloaded."
+  (let ((directory (opencode--normalize-directory directory)))
+    (when (assoc directory opencode--skills-by-directory)
+      (opencode--download-skills directory t))))
 
 (provide 'opencode)
 ;;; opencode.el ends here

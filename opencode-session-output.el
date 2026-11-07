@@ -76,6 +76,10 @@ Their blocks had output in the replay, without this client seeing any delta.")
 (defvar-local opencode-last-response-start nil
   "Position of the start of the latest assistant text block.")
 
+(defvar opencode-code-block-languages-without-background '(diff)
+  "Fenced code block languages whose background overlay face is removed.
+Use for blocks whose own faces draw backgrounds, like diff line faces.")
+
 (defun opencode--fontify-code-block (mode beg end)
   "Collect MODE faces for BEG..END without sharing session text properties."
   (let ((text (buffer-substring-no-properties beg end))
@@ -103,11 +107,13 @@ Isolate conventional code-block fontification from session properties."
                      (funcall collect mode beg finish)
                    (opencode--fontify-code-block mode beg finish)))))
       (treesit-font-lock-fontify-region start end loudly)))
-  ;; An overlay's background would hide the line backgrounds of diff faces.
-  ;; Fontifying just a fence line resets its block's overlay, so look past it.
+  ;; An overlay's background would hide the backgrounds a block draws itself,
+  ;; like diff line faces.  Fontifying just a fence line resets its block's
+  ;; overlay, so look past it.
   (dolist (overlay (overlays-in (save-excursion (goto-char start) (pos-bol 0))
                                 (save-excursion (goto-char end) (pos-bol 3))))
-    (when (eq (overlay-get overlay 'markdown-ts-code-block-mode) 'diff-mode)
+    (when (memq (overlay-get overlay 'markdown-ts-code-block-language)
+                opencode-code-block-languages-without-background)
       (overlay-put overlay 'face nil))))
 
 (defun opencode--fold-beginning ()

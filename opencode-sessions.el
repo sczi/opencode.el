@@ -193,6 +193,13 @@ ended, like the OpenCode app's inbox."
               comint-input-sender 'opencode--send-input
               comint-highlight-input nil
               left-margin-width (1+ left-margin-width))
+  ;; Output comes from the server, never a password prompt or terminal
+  ;; escapes, and these filters are costly when replaying large sessions.
+  ;; They're global, so `remove-hook' can't remove them locally.
+  (setq-local comint-output-filter-functions
+              (seq-difference comint-output-filter-functions
+                              '(comint-watch-for-password-prompt
+                                ansi-color-process-output)))
   (setq-local markdown-ts-hide-markup t
               markdown-ts-enable-code-block-context-mode nil
               markdown-ts-enable-table-mode nil)

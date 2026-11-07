@@ -694,10 +694,13 @@ Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
         (comint-output-filter-functions
          (remove #'comint-postoutput-scroll-to-bottom
                  comint-output-filter-functions)))
-    (dolist (message messages)
-      (unless (and revert-message-id
-                   (not (string< (alist-get 'id message) revert-message-id)))
-        (opencode--replay-message message)))
+    ;; Run the change hooks, like jit-lock's, once for the whole replay
+    ;; rather than for every insertion.
+    (combine-change-calls (point-min) (point-max)
+      (dolist (message messages)
+        (unless (and revert-message-id
+                     (not (string< (alist-get 'id message) revert-message-id)))
+          (opencode--replay-message message))))
     (setq opencode--current-block nil)))
 
 (defun opencode--insert-error (message)

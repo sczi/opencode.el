@@ -691,6 +691,8 @@ Calls not yet finished are recorded so that later events finish them."
   "Display past session MESSAGES.
 Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
   (let ((inhibit-redisplay t)
+        ;; collect once afterwards, rather than many times during the replay
+        (gc-cons-threshold most-positive-fixnum)
         (comint-output-filter-functions
          (remove #'comint-postoutput-scroll-to-bottom
                  comint-output-filter-functions)))

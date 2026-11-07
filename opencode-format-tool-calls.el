@@ -149,7 +149,10 @@ A call with no INPUT, as when it was malformed, shows just the tool name."
           (insert new-string)
           (insert "\n")
           (with-temp-buffer
-            (let ((inhibit-read-only t))
+            (let ((inhibit-read-only t)
+                  ;; `diff-mode' would look up the directory's local
+                  ;; variables for every diff.
+                  (enable-dir-local-variables nil))
               ;; Run diff synchronously into this temp buffer
               (diff-no-select old-buf new-buf nil t (current-buffer))
               ;; Delete first 3 lines (diff command, ---, +++)

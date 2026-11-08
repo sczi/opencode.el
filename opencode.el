@@ -254,23 +254,26 @@ Then open an opencode session in it."
 
 (defun opencode--selection-change-hook (&optional frame)
   "Hook to remove session for FRAME from the alerted sessions list when it's visited.
-Also prompts for pending questions or permissions if any."
-  (with-current-buffer (window-buffer (frame-selected-window frame))
-    (when opencode-session-id
-      (setf opencode-alerted-sessions
-            (cl-delete-if (lambda (session)
-                            (string= opencode-session-id
-                                     (alist-get 'id session)))
-                          opencode-alerted-sessions)
-            opencode-last-session-buffer (current-buffer))
-      ;; Handle pending questions when buffer becomes active
-      (when opencode-session-pending-questions
-        (let ((pending opencode-session-pending-questions))
-          (setq opencode-session-pending-questions nil)
-          (opencode--prompt-questions pending)))
-      ;; Handle pending permissions when buffer becomes active
-      (when opencode-session-pending-permission
-        (run-at-time 0 nil #'opencode-respond-permission)))))
+Also prompts for pending questions or permissions if any.
+When switching frames this hook is also run for the frame that was
+deselected, so only act on the currently selected frame."
+  (when (or (null frame) (eq frame (selected-frame)))
+    (with-current-buffer (window-buffer (selected-window))
+      (when opencode-session-id
+        (setf opencode-alerted-sessions
+              (cl-delete-if (lambda (session)
+                              (string= opencode-session-id
+                                       (alist-get 'id session)))
+                            opencode-alerted-sessions)
+              opencode-last-session-buffer (current-buffer))
+        ;; Handle pending questions when buffer becomes active
+        (when opencode-session-pending-questions
+          (let ((pending opencode-session-pending-questions))
+            (setq opencode-session-pending-questions nil)
+            (opencode--prompt-questions pending)))
+        ;; Handle pending permissions when buffer becomes active
+        (when opencode-session-pending-permission
+          (run-at-time 0 nil #'opencode-respond-permission))))))
 
 (add-hook 'window-selection-change-functions 'opencode--selection-change-hook)
 

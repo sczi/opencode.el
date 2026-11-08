@@ -42,7 +42,7 @@
                            "json"))))
               (when output
                 (concat "Output:\n\n"
-                        (opencode--fenced-block (string-join output "\n") "text")))
+                        (opencode--fenced-output (string-join output "\n"))))
               (when .state.error.message
                 (concat "Error:\n\n"
                         (opencode--fenced-block .state.error.message "text")))))

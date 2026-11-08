@@ -596,7 +596,9 @@ non-zero status are highlighted with the `error' face."
                 (end (copy-marker call-end t)))
             (save-excursion
               (goto-char call-end)
-              (insert "\n" (opencode--fenced-block output "text")))
+              (insert "\n" (if failed
+                               (opencode--fenced-block output "text")
+                             (opencode--fenced-output output))))
             (opencode--mark-as-output call-end end)
             (opencode--buttonize-file-references call-end end)
             ;; The first visible output line starts at the call's hidden

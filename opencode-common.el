@@ -13,6 +13,7 @@
 
 (require 'button)
 (require 'cl-lib)
+(require 'json)
 (require 'map)
 (require 'notifications)
 (require 'project)
@@ -78,6 +79,23 @@ When nil or not available, connecting sets it to the server's default model.")
             text
             (unless (string-suffix-p "\n" text) "\n")
             fence)))
+
+(defun opencode--fenced-output (text)
+  "Return tool output TEXT in a fenced block.
+A JSON object or array is labeled as JSON, and pretty-printed unless it's
+too large to do so quickly."
+  (let ((trimmed (string-trim text)))
+    (if (and (string-match-p "\\`[[{]" trimmed)
+             (ignore-errors (json-parse-string trimmed)))
+        (opencode--fenced-block
+         (or (ignore-errors
+               (with-temp-buffer
+                 (insert trimmed)
+                 (json-pretty-print-buffer)
+                 (buffer-string)))
+             text)
+         "json")
+      (opencode--fenced-block text "text"))))
 
 (defcustom opencode-toast-function 'opencode--default-toast-show
   "Function to use to show toast notifications.

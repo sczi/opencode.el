@@ -603,6 +603,18 @@ Unless `error' is not in `opencode-shown-outputs', when they start folded."
               (state . ((status . "error")
                         (error . ((type . "unknown") (message . "Wrong type"))))))))))
 
+(ert-deftest opencode-session-tool-json-output-test ()
+  "Tool output that is a JSON object or array is fenced as JSON."
+  (with-opencode-session-test-buffer
+    (let ((opencode-shown-outputs '(execute)))
+      (opencode-session-test--tool "execute" "completed" '((code . "a"))
+                                   "{\"a\": [1, true]}" "c1")
+      (opencode-session-test--tool "execute" "completed" '((code . "b"))
+                                   "{not json" "c2")
+      (should (string-search "```json\n{\n  \"a\": [\n    1,\n    true\n  ]\n}\n```"
+                             (buffer-string)))
+      (should (string-search "```text\n{not json\n```" (buffer-string))))))
+
 (ert-deftest opencode-session-tool-output-margin-after-fenced-call-test ()
   "Output's margin covers a fenced call's closing fence, but only once it's there.
 The first visible output line starts at that hidden fence."

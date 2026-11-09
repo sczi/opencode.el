@@ -389,19 +389,14 @@ TEXT is formatted like the output of the read tool."
                             lines))
                      "\n"))))
 
-(defun opencode-add-region ()
-  "Add the active region to context.
-If the buffer visits a file, the region is sent with its file name and
+(defun opencode--add-region-text (beg end)
+  "Add the text from BEG to END of the current buffer to context.
+If the buffer visits a file, the text is sent with its file name and
 line numbers."
-  (interactive)
-  (unless (use-region-p)
-    (user-error "No active region"))
   (pcase-let ((`(,name . ,text)
                (if buffer-file-name
-                   (opencode--region-with-line-numbers
-                    (region-beginning) (region-end) buffer-file-name)
-                 (let ((region (buffer-substring-no-properties
-                                (region-beginning) (region-end))))
+                   (opencode--region-with-line-numbers beg end buffer-file-name)
+                 (let ((region (buffer-substring-no-properties beg end)))
                    (cons (format "region: %s"
                                  (truncate-string-to-width
                                   region 24 0 nil (truncate-string-ellipsis)))
@@ -409,6 +404,24 @@ line numbers."
     (with-last-opencode-session
      (opencode--insert-label name (opencode--text-attachment text name))
      (insert " "))))
+
+(defun opencode-add-region ()
+  "Add the active region to context.
+If the buffer visits a file, the region is sent with its file name and
+line numbers."
+  (interactive)
+  (unless (use-region-p)
+    (user-error "No active region"))
+  (opencode--add-region-text (region-beginning) (region-end)))
+
+(defun opencode-add-defun ()
+  "Add the defun at point to context, as a region.
+If the buffer visits a file, the defun is sent with its file name and
+line numbers."
+  (interactive)
+  (pcase (bounds-of-thing-at-point 'defun)
+    (`(,beg . ,end) (opencode--add-region-text beg end))
+    (_ (user-error "No defun at point"))))
 
 (defun opencode-add-mention ()
   "Insert a mention of a skill or subagent into the current input."

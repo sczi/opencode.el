@@ -405,11 +405,16 @@ It keeps its properties, which hold the parts of its labels."
            (goto-char (point-max))
            (insert input)))))))
 
+(defun opencode--goto-prompt-input ()
+  "Move point to the input start of the prompt at or before point."
+  (if (get-char-property (point) 'field)
+      (comint-previous-prompt 1)
+    (goto-char (field-beginning))))
+
 (defun opencode--prompt-start ()
   "Return the start of the line of the prompt before point."
   (save-excursion
-    (end-of-line)
-    (comint-previous-prompt 1)
+    (opencode--goto-prompt-input)
     (let ((inhibit-field-text-motion t))
       (line-beginning-position))))
 
@@ -429,8 +434,7 @@ It keeps its properties, which hold the parts of its labels."
 Counts prompts from the beginning of the buffer to the current position.
 Returns nil if point is before the first prompt."
   (save-excursion
-    (end-of-line)
-    (comint-previous-prompt 1)
+    (opencode--goto-prompt-input)
     (let ((target-point (point)))
       (goto-char (point-min))
       (cl-loop do (comint-next-prompt 1)

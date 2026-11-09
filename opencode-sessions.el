@@ -60,7 +60,9 @@
   (declare-function evil-define-key* "evil-core")
   (evil-define-key* 'insert opencode-session-mode-map
     "@" 'opencode-add-mention
-    "/" 'opencode-insert-slash-command))
+    "/" 'opencode-insert-slash-command)
+  (evil-define-key* 'normal opencode-session-mode-map
+    (kbd "RET") 'comint-send-input))
 
 (defvar-local opencode-session-pending-questions nil
   "Pending questions for this session buffer, awaiting user response.

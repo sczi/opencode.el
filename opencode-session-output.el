@@ -143,16 +143,8 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
       (goto-char beg)
       (hs-hide-block-at-point))))
 
-(defvar-local opencode--prompt-margin nil
-  "Overlay showing the margin on the current, possibly empty, prompt line.
-A `line-prefix' needs a character on its line, so this uses a
-`before-string'.  It's detached once input is sent.")
-
 (defun opencode--highlight-input (&optional _proc _string)
   "Highlight last prompt input."
-  (when opencode--prompt-margin
-    ;; detach, `opencode--show-prompt' moves it back for the next prompt
-    (delete-overlay opencode--prompt-margin))
   ;; Hide the sent input's markup, as in the rest of the output.
   (font-lock-flush comint-last-input-start comint-last-input-end)
   (opencode--add-margin comint-last-input-start
@@ -297,16 +289,17 @@ Retain one line of context for headers whose delimiter has yet to arrive."
     (opencode--output "\n")))
 
 (defun opencode--show-prompt ()
-  "Show an empty prompt with a margin after displaying output."
-  ;; comint needs no prompt text, and Markdown would parse any as markup.
-  (opencode--output "")
-  (let ((pos (opencode--session-process-position)))
-    (unless opencode--prompt-margin
-      (setq opencode--prompt-margin (make-overlay pos pos))
-      (overlay-put opencode--prompt-margin 'before-string
-                   (opencode--margin-string
-                    'opencode-request-margin-highlight)))
-    (move-overlay opencode--prompt-margin pos pos)))
+  "Show an invisible prompt with a margin after displaying output.
+The prompt isn't Markdown markup.  It gives the margin's `line-prefix'
+a character on an empty prompt line, and a field boundary before the
+input, which commands acting on the input line, like evil's `dd', expect."
+  (let ((start (opencode--session-process-position)))
+    (opencode--output "❯ ")
+    (overlay-put (make-overlay start (opencode--session-process-position))
+                 'invisible t))
+  (opencode--add-margin (car comint-last-prompt)
+                        (cdr comint-last-prompt)
+                        'opencode-request-margin-highlight))
 
 (defun opencode-session--start-block (type key)
   "Start the block of TYPE identified by KEY, finishing the last one."
@@ -444,14 +437,10 @@ Return the plist of the call, from `opencode--tool-calls'."
   ;; a reversed range would highlight the lines before START
   (when (> end start)
     (let ((ov (make-overlay start (1- end)))
-          (margin (opencode--margin-string face)))
+          (margin (propertize ">" 'display
+                              `((margin left-margin) ,(propertize "▎" 'face face)))))
       (overlay-put ov 'line-prefix margin)
       (overlay-put ov 'wrap-prefix margin))))
-
-(defun opencode--margin-string (face)
-  "Return a string displaying a margin bar with FACE."
-  (propertize ">" 'display
-              `((margin left-margin) ,(propertize "▎" 'face face))))
 
 (defun opencode--replay-input (text)
   "Replay a prompt with input TEXT."

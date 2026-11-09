@@ -336,19 +336,79 @@ Otherwise prompt for file in current project."
        buffer))
      (insert " "))))
 
+(defun opencode--region-location (beg end)
+  "Return (END START-LINE START-COL END-LINE END-COL) for BEG to END.
+An END at the start of a line is moved back over the preceding newline,
+so the returned END is where the region's text should stop.  Columns
+are 1-based and the end column is that of the last included character.
+A column is nil when its side of the region is on a line boundary."
+  (save-excursion
+    (when (and (< beg end) (eq (char-before end) ?\n))
+      (cl-decf end))
+    (goto-char beg)
+    (let ((start-line (line-number-at-pos nil t))
+          (start-col (unless (bolp) (1+ (- (point) (line-beginning-position))))))
+      (goto-char end)
+      (list end start-line start-col
+            (line-number-at-pos nil t)
+            (unless (eolp) (- (point) (line-beginning-position)))))))
+
+(defun opencode--region-with-line-numbers (beg end file)
+  "Return (LABEL . TEXT) for the region BEG to END of FILE.
+TEXT is formatted like the output of the read tool."
+  (pcase-let* ((`(,end ,sl ,sc ,el ,ec) (opencode--region-location beg end))
+               (lines (split-string (buffer-substring-no-properties beg end)
+                                    "\n"))
+               (path (opencode--relative-path-for-display file))
+               (`(,range . ,location)
+                (cond ((not (or sc ec))
+                       (cons (format "lines %d-%d" sl el)
+                             (if (= sl el)
+                                 (format "%d" sl)
+                               (format "%d-%d" sl el))))
+                      ((= sl el)
+                       (let ((sc (or sc 1))
+                             (ec (or ec (save-excursion
+                                          (goto-char end)
+                                          (- (point) (line-beginning-position))))))
+                         (cons (format "line %d columns %d-%d" sl sc ec)
+                               (format "%d:%d-%d" sl sc ec))))
+                      (t
+                       (cons (format "from line %d%s to line %d%s"
+                                     sl (if sc (format " column %d" sc) "")
+                                     el (if ec (format " column %d" ec) ""))
+                             (format "%d%s-%d%s"
+                                     sl (if sc (format ":%d" sc) "")
+                                     el (if ec (format ":%d" ec) ""))))))
+               (label (concat path ":" location)))
+    (cons label
+          (mapconcat #'identity
+                     (cons (format "Read file %s, %s" (expand-file-name file) range)
+                           (seq-map-indexed
+                            (lambda (line i) (format "%d: %s" (+ sl i) line))
+                            lines))
+                     "\n"))))
+
 (defun opencode-add-region ()
-  "Add the active region to context."
+  "Add the active region to context.
+If the buffer visits a file, the region is sent with its file name and
+line numbers."
   (interactive)
-  (if (use-region-p)
-      (let ((region (buffer-substring-no-properties (region-beginning)
-                                                    (region-end))))
-        (with-last-opencode-session
-         (let ((name (format "region: %s"
-                             (truncate-string-to-width
-                              region 24 0 nil (truncate-string-ellipsis)))))
-           (opencode--insert-label name (opencode--text-attachment region name)))
-         (insert " ")))
-    (user-error "No active region")))
+  (unless (use-region-p)
+    (user-error "No active region"))
+  (pcase-let ((`(,name . ,text)
+               (if buffer-file-name
+                   (opencode--region-with-line-numbers
+                    (region-beginning) (region-end) buffer-file-name)
+                 (let ((region (buffer-substring-no-properties
+                                (region-beginning) (region-end))))
+                   (cons (format "region: %s"
+                                 (truncate-string-to-width
+                                  region 24 0 nil (truncate-string-ellipsis)))
+                         region)))))
+    (with-last-opencode-session
+     (opencode--insert-label name (opencode--text-attachment text name))
+     (insert " "))))
 
 (defun opencode-add-mention ()
   "Insert a mention of a skill or subagent into the current input."

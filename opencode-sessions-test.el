@@ -63,7 +63,10 @@ Requests for active sessions return ACTIVE, and others a session."
 
 (defun opencode-session-test--at-prompt-p ()
   "Return non-nil if the session's output ends with a prompt."
-  (string-suffix-p "> " (opencode-session-test--output)))
+  (and opencode--prompt-margin
+       (overlay-buffer opencode--prompt-margin)
+       (= (overlay-start opencode--prompt-margin)
+          (process-mark (get-buffer-process (current-buffer))))))
 
 (defun opencode-session-test--margin-p (pos)
   "Return non-nil if POS has a margin."
@@ -220,9 +223,25 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (should (opencode-session-test--margin-p (1- (point))))
       (search-forward "```")
       (should-not (opencode-session-test--margin-p (match-beginning 0)))
-      (goto-char (point-min))
-      (search-forward "> ")
-      (should (get-char-property (match-beginning 0) 'invisible)))))
+      (should (opencode-session-test--at-prompt-p))
+      (should (overlay-get opencode--prompt-margin 'before-string)))))
+
+(ert-deftest opencode-session-input-markup-test ()
+  "Show the markup of pending input, and hide it once sent."
+  (with-opencode-session-test-buffer
+    (font-lock-mode 1)
+    (opencode--show-prompt)
+    (let ((start (point)))
+      (insert "> **bold**")
+      (font-lock-ensure)
+      (should (memq 'markdown-ts-bold
+                    (get-text-property (+ start 4) 'face)))
+      (should-not (text-property-not-all start (point-max) 'invisible nil))
+      (opencode--replay-input "")
+      (font-lock-ensure)
+      (should (get-char-property start 'invisible))
+      (should-not (overlay-buffer opencode--prompt-margin))
+      (should (opencode-session-test--margin-p start)))))
 
 (ert-deftest opencode-session-label-test ()
   "Show the label name, and send it as code along with the label's part."

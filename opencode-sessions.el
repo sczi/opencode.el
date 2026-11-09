@@ -430,7 +430,7 @@ It keeps its properties, which hold the parts of its labels."
 (defun opencode--current-message-number ()
   "Return the 0-indexed message number at point.
 Counts prompts from the beginning of the buffer to the current position.
-Returns nil if point is before the first prompt."
+Returns 0 if point is before the first prompt."
   (save-excursion
     (opencode--goto-prompt-input)
     (let ((target-point (point)))

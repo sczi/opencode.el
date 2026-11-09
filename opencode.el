@@ -84,9 +84,6 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
 (defvar opencode--process nil
   "Opencode server process when started by Emacs.")
 
-;; so invisible prompt "> " doesn't make whole prompt invisible
-(add-to-list 'comint--prompt-rear-nonsticky 'invisible)
-
 (defun opencode--server-running-p ()
   "Return non-nil if an opencode server is running at configured host and port."
   (condition-case err

@@ -1119,5 +1119,27 @@ The server reports no variant as \"default\", which is no selection."
     (should (equal '("1" "2" "3") (mapcar (lambda (m) (alist-get 'id m)) result)))
     (should (equal "/api/session/session/message?limit=200&cursor=a%3Db" (car paths)))))
 
+(defvar doom-switch-buffer-hook)
+
+(ert-deftest opencode-switch-to-buffer-doom-hook-test ()
+  "Doom's switch buffer hook runs with the new buffer current.
+Also after a minibuffer read in an async callback leaves `this-command' set."
+  (let ((buffer (generate-new-buffer " *opencode-switch-test*"))
+        (opencode-open-session-same-window t)
+        seen
+        (doom-switch-buffer-hook nil))
+    (add-hook 'doom-switch-buffer-hook (lambda () (push (current-buffer) seen)))
+    (cl-letf (((symbol-function 'switch-to-buffer) #'ignore))
+      (unwind-protect
+          (progn
+            (let ((this-command nil))
+              (opencode--switch-to-buffer buffer))
+            (should (equal (list buffer) seen))
+            (setq seen nil)
+            (let ((this-command 'vertico-exit))
+              (opencode--switch-to-buffer buffer))
+            (should (equal (list buffer) seen)))
+        (kill-buffer buffer)))))
+
 (provide 'opencode-sessions-test)
 ;;; opencode-sessions-test.el ends here

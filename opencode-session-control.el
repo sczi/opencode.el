@@ -16,7 +16,10 @@
 (require 'opencode-common)
 (require 'opencode-session-output)
 (require 'opencode-sessions)
+(require 'profiler)
 (require 'vtable)
+
+(defvar doom-real-buffer-p)
 
 (defvar opencode--session-control-buffers nil
   "List of session control buffers.")
@@ -71,6 +74,9 @@
 
 (define-derived-mode opencode-session-control-mode special-mode "Sessions"
   "Opencode session control panel mode."
+  ;; Doom ignores buffers it doesn't consider real when choosing which buffer
+  ;; to show after killing one, or for `evil-switch-to-windows-last-buffer'.
+  (setq-local doom-real-buffer-p t)
   (add-hook 'window-size-change-functions
             #'opencode--session-control-window-size-change nil t))
 
@@ -274,7 +280,7 @@ directory it was last opened for."
            (setq default-directory directory
                  opencode-session-control-project-id .project.id)
            (opencode-sessions-redisplay)
-           (switch-to-buffer (current-buffer))))))))
+           (opencode--switch-to-buffer (current-buffer))))))))
 
 (provide 'opencode-session-control)
 ;;; opencode-session-control.el ends here

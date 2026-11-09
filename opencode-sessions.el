@@ -350,9 +350,7 @@ If CALLBACK is given, it will be called with the session after it is initialized
   (let-alist session
     (let ((old-buffer (gethash .id opencode-session-buffers)))
       (if (buffer-live-p old-buffer)
-          (if opencode-open-session-same-window
-              (switch-to-buffer old-buffer)
-            (pop-to-buffer old-buffer))
+          (opencode--switch-to-buffer old-buffer)
         (let ((buffer (generate-new-buffer
                        (format "*OpenCode: %s*" (opencode--session-title session))))
               (agent (copy-tree opencode-session-agent))
@@ -382,9 +380,7 @@ If CALLBACK is given, it will be called with the session after it is initialized
               (add-hook 'kill-buffer-hook #'opencode--session-cleanup nil t)
               (opencode-insert-logo)
               (opencode--load-session session callback))
-            (if opencode-open-session-same-window
-                (switch-to-buffer buffer)
-              (pop-to-buffer buffer))))))))
+            (opencode--switch-to-buffer buffer)))))))
 
 (defun opencode--reload-session ()
   "Redisplay the current session from the server, keeping any typed input.

@@ -110,7 +110,8 @@ for title, message, variant (error/warning/info/success), and duration"
   :group 'opencode)
 
 (defcustom opencode-open-session-same-window t
-  "If t use `switch-to-buffer' when opening sessions, otherwise use `pop-to-buffer'."
+  "If t use `switch-to-buffer' when opening sessions, otherwise use `pop-to-buffer'.
+This also applies to the session control buffer."
   :type 'boolean
   :group 'opencode)
 
@@ -338,6 +339,27 @@ resolved for all output."
   (and buffer
        (eq buffer (window-buffer (selected-window)))
        (frame-focus-state (window-frame (selected-window)))))
+
+(defvar doom-switch-buffer-hook)
+
+(defun opencode--switch-to-buffer (buffer)
+  "Display BUFFER and select its window.
+Use `switch-to-buffer' if `opencode-open-session-same-window' is non-nil,
+otherwise `pop-to-buffer'.
+
+This is often called from async callbacks, after which Emacs restores the
+current buffer, so hooks that run on redisplay see the old buffer as
+current and think no switch happened.  Doom relies on that to add buffers
+to the current workspace, so run its switch buffer hook ourselves.  It
+can't be limited to async calls, as `this-command' is left non-nil by a
+minibuffer read within the callback.  When called from a command Doom runs
+it again on redisplay, which is harmless."
+  (if opencode-open-session-same-window
+      (switch-to-buffer buffer)
+    (pop-to-buffer buffer))
+  (when (boundp 'doom-switch-buffer-hook)
+    (with-current-buffer buffer
+      (run-hooks 'doom-switch-buffer-hook))))
 
 (defvar-local opencode-session-id nil
   "Session id for the current opencode session buffer.")

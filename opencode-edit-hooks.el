@@ -19,8 +19,7 @@
 (require 'opencode-session-input)
 
 (defcustom opencode-file-edited-functions
-  '(opencode--fix-parens
-    opencode--reload-elisp-file)
+  '(opencode--reload-elisp-file)
   "Hook run after opencode edits a file.
 This is an abnormal hook.  Each function receives two arguments, FILE and
 RANGES, after a completed write, edit, or patch tool call.  FILE is the
@@ -256,7 +255,7 @@ after `opencode-command-diagnostic-timeout' seconds."
 
 (defvar flycheck-checkers)
 
-(defun opencode--fix-parens (file &optional _ranges)
+(defun opencode-fix-parens (file &optional _ranges)
   "Use parinfer to fix parens in FILE after LLM edits."
   (when (and (or (string-suffix-p ".el" file)
                  (string-suffix-p ".lisp" file))

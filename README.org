@@ -22,15 +22,22 @@ of advantages over the official TUI:
 2) Emacs integration
 
    - runs =opencode-file-edited-functions= after edit tool calls. The default
-     hooks will:
-     + fix parentheses with parinfer if =parinfer-rust-mode= is installed after
-       edits to emacs lisp and common lisp files
-     + reload file after edits to emacs lisp files
+     hook will reload file after edits to emacs lisp files. You can also add
+     =opencode-fix-parens= to fix parentheses with parinfer if =parinfer-rust-mode=
+     is installed after edits to lisp files.
    - calls =opencode-files-finished-editing-functions= with a list of all files
      edited in the last assistant turn. Add =opencode-indent-files= here to
      automatically fix indentation with =indent-region=, and
      =opencode-flycheck-edited-files= to run flycheck and report all errors and
      warnings in the edited files to the LLM.
+
+     #+begin_quote
+     *⚠️ WARNING:* opencode-fix-parens, opencode-indent-files, and
+     opencode-flycheck-edited-files are all disabled by default, but if you use
+     them they call revert-buffer, discarding changes in emacs in favor of llm
+     edits. I use git worktrees or just stash, if I am editing at the same time
+     as an llm.
+     #+end_quote
 
      You can set project specific hooks in
      =opencode-project-files-finished-editing-functions=. We include
@@ -52,7 +59,7 @@ of advantages over the official TUI:
      =opencode-fix-flycheck=
    - integration with magit is possible, =opencode-new-worktree= will create a new
      git branch and worktree for the current project, and start an opencode session in it
-   - =`file`= and file:line references in LLM output are turned into clickable buttons
+   - =`file`= and =file:line= references in LLM output are turned into clickable buttons
    - use =dabbrev-expand= in the chat window to complete long variable or function
      names from your code buffers
    - configure how your custom MCP and tools are displayed with =opencode-tool-formatters=
@@ -285,3 +292,6 @@ performance fix, and set both =comint-scroll-show-maximum-output= and
 - =opencode-session-control-table-columns= configures what columns are shown in
   the session management buffer
 
+# Local Variables:
+# flycheck-org-lint-disabled-checkers: (invalid-id-link wrong-header-value)
+# End:

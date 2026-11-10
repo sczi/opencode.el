@@ -274,7 +274,8 @@ after `opencode-command-diagnostic-timeout' seconds."
                                              flycheck-checkers))))
            (parinfer-rust--set-default-state)
            (let ((parinfer-rust--mode "indent"))
-             (parinfer-rust--execute)))
+             (save-window-excursion
+               (parinfer-rust--execute))))
          (save-buffer))))))
 
 (defun opencode--indent-sensitive-buffer-p ()

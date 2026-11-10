@@ -138,9 +138,11 @@ Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty."
   (interactive)
   (opencode-api-session (opencode-session-id)
       session
-    (opencode-api-session ((alist-get 'parentID session))
-        parent
-      (opencode-open-session parent))))
+    (if-let* ((parent-id (alist-get 'parentID session)))
+        (opencode-api-session (parent-id)
+            parent-session
+          (opencode-open-session parent-session))
+      (message "This session has no parent"))))
 
 (defun opencode--session-status-indicator ()
   "Return mode line indicator for session status."

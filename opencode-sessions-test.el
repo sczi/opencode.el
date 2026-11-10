@@ -277,6 +277,42 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (should (equal (cons "`AGENTS.md`hi" (list part))
                      (opencode--input-text-and-parts start (point)))))))
 
+(ert-deftest opencode-session-prompt-input-test ()
+  "A sent prompt's input is copied editable and with working labels."
+  (with-opencode-session-test-buffer
+    (opencode--output "Hi!\n\n")
+    (opencode--show-prompt)
+    (let ((part '((name . "AGENTS.md"))))
+      (insert "see ")
+      (opencode--insert-label "AGENTS.md" part)
+      (insert " now")
+      (let ((comint-input-sender #'opencode--highlight-input))
+        (comint-send-input))
+      (opencode--output "Reply\n\n")
+      (let ((input (save-excursion
+                     (search-backward "Reply")
+                     (opencode--prompt-input))))
+        (should (equal "see ￼ now" (substring-no-properties input)))
+        (should-not (text-property-not-all 0 4 'read-only nil input))
+        (should-not (get-text-property 4 'read-only input))
+        (opencode--show-prompt)
+        (goto-char (point-max))
+        (let ((start (point)))
+          (insert input)
+          (should (equal (cons "see `AGENTS.md` now" (list part))
+                         (opencode--input-text-and-parts start (point)))))))))
+
+(ert-deftest opencode-session-prompt-input-replayed-test ()
+  "A replayed prompt's input is copied without the newline replay adds."
+  (with-opencode-session-test-buffer
+    (opencode--output "Hi!\n\n")
+    (opencode--replay-input "line one\nline two")
+    (opencode--output "Reply\n\n")
+    (dolist (text '("Reply" "line two"))
+      (save-excursion
+        (search-backward text)
+        (should (equal "line one\nline two" (opencode--prompt-input)))))))
+
 (ert-deftest opencode-session-diff-refinement-test ()
   "Refine entire synthetic hunks without touching input or earlier output."
   (with-opencode-session-test-buffer

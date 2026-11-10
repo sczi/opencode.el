@@ -614,18 +614,19 @@ If point is before the first prompt, creates a new session instead."
 
 (defun opencode-revert-message ()
   "Revert the user message at point and everything after it.
-Its text is put back in the prompt to edit and resend."
+Its text and labels are put back in the prompt to edit and resend."
   (interactive)
   (unless opencode-session-id
     (user-error "Not in an opencode session buffer"))
-  (let ((start (copy-marker (opencode--prompt-start))))
+  (let ((start (copy-marker (opencode--prompt-start)))
+        (input (opencode--prompt-input)))
     (opencode--current-user-message message
       (unless message
         (user-error "No user message at point"))
       (opencode-api-revert-message (opencode-session-id)
           `((messageID . ,(alist-get 'id message)))
           _result
-        (opencode--truncate-to-prompt start (alist-get 'text message))
+        (opencode--truncate-to-prompt start input)
         (message "Reverted edits after message")))))
 
 (defun opencode-unrevert-all ()

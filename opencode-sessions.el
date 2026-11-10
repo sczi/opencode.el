@@ -414,6 +414,16 @@ It keeps its properties, which hold the parts of its labels."
     (let ((inhibit-field-text-motion t))
       (line-beginning-position))))
 
+(defun opencode--prompt-input ()
+  "Return the input of the prompt before point, keeping its labels."
+  (save-excursion
+    (opencode--goto-prompt-input)
+    (let ((input (buffer-substring (point) (field-end))))
+      (remove-list-of-text-properties
+       0 (length input) '(read-only help-echo mouse-face) input)
+      ;; replayed input ends with a newline
+      (string-trim-right input "\n+"))))
+
 (defun opencode--truncate-to-prompt (start text)
   "Delete from START to the end of the buffer, then prompt with TEXT as input."
   (let ((inhibit-read-only t))

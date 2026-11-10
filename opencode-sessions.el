@@ -64,10 +64,6 @@
   (evil-define-key* 'normal opencode-session-mode-map
     (kbd "RET") 'comint-send-input))
 
-(defvar-local opencode-session-pending-questions nil
-  "Pending questions for this session buffer, awaiting user response.
-When non-nil, a plist of :session-id, :form-id and :questions, a vector.")
-
 (defvar-local opencode-session-pending-permission nil
   "Pending permission requests for this session buffer, as a list of plists.
 Each plist has keys :id, :session-id, :type, :title, and :marker.

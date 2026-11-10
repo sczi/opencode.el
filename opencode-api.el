@@ -201,6 +201,7 @@ may start with :else HANDLER to handle errors."
  (delete unrevert-all "/api/session/%s/revert")
  (session-permissions "/api/session/%s/permission")
  (post respond-permission-request "/api/session/%s/permission/%s/reply")
+ (forms "/api/form")
  (session-forms "/api/session/%s/form")
  (post reply-form "/api/session/%s/form/%s/reply")
  (delete cancel-form "/api/session/%s/form/%s")

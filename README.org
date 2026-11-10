@@ -248,6 +248,10 @@ questions, selecting an option will immediately submit that response. For
 multiple choice questions, select the options you want and then press =C-c C-c= to
 submit.
 
+Other requests for input from the server, like web search consent and MCP server
+elicitations, are prompted the same way. Text and numbers are read in the
+minibuffer. Elicitations aren't tied to a session so they're prompted right away.
+
 * Security
 Opencode's permission system, especially for bash, is not nearly as fine-grained
 as claude's. However, I don't think this really matters. Any coding agent with

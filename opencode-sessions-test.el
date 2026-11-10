@@ -1077,39 +1077,177 @@ The server reports no variant as \"default\", which is no selection."
       (delete-file file)))
   (should (opencode--attachable-file-p temporary-file-directory)))
 
-(ert-deftest opencode-question-form-reply-test ()
-  "A question form becomes questions, and answers are by field type."
-  (let* ((form '((id . "frm_1") (sessionID . "session") (title . "Questions")
-                 (metadata . ((kind . "question")))
-                 (fields . (((key . "q0") (title . "Letter") (description . "Pick a letter")
-                             (type . "string") (custom . t)
-                             (options . (((value . "A") (label . "A")))))
-                            ((key . "q1") (title . "Numbers") (description . "Pick numbers")
-                             (type . "multiselect") (custom . t)
-                             (options . (((value . "1") (label . "One")))))))))
-         (opencode-question--questions (opencode--form-questions form))
-         (opencode-question--answers '(("1" "custom") ("A"))))
-    (should (equal "Pick a letter"
-                   (alist-get 'question (aref opencode-question--questions 0))))
-    (should (vectorp (alist-get 'options (aref opencode-question--questions 0))))
-    (should (equal '((q0 . "A") (q1 . ["1" "custom"]))
-                   (opencode-question--answer)))
-    (should (equal "{\"answer\":{\"q0\":\"A\",\"q1\":[\"1\",\"custom\"]}}"
-                   (json-encode `((answer . ,(opencode-question--answer))))))))
+(defmacro opencode-forms-test--with-server (&rest body)
+  "Run BODY with an empty form queue, binding REQUESTS and TOASTS.
+REQUESTS collects (METHOD PATH DIRECTORY BODY-JSON) of API requests, latest
+first, and ELSE-HANDLERS their error handlers.  Menus aren't really shown and
+MENUS collects their selections.  Timers run immediately."
+  (declare (indent 0))
+  `(let (opencode-forms--queue opencode-forms--current
+                               opencode-forms--fields opencode-forms--answers
+                               requests else-handlers toasts menus)
+     (cl-letf (((symbol-function 'opencode-api--request)
+                (lambda (method path &rest args)
+                  (push (plist-get args :else) else-handlers)
+                  (push (list method path default-directory
+                              (and (plist-member args :body)
+                                   (json-encode (plist-get args :body))))
+                        requests)))
+               ((symbol-function 'opencode-forms--show-menu)
+                (lambda (selection) (push selection menus) t))
+               ((symbol-function 'run-at-time)
+                (lambda (_time _repeat function &rest args) (apply function args)))
+               ((symbol-function 'opencode-open-session) #'ignore))
+       (let ((opencode-toast-function (lambda (toast) (push toast toasts)))
+             (default-directory "/project/"))
+         ,@body))))
 
-(ert-deftest opencode-unsupported-form-test ()
-  "A form that isn't a question is cancelled with a message so nothing hangs."
-  (let (path toast)
-    (cl-letf (((symbol-function 'opencode-api--request)
-               (lambda (method request-path &rest _args)
-                 (should (eq method 'delete))
-                 (setq path request-path))))
-      (let ((opencode-toast-function (lambda (properties) (setq toast properties))))
-        (opencode--form-request '((id . "frm_1") (sessionID . "global")
-                                  (title . "Login") (fields)))))
+(defconst opencode-forms-test--websearch
+  '((id . "frm_1") (sessionID . "global") (title . "Web Search")
+    (metadata . ((kind . "websearch.provider")))
+    (fields . (((key . "choice") (description . "Allow?") (type . "string")
+                (required . t) (custom . :false)
+                (options . (((value . "allow") (label . "Allow"))
+                            ((value . "disable") (label . "Disable")))))))))
+
+(ert-deftest opencode-forms-global-reply-test ()
+  "A global form is shown right away and replied to from its own directory."
+  (opencode-forms-test--with-server
+    (opencode--form-request opencode-forms-test--websearch)
+    (should (equal '(nil) menus))
+    (should-not opencode-forms--queue)
+    (let ((default-directory "/elsewhere/"))
+      (opencode-forms--answer "allow"))
+    (should (equal '((post "/api/session/global/form/frm_1/reply" "/project/"
+                      "{\"answer\":{\"choice\":\"allow\"}}"))
+                   requests))
+    (should-not opencode-forms--current)))
+
+(ert-deftest opencode-forms-duplicate-and-settled-test ()
+  "A form is only queued once, and forgotten once settled."
+  (opencode-forms-test--with-server
+    (let ((form (append '((id . "frm_2") (sessionID . "ses_1")) (cddr opencode-forms-test--websearch)))
+          (opencode-session-buffers (make-hash-table :test #'equal))
+          (buffer (generate-new-buffer " *form-test*")))
+      (unwind-protect
+          (progn
+            (puthash "ses_1" buffer opencode-session-buffers)
+            (opencode--form-request form)
+            (opencode--form-request form)
+            (should (length= opencode-forms--queue 1))
+            (should (length= toasts 1))
+            (should (equal "Allow?" (alist-get 'message (car toasts))))
+            (should-not menus)
+            (opencode--form-settled "frm_2")
+            (should-not opencode-forms--queue))
+        (kill-buffer buffer)))))
+
+(ert-deftest opencode-forms-unsupported-test ()
+  "A form with an unknown field type is cancelled so nothing hangs."
+  (opencode-forms-test--with-server
+    (opencode--form-request '((id . "frm_1") (sessionID . "global") (title . "Login")
+                              (fields . (((key . "x") (type . "hologram"))))))
+    (should (eq 'delete (caar requests)))
     (should (string-match-p "\\`/api/session/global/form/frm_1\\?message=opencode\\.el%20"
-                            path))
-    (should (string-search "Login" (alist-get 'message toast)))))
+                            (cadar requests)))
+    (should (string-search "Login" (alist-get 'message (car toasts))))))
+
+(ert-deftest opencode-forms-when-test ()
+  "Conditions hold by value, by multiselect membership, and never if unanswered."
+  (cl-flet ((active (op value answers)
+              (opencode-forms--active-p
+               `((when . (((key . "a") (op . ,op) (value . ,value)))))
+               answers)))
+    (should (opencode-forms--active-p '((key . "x")) nil))
+    (should (active "eq" "y" '(("a" . "y"))))
+    (should-not (active "eq" "y" '(("a" . "n"))))
+    (should (active "neq" "y" '(("a" . "n"))))
+    (should (active "eq" "y" '(("a" . ["n" "y"]))))
+    (should-not (active "neq" "y" '(("a" . ["n" "y"]))))
+    (should-not (active "eq" "y" nil))
+    (should-not (active "neq" "y" nil))
+    (should (active "eq" 3 '(("a" . 3.0))))
+    (should (active "eq" :false '(("a" . :json-false))))))
+
+(ert-deftest opencode-forms-hidden-and-inactive-test ()
+  "Hidden fields use their default, and inactive fields aren't answered."
+  (opencode-forms-test--with-server
+    (opencode--form-request
+     '((id . "frm_1") (sessionID . "global") (title . "T")
+       (fields . (((key . "flag") (type . "boolean") (hidden . t) (default . :false))
+                  ((key . "tags") (type . "multiselect") (hidden . t)
+                   (default . ("a")) (options . (((value . "a") (label . "A")))))
+                  ((key . "none") (type . "string") (hidden . t))
+                  ((key . "off") (type . "string")
+                   (when . (((key . "flag") (op . "eq") (value . t))))
+                   (required . t))))))
+    (should-not menus)
+    (should (equal '((post "/api/session/global/form/frm_1/reply" "/project/"
+                      "{\"answer\":{\"flag\":false,\"tags\":[\"a\"]}}"))
+                   requests))))
+
+(ert-deftest opencode-forms-empty-answer-test ()
+  "Skipping every field replies with an empty object, not null."
+  (opencode-forms-test--with-server
+    (opencode--form-request
+     '((id . "frm_1") (sessionID . "global") (title . "T")
+       (fields . (((key . "a") (type . "boolean"))))))
+    (opencode-forms--answer nil)
+    (should (equal "{\"answer\":{}}" (nth 3 (car requests))))))
+
+(ert-deftest opencode-forms-minibuffer-test ()
+  "Text and numbers are read and checked in the minibuffer."
+  (opencode-forms-test--with-server
+    (let ((inputs '("" "abc" "1.5" "200" "7" "")) prompts)
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (prompt &optional _initial)
+                   (push prompt prompts)
+                   (pop inputs))))
+        (opencode--form-request
+         '((id . "frm_1") (sessionID . "global") (title . "T")
+           (fields . (((key . "n") (type . "integer") (title . "Count")
+                       (required . t) (maximum . 100))
+                      ((key . "note") (type . "string"))))))
+        (should (equal "{\"answer\":{\"n\":7}}" (nth 3 (car requests))))
+        (should (string-search "(at most 100)" (nth 1 prompts)))
+        (should (string-search "(enter a whole number)" (nth 2 prompts)))
+        (should (string-search "(enter a number)" (nth 3 prompts)))
+        (should (string-search "(required)" (nth 4 prompts)))))))
+
+(ert-deftest opencode-forms-minibuffer-quit-test ()
+  "Quitting the minibuffer cancels the form."
+  (opencode-forms-test--with-server
+    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (signal 'quit nil))))
+      (opencode--form-request
+       '((id . "frm_1") (sessionID . "global") (title . "T")
+         (fields . (((key . "note") (type . "string"))))))
+      (should (equal '(delete "/api/session/global/form/frm_1")
+                     (seq-take (car requests) 2)))
+      (should-not opencode-forms--current))))
+
+(ert-deftest opencode-forms-invalid-reply-test ()
+  "An invalid answer asks again showing why, and a settled form is left alone."
+  (opencode-forms-test--with-server
+    (opencode--form-request opencode-forms-test--websearch)
+    (opencode-forms--answer "allow")
+    (funcall (car else-handlers) "error: FormAlreadySettledError: done")
+    (should (length= menus 1))
+    (funcall (car else-handlers) "error: FormInvalidAnswerError: bad")
+    (should (length= menus 2))
+    (should (string-search "bad" (opencode-forms--heading opencode-forms--current
+                                                          (opencode-forms--field))))))
+
+(ert-deftest opencode-forms-question-heading-test ()
+  "Question forms don't show their generic title, and others show the title."
+  (let ((field '((key . "k") (description . "Why?"))))
+    (should (equal "Why?" (opencode-forms--heading
+                           '((title . "Questions") (metadata . ((kind . "question"))))
+                           field)))
+    (should (equal "srv is requesting input\nSign in\nWhy?"
+                   (opencode-forms--heading
+                    '((title . "srv is requesting input")
+                      (metadata . ((kind . "mcp-elicitation") (message . "Sign in"))))
+                    field)))))
 
 (ert-deftest opencode-json-falsy-test ()
   "All of JSON's false values are recognized, as `:false' is truthy in Lisp."

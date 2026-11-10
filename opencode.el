@@ -22,7 +22,7 @@
 (require 'opencode-edit-hooks)
 (require 'opencode-flycheck)
 (require 'opencode-permission)
-(require 'opencode-question)
+(require 'opencode-forms)
 (require 'opencode-session-control)
 (require 'opencode-sessions)
 (require 'plz-media-type)
@@ -263,11 +263,8 @@ deselected, so only act on the currently selected frame."
                                        (alist-get 'id session)))
                             opencode-alerted-sessions)
               opencode-last-session-buffer (current-buffer))
-        ;; Handle pending questions when buffer becomes active
-        (when opencode-session-pending-questions
-          (let ((pending opencode-session-pending-questions))
-            (setq opencode-session-pending-questions nil)
-            (opencode--prompt-questions pending)))
+        ;; Show pending forms when buffer becomes active
+        (opencode-forms--prompt-next)
         ;; Handle pending permissions when buffer becomes active
         (when opencode-session-pending-permission
           (run-at-time 0 nil #'opencode-respond-permission))))))
@@ -437,7 +434,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
             (map-nested-elt event '(location directory))))
           (form.created (opencode--form-request .form))
           ((form.replied form.cancelled)
-           (opencode--form-settled .sessionID .id))
+           (opencode--form-settled .id))
           (otherwise (opencode--log-event "WARNING" "unhandled message type")))))))
 
 (defun opencode--handle-event (event)

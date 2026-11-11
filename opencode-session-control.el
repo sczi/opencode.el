@@ -18,6 +18,7 @@
 (require 'opencode-sessions)
 (require 'profiler)
 (require 'vtable)
+(require 'xdg)
 
 (defvar doom-real-buffer-p)
 
@@ -128,6 +129,108 @@ after its messages were replayed."
   "Cache of git branch per directory for the session control table.
 Cleared each time the table is displayed.")
 
+(defvar opencode--claude-catalog 'unloaded
+  "Alist of Anthropic models from OpenCode's models.dev cache.
+Loaded once, or the symbol `unloaded' before that.")
+
+(defvar opencode--claude-plan-tier 'unfetched
+  "The planTier reported by `claude auth status', nil if it isn't known.
+The symbol `unfetched' before the command has been started.")
+
+(defun opencode--claude-catalog ()
+  "Return the alist of Anthropic models, reading it the first time."
+  (when (eq opencode--claude-catalog 'unloaded)
+    (setq opencode--claude-catalog
+          (condition-case err
+              (with-temp-buffer
+                (insert-file-contents
+                 (expand-file-name "opencode/models.json" (xdg-cache-home)))
+                (map-nested-elt (json-parse-buffer :object-type 'alist)
+                                '(anthropic models)))
+            (error
+             (opencode--log-event "WARNING"
+                                  (format "Couldn't read Claude prices: %S" err))
+             nil))))
+  opencode--claude-catalog)
+
+(defun opencode--claude-model-price (id)
+  "Return the API price of claude-agent model ID, or nil if it isn't known.
+An alias of a model family, such as opus, uses the family's newest model."
+  (let* ((catalog (opencode--claude-catalog))
+         (id (string-remove-suffix "[1m]" id))
+         (prefix (format "claude-%s-" id)))
+    (alist-get
+     'cost
+     (or (alist-get (intern id) catalog)
+         (cdar (sort (seq-filter (lambda (model)
+                                   (string-prefix-p prefix
+                                                    (symbol-name (car model))))
+                                 catalog)
+                     (lambda (a b)
+                       (string> (alist-get 'release_date (cdr a))
+                                (alist-get 'release_date (cdr b))))))))))
+
+(defun opencode--claude-api-cost (session)
+  "Return what SESSION's tokens would cost at API prices, nil if there's no price."
+  (when-let* ((price (opencode--claude-model-price
+                      (map-nested-elt session '(model id)))))
+    (let-alist session
+      (/ (+ (* (or .tokens.input 0)
+               (or (alist-get 'input price) 0))
+            (* (+ (or .tokens.output 0) (or .tokens.reasoning 0))
+               (or (alist-get 'output price) 0))
+            (* (or .tokens.cache.read 0)
+               (or (alist-get 'cache_read price) 0))
+            (* (or .tokens.cache.write 0)
+               (or (alist-get 'cache_write price) 0)))
+         1e6))))
+
+(defun opencode--claude-subscription-session-p (session)
+  "Return non-nil if SESSION uses claude-agent and the server charged nothing."
+  (and (equal (map-nested-elt session '(model providerID)) "claude-agent")
+       (zerop (or (alist-get 'cost session) 0))))
+
+(defun opencode--fetch-claude-plan-tier ()
+  "Find the Claude plan, once, then refresh the session control buffers."
+  (when (eq opencode--claude-plan-tier 'unfetched)
+    (setq opencode--claude-plan-tier nil)
+    (when (executable-find "claude")
+      (let ((buffer (generate-new-buffer " *opencode-claude-auth*")))
+        (make-process
+         :name "opencode-claude-auth"
+         :buffer buffer
+         :noquery t
+         :connection-type 'pipe
+         :command (list shell-file-name shell-command-switch
+                        "claude auth status 2>/dev/null")
+         :sentinel
+         (lambda (process _event)
+           (unless (process-live-p process)
+             (setq opencode--claude-plan-tier
+                   (condition-case err
+                       (with-current-buffer buffer
+                         (goto-char (point-min))
+                         (alist-get 'planTier
+                                    (json-parse-buffer :object-type 'alist)))
+                     (error
+                      (opencode--log-event
+                       "WARNING" (format "Couldn't read Claude plan: %S" err))
+                      nil)))
+             (kill-buffer buffer)
+             (when opencode--claude-plan-tier
+               (opencode--redisplay-session-control-buffers)))))))))
+
+(defun opencode--session-control-cost (session)
+  "Return the text of the cost column for SESSION."
+  (if (opencode--claude-subscription-session-p session)
+      (if-let* ((cost (opencode--claude-api-cost session)))
+          (if-let* ((budget (cdr (assoc opencode--claude-plan-tier
+                                        opencode-claude-five-hour-budgets))))
+              (format "$%.2f %.1f%%" cost (/ (* 100 cost) budget))
+            (format "$%.2f" cost))
+        "-")
+    (format "$%.2f" (or (alist-get 'cost session) 0))))
+
 (defconst opencode--session-control-columns
   `((title
      (:name "Title" :max-width "50%")
@@ -156,9 +259,8 @@ Cleared each time the table is displayed.")
       :formatter opencode--format-time-ago)
      ,(lambda (object) (opencode--time-ago object 'created)))
     (cost
-     (:name "Cost" :width 8 :align right)
-     ,(lambda (object)
-        (format "$%.2f" (or (alist-get 'cost object) 0))))
+     (:name "Cost" :min-width 8 :align right)
+     ,#'opencode--session-control-cost)
     (tokens
      (:name "Tokens")
      ,(lambda (object)
@@ -206,6 +308,8 @@ Optional columns from `opencode-session-control-table-columns' are
 only shown if the table fits in the window."
   (setq opencode--session-control-sessions sessions)
   (clrhash opencode--session-control-branch-cache)
+  (when (seq-some #'opencode--claude-subscription-session-p sessions)
+    (opencode--fetch-claude-plan-tier))
   (let ((inhibit-read-only t)
         (point (point))
         (window (get-buffer-window (current-buffer) t))

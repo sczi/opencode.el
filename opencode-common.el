@@ -134,6 +134,16 @@ show all columns."
             (const :optional) (repeat ,column)))
   :group 'opencode)
 
+(defcustom opencode-claude-five-hour-budgets
+  '(("pro" . 12) ("max_5x" . 125) ("max_20x" . 294))
+  "Estimated usage in a 5 hour window of each Claude plan, in API priced dollars.
+An alist from the planTier reported by `claude auth status' to dollars.  The
+cost column of the session control table shows sessions on these plans as a
+percentage of the budget as well as dollars, and sessions on other plans as
+dollars only."
+  :type '(alist :key-type string :value-type number)
+  :group 'opencode)
+
 (defconst opencode--apply-patch-file-header-regexp
   "^\\*\\*\\* \\(Add File\\|Update File\\|Delete File\\): \\(.*\\)$"
   "Regexp matching file operation headers in patch tool input.")

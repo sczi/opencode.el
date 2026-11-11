@@ -133,6 +133,9 @@ project.
 Here you see a table view with information on all sessions for a given project.
 You can configure what columns are shown with =opencode-session-control-table-columns=.
 
+With a claude subscription plan, the cost column will show dollars at API
+pricing, and show the estimated percent of the 5 hour limit a session has used.
+
 Shortcuts to act on the session at point:
 
 |   Key    | Description                                                                                 |

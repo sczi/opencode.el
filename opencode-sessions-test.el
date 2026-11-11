@@ -1332,5 +1332,79 @@ Also after a minibuffer read in an async callback leaves `this-command' set."
             (should (equal (list buffer) seen)))
         (kill-buffer buffer)))))
 
+(defmacro opencode-session-test--with-claude-plan (tier &rest body)
+  "Run BODY on Claude plan TIER, with a fixed catalog of API prices."
+  (declare (indent 1))
+  `(let ((opencode--claude-plan-tier ,tier)
+         (opencode-claude-five-hour-budgets
+          '(("pro" . 20) ("max_5x" . 125) ("max_20x" . 294)))
+         (opencode--claude-catalog
+          '((claude-opus-4-8 (release_date . "2026-05-28")
+             (cost (input . 5) (output . 25) (cache_read . 0.5)
+                   (cache_write . 6.25)))
+            (claude-opus-5-5 (release_date . "2026-09-22")
+                             (cost (input . 4) (output . 20) (cache_read . 0.2)
+                                   (cache_write . 5))))))
+     ,@body))
+
+(defun opencode-session-test--claude-session (model &optional cost provider)
+  "Return a session using MODEL of PROVIDER that charged COST.
+Its tokens cost $2.00 at claude-opus-5-5's prices.  PROVIDER defaults to
+claude-agent."
+  `((cost . ,(or cost 0))
+    (model (id . ,model) (providerID . ,(or provider "claude-agent")))
+    (tokens (input . 100000) (output . 40000) (reasoning . 10000)
+            (cache (read . 1000000) (write . 80000)))))
+
+(ert-deftest opencode-session-control-cost-shows-budget-share ()
+  "Claude subscription sessions show API dollars and the share of the budget."
+  (dolist (case '(("pro" . "$2.00 10.0%")
+                  ("max_5x" . "$2.00 1.6%")
+                  ("max_20x" . "$2.00 0.7%")))
+    (opencode-session-test--with-claude-plan (car case)
+      (should (equal (cdr case)
+                     (opencode--session-control-cost
+                      (opencode-session-test--claude-session
+                       "claude-opus-5-5")))))))
+
+(ert-deftest opencode-session-control-cost-other-plans-omit-share ()
+  "Plans without a budget, or an unknown plan, show dollars only."
+  (dolist (tier '("other" "max_other" nil unfetched))
+    (opencode-session-test--with-claude-plan tier
+      (should (equal "$2.00"
+                     (opencode--session-control-cost
+                      (opencode-session-test--claude-session
+                       "claude-opus-5-5")))))))
+
+(ert-deftest opencode-session-control-cost-resolves-aliases ()
+  "An alias uses the newest model of its family, and [1m] is ignored."
+  (opencode-session-test--with-claude-plan "pro"
+    (dolist (model '("opus" "opus[1m]" "claude-opus-5-5[1m]"))
+      (should (equal "$2.00 10.0%"
+                     (opencode--session-control-cost
+                      (opencode-session-test--claude-session model)))))))
+
+(ert-deftest opencode-session-control-cost-without-price ()
+  "A model with no known price shows no cost."
+  (opencode-session-test--with-claude-plan "pro"
+    (should (equal "-"
+                   (opencode--session-control-cost
+                    (opencode-session-test--claude-session "claude-fable-5-2"))))
+    (let ((opencode--claude-catalog nil))
+      (should (equal "-"
+                     (opencode--session-control-cost
+                      (opencode-session-test--claude-session "opus")))))))
+
+(ert-deftest opencode-session-control-cost-real-dollars-unchanged ()
+  "Sessions the server charged for, and other providers, show the server's cost."
+  (opencode-session-test--with-claude-plan "pro"
+    (should (equal "$3.21"
+                   (opencode--session-control-cost
+                    (opencode-session-test--claude-session "opus" 3.21))))
+    (should (equal "$0.00"
+                   (opencode--session-control-cost
+                    (opencode-session-test--claude-session
+                     "gpt-5" 0 "openai"))))))
+
 (provide 'opencode-sessions-test)
 ;;; opencode-sessions-test.el ends here

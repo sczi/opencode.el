@@ -242,9 +242,10 @@ ended, like the OpenCode app's inbox."
                 ;; redisplay skips a `display' string after invisible
                 ;; text, like markup hidden at the end of the first line
                 (overlay-put ov 'before-string
-                             (concat " " (overlay-get ov 'display)))
+                             (concat " " (opencode--fold-label ov)))
                 (overlay-put ov 'display nil))
-              hs-display-lines-hidden t)
+              ;; `opencode--fold-label' counts lines without hidden fences
+              hs-display-lines-hidden nil)
   (hs-minor-mode)
   ;; Evil picks a buffer's initial state from its minor modes before its
   ;; major mode, so a minor mode like `hs-minor-mode' (normal state in

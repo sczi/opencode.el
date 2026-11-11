@@ -132,6 +132,28 @@ Folds don't nest, so this is the nearest block start before point."
               ((>= (get-text-property start 'opencode-fold) (point))))
     (goto-char start)))
 
+(defun opencode--fold-line-count (beg end)
+  "Return how many visible lines follow the first line of a fold.
+The fold spans BEG, at the end of its first line, to END.  END already
+excludes a final closing fence, so skip only the fences at the start: a
+tool input's closing fence, if any, and the output's opening fence."
+  (save-excursion
+    (goto-char beg)
+    (let ((start (if (looking-at "\n\\(?:[`~]\\{3,\\}[[:blank:]]*\n\\)?[`~]\\{3,\\}[^`\n]*\n?")
+                     (match-end 0)
+                   (1+ beg))))
+      (count-lines (min start end) end))))
+
+(defun opencode--fold-label (overlay)
+  "Return the label for the fold OVERLAY, from its `display' ellipsis."
+  (let ((ellipsis (overlay-get overlay 'display))
+        (lines (opencode--fold-line-count (overlay-start overlay)
+                                          (overlay-end overlay))))
+    (concat (apply #'propertize
+                   (format "%d %s" lines (if (= lines 1) "line" "lines"))
+                   (text-properties-at 0 ellipsis))
+            ellipsis)))
+
 (defun opencode--fold (beg &optional end shown)
   "Make the output from BEG to END foldable, except its first line.
 END defaults to the process marker.  Fold it now unless SHOWN is non-nil."

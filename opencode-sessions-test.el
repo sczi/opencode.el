@@ -524,6 +524,39 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (hs-toggle-hiding)
       (should (opencode-session-test--folded-p "Thinking")))))
 
+(defun opencode-session-test--fold-label (text)
+  "Return the label of the fold whose first line contains TEXT."
+  (save-excursion
+    (goto-char (point-min))
+    (search-forward text)
+    (overlay-get (seq-find (lambda (ov) (overlay-get ov 'hs))
+                           (overlays-in (pos-eol) (1+ (pos-eol))))
+                 'before-string)))
+
+(ert-deftest opencode-session-fold-label-test ()
+  "Fold labels count visible lines, not the fence lines Markdown hides."
+  (with-opencode-session-test-buffer
+    (let ((opencode-shown-outputs nil)
+          (grep '((pattern . "foo")))
+          (shell '((command . "ls")))
+          (eval '((code . "(progn\n  nil)"))))
+      (opencode--output "request\n\n")
+      (opencode-session-test--delta 'reasoning "Thinking\nmore thoughts")
+      (opencode-session-test--tool "grep" "running" grep)
+      (opencode-session-test--tool "shell" "running" shell)
+      (opencode-session-test--tool "eval" "running" eval)
+      (opencode-session-test--tool "grep" "completed" grep "a.el:1\nb.el:2")
+      (opencode-session-test--tool "shell" "completed" shell "ls-file")
+      (opencode-session-test--tool "eval" "completed" eval "result")
+      (dolist (fold '(("Thinking" . "1 line")
+                      ("grep \"foo\"" . "2 lines")
+                      ("\nls" . "1 line")
+                      ("  nil)" . "1 line")))
+        (let ((label (opencode-session-test--fold-label (car fold))))
+          (should (string-match-p (format "\\` %s\\b" (cdr fold)) label))
+          ;; The count stays clickable, like the ellipsis after it.
+          (should (get-text-property 1 'keymap label)))))))
+
 (ert-deftest opencode-session-shown-outputs-test ()
   "`opencode-shown-outputs' picks what starts unfolded; all of it can be folded."
   (with-opencode-session-test-buffer

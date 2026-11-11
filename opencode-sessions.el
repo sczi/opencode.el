@@ -47,7 +47,8 @@
     "C-c t" 'opencode-scroll-to-last-response-start
     "C-c p" 'opencode-open-parent
     "C-c f" 'opencode-add-file
-    "C-c b" 'opencode-add-buffer-dwim
+    "C-c b" 'opencode-btw
+    "C-c B" 'opencode-add-buffer-dwim
     "C-c m" 'opencode-select-model
     "C-c v" 'opencode-select-variant
     "C-c M" 'opencode-toggle-mcp
@@ -288,6 +289,51 @@ in webchat."
       (message "Copied conversation (%d messages, %d characters)"
                (length messages)
                (length transcript)))))
+
+(defconst opencode--btw-instructions
+  (concat "The user is asking a quick side question about the conversation so far. "
+          "Answer directly and concisely in markdown from what you already know. "
+          "Do not call any tools and do not take any actions.")
+  "Instructions sent before a side question.
+The generate endpoint exposes the session's tools but runs no tool loop, so a
+tool call would give an empty answer.")
+
+(defun opencode--show-btw-answer (question answer)
+  "Pop up a new buffer showing ANSWER to QUESTION."
+  (let ((buffer (generate-new-buffer
+                 (format "*OpenCode btw: %s*"
+                         (truncate-string-to-width
+                          (string-clean-whitespace question) 50 nil nil t))))
+        (opencode-open-session-same-window nil))
+    (with-current-buffer buffer
+      (insert "> " (string-replace "\n" "\n> " question) "\n\n" answer "\n")
+      (markdown-ts-view-mode)
+      (goto-char (point-min)))
+    (opencode--switch-to-buffer buffer)))
+
+(defun opencode-btw (question)
+  "Ask QUESTION about the current session without adding to its conversation.
+The answer opens in a new buffer.  It can be asked while the session is busy,
+then only sees the conversation up to the response in progress."
+  (interactive
+   (progn
+     (unless opencode-session-id
+       (user-error "Not in an OpenCode session"))
+     (list (read-string "Side question: "))))
+  (when (string-blank-p question)
+    (user-error "No question given"))
+  (message "Asking side question...")
+  ;; Don't sync the agent, switching it would record a message in the session.
+  (opencode-api-session-generate (opencode-session-id)
+      `((prompt . ,(concat opencode--btw-instructions "\n\n" question)))
+      result
+    :else (lambda (error-msg)
+            (message "Side question failed: %s" error-msg))
+    (let ((answer (string-trim (or (alist-get 'text result) ""))))
+      (if (string-empty-p answer)
+          (message "No answer to side question, the model may have tried to call a tool")
+        (message nil)
+        (opencode--show-btw-answer question answer)))))
 
 (defun opencode-kill-session (&optional session)
   "Kill SESSION."

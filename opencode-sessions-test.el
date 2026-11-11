@@ -1528,5 +1528,54 @@ diff is requested, then a function to answer that request."
       (funcall respond (list (opencode-session-test--diff-entry "opencode-api.el" "modified")))
       (should (equal hook-calls '(("opencode-api.el")))))))
 
+(defmacro opencode-session-test--with-btw (response &rest body)
+  "Run BODY with generate requests answered with RESPONSE.
+BODY can refer to the requests made as `requests', newest first, and to the
+buffers displayed as `shown', newest first.  The displayed buffers are killed
+afterwards."
+  (declare (indent 1))
+  `(let (requests shown)
+     (cl-letf (((symbol-function 'opencode-api--request)
+                (lambda (method path &rest args)
+                  (push (list method path (plist-get args :body)) requests)
+                  (funcall (plist-get args :then) ,response)))
+               ((symbol-function 'opencode--switch-to-buffer)
+                (lambda (buffer) (push buffer shown))))
+       (unwind-protect
+           (with-temp-buffer
+             (setq opencode-session-id "session")
+             ,@body)
+         (mapc #'kill-buffer shown)))))
+
+(ert-deftest opencode-btw-sends-transient-request-test ()
+  (opencode-session-test--with-btw '((text . "answer"))
+    (opencode-btw "why?")
+    (pcase-let ((`((,method ,path ,body)) requests))
+      (should (eq method 'post))
+      (should (equal path "/api/session/session/generate"))
+      (should (equal (alist-get 'prompt body)
+                     (concat opencode--btw-instructions "\n\nwhy?"))))))
+
+(ert-deftest opencode-btw-each-answer-gets-a-new-buffer-test ()
+  (opencode-session-test--with-btw '((text . "  **answer**\n"))
+    (opencode-btw "why?")
+    (opencode-btw "why?")
+    (should (= (length shown) 2))
+    (should-not (eq (car shown) (cadr shown)))
+    (with-current-buffer (car shown)
+      (should (derived-mode-p 'markdown-ts-view-mode))
+      (should buffer-read-only)
+      (should (equal (buffer-string) "> why?\n\n**answer**\n")))))
+
+(ert-deftest opencode-btw-blank-answer-test ()
+  (opencode-session-test--with-btw '((text . " \n"))
+    (opencode-btw "why?")
+    (should-not shown)))
+
+(ert-deftest opencode-btw-blank-question-test ()
+  (opencode-session-test--with-btw '((text . "answer"))
+    (should-error (opencode-btw "  ") :type 'user-error)
+    (should-not requests)))
+
 (provide 'opencode-sessions-test)
 ;;; opencode-sessions-test.el ends here

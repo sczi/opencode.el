@@ -31,6 +31,8 @@ Requests for active sessions return ACTIVE, and others a session."
   `(let ((opencode-toast-function #'ignore)
          (opencode-alerted-sessions nil)
          (opencode-file-edited-functions nil)
+         (opencode-files-finished-editing-functions nil)
+         (opencode-project-files-finished-editing-functions nil)
          (opencode--session-control-buffers nil))
      (cl-letf (((symbol-function 'opencode-api--request)
                 (lambda (_method path &rest args)

@@ -197,6 +197,7 @@ may start with :else HANDLER to handle errors."
  (post session-shell "/api/session/%s/shell")
  (post session-model "/api/session/%s/model")
  (post session-agent "/api/session/%s/agent")
+ (session-diff "/api/session/%s/diff?context=0")
  (post revert-message "/api/session/%s/revert/stage")
  (delete unrevert-all "/api/session/%s/revert")
  (session-permissions "/api/session/%s/permission")

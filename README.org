@@ -26,7 +26,9 @@ of advantages over the official TUI:
      =opencode-fix-parens= to fix parentheses with parinfer if =parinfer-rust-mode=
      is installed after edits to lisp files.
    - calls =opencode-files-finished-editing-functions= with a list of all files
-     edited in the last assistant turn. Add =opencode-indent-files= here to
+     changed in the last assistant turn, including by shell commands, according
+     to the server's snapshot diff, so it requires a git repository and gitignored
+     files aren't included. Add =opencode-indent-files= here to
      automatically fix indentation with =indent-region=, and
      =opencode-flycheck-edited-files= to run flycheck and report all errors and
      warnings in the edited files to the LLM.
@@ -284,7 +286,7 @@ performance fix, and set both =comint-scroll-show-maximum-output= and
 - =opencode-toast-function= is used to show toast notifications
 - =opencode-file-edited-functions= is a hook run after edit tool calls
 - =opencode-files-finished-editing-functions= is a hook run after the assistant
-  response finishes, with all files that it edited
+  response finishes, with all files changed during it
 - =opencode-project-files-finished-editing-functions= is a buffer local hook run
   after the assistant response finishes, that you can use for example to run
   your test suite and report errors back the to the LLM

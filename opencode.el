@@ -405,7 +405,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
                           (error . ,.error) (content . ,.content) (metadata . ,.metadata)))))
              (when (eq type 'session.tool.success)
                (opencode--maybe-run-file-edited-hook
-                .sessionID (plist-get call :name) (plist-get call :input) .metadata))))
+                (plist-get call :name) (plist-get call :input) .metadata))))
           (session.shell.ended
            (opencode--with-session-buffer .sessionID
              (opencode--insert-shell-output (or .output.output "")

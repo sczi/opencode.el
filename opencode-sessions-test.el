@@ -1439,5 +1439,94 @@ claude-agent."
                     (opencode-session-test--claude-session
                      "gpt-5" 0 "openai"))))))
 
+(defmacro opencode-session-test--with-finished-editing (&rest body)
+  "Run BODY in a session whose finished editing hook records its FILES.
+BODY can refer to `hook-calls', the base names of the FILES of each call
+with the newest first, and `respond', which is nil until the session's
+diff is requested, then a function to answer that request."
+  (declare (indent 0) (debug t))
+  `(with-opencode-session-test-buffer
+     (let* ((hook-calls nil)
+            (respond nil)
+            (opencode-files-finished-editing-functions
+             (list (lambda (files done)
+                     (push (mapcar #'file-name-nondirectory files) hook-calls)
+                     (funcall done)))))
+       (cl-letf (((symbol-function 'opencode-api--request)
+                  (lambda (_method path &rest args)
+                    (should (equal path "/api/session/session/diff?context=0"))
+                    (setq respond (plist-get args :then)))))
+         ,@body))))
+
+(defun opencode-session-test--diff-entry (file status &optional patch)
+  "Return a session diff entry for FILE with STATUS and PATCH."
+  `((file . ,file) (status . ,status) (patch . ,(or patch "@@ -1 +1 @@\n"))))
+
+(ert-deftest opencode-files-finished-editing-uses-session-diff-test ()
+  "Hooks get the existing text files in the turn's diff."
+  (opencode-session-test--with-finished-editing
+    (opencode--maybe-run-files-finished-editing-hook "session" nil)
+    (should-not hook-calls)
+    (funcall respond
+             (list (opencode-session-test--diff-entry "opencode-api.el" "modified")
+                   (opencode-session-test--diff-entry "opencode.el" "deleted")
+                   (opencode-session-test--diff-entry "README.org" "modified" "")
+                   (opencode-session-test--diff-entry "missing.el" "modified")))
+    (should (equal hook-calls '(("opencode-api.el"))))))
+
+(ert-deftest opencode-files-finished-editing-deletion-only-test ()
+  "Hooks run with no files when the turn only deleted files."
+  (opencode-session-test--with-finished-editing
+    (opencode--maybe-run-files-finished-editing-hook "session" nil)
+    (funcall respond (list (opencode-session-test--diff-entry "gone.el" "deleted")))
+    (should (equal hook-calls '(nil)))))
+
+(ert-deftest opencode-files-finished-editing-empty-diff-test ()
+  "Hooks don't run for a turn that changed nothing, nor is it superseding."
+  (opencode-session-test--with-finished-editing
+    (setq opencode--files-finished-editing-run 'running)
+    (opencode--maybe-run-files-finished-editing-hook "session" nil)
+    (funcall respond nil)
+    (should-not hook-calls)
+    (should (eq opencode--files-finished-editing-run 'running))))
+
+(ert-deftest opencode-files-finished-editing-no-hooks-test ()
+  "The diff isn't requested when no hooks would use it."
+  (opencode-session-test--with-finished-editing
+    (let ((opencode-files-finished-editing-functions nil))
+      (opencode--maybe-run-files-finished-editing-hook "session" nil))
+    (should-not respond)))
+
+(ert-deftest opencode-files-finished-editing-interrupted-test ()
+  "Interrupting cancels running hooks and a pending diff, and requests none."
+  (opencode-session-test--with-finished-editing
+    (setq opencode--files-finished-editing-run 'running)
+    (opencode--maybe-run-files-finished-editing-hook "session" t)
+    (should-not respond)
+    (should-not opencode--files-finished-editing-run)
+    (opencode--maybe-run-files-finished-editing-hook "session" nil)
+    (opencode--maybe-run-files-finished-editing-hook "session" t)
+    (funcall respond (list (opencode-session-test--diff-entry "opencode.el" "modified")))
+    (should-not hook-calls)))
+
+(ert-deftest opencode-files-finished-editing-prompt-during-request-test ()
+  "A diff answered after a new prompt was sent is of the wrong turn."
+  (opencode-session-test--with-finished-editing
+    (opencode--maybe-run-files-finished-editing-hook "session" nil)
+    (setq opencode-session-status "busy")
+    (funcall respond (list (opencode-session-test--diff-entry "opencode.el" "modified")))
+    (should-not hook-calls)))
+
+(ert-deftest opencode-files-finished-editing-superseded-request-test ()
+  "Only the newest of overlapping diff requests runs the hooks."
+  (opencode-session-test--with-finished-editing
+    (opencode--maybe-run-files-finished-editing-hook "session" nil)
+    (let ((stale respond))
+      (opencode--maybe-run-files-finished-editing-hook "session" nil)
+      (funcall stale (list (opencode-session-test--diff-entry "opencode.el" "modified")))
+      (should-not hook-calls)
+      (funcall respond (list (opencode-session-test--diff-entry "opencode-api.el" "modified")))
+      (should (equal hook-calls '(("opencode-api.el")))))))
+
 (provide 'opencode-sessions-test)
 ;;; opencode-sessions-test.el ends here

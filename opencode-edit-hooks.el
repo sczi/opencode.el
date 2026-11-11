@@ -32,10 +32,14 @@ edits, END-LINE is nil."
 (defcustom opencode-files-finished-editing-functions nil
   "Run hooks after opencode finishes editing files.
 This is an abnormal hook.  Each entry receives two arguments, FILES and
-DONE.  FILES is the list of file paths from completed write, edit, or
-patch tool calls.  DONE is a function the hook must call exactly once
-when it finishes, either synchronously or asynchronously, optionally
-with a diagnostic message string.
+DONE.  FILES is the list of existing text files changed during the
+turn, according to the server's snapshot diff of the worktree.  So it
+includes changes made by shell commands, omits gitignored files, and is
+empty if the turn only deleted files.  Hooks don't run if the diff is empty,
+which is always the case outside a git repository or with snapshots
+disabled, nor after an interrupted turn.  DONE is a function the hook
+must call exactly once when it finishes, either synchronously or
+asynchronously, optionally with a diagnostic message string.
 
 Hooks run in order when the session becomes idle; each starts after the
 previous one calls DONE.  All diagnostics are sent to the session
@@ -53,12 +57,9 @@ Designed to be set in `.dir-locals.el'"
   :type 'hook
   :group 'opencode)
 
-(defvar-local opencode--files-edited-this-turn nil
-  "Files edited by opencode during the current turn.")
-
-(defun opencode--maybe-run-file-edited-hook (session-id tool input metadata)
-  "Record files edited by a completed TOOL call and run per-file hooks.
-INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
+(defun opencode--maybe-run-file-edited-hook (tool input metadata)
+  "Run per-file hooks for the files edited by a completed TOOL call.
+INPUT is the input of the call, and METADATA its result metadata."
   (dolist (file-ranges
            (pcase tool
              ("write"
@@ -73,8 +74,6 @@ INPUT is the input of the call in SESSION-ID, and METADATA its result metadata."
                                        (alist-get 'patch file)))))
                       (alist-get 'files metadata)))))
     (when-let* ((file (opencode--resolve-file-reference (car file-ranges))))
-      (opencode--with-session-buffer session-id
-        (cl-pushnew file opencode--files-edited-this-turn :test #'equal))
       (run-hook-with-args 'opencode-file-edited-functions
                           file (cdr file-ranges)))))
 
@@ -125,19 +124,42 @@ session supersedes this one."
                      (nreverse diagnostics)))))))))
       (next))))
 
+(defvar-local opencode--files-finished-editing-request nil
+  "Token identifying the session's live request for its turn's diff.
+Separate from `opencode--files-finished-editing-run', so that a turn
+which changed nothing doesn't supersede hooks that are still running.")
+
+(defun opencode--session-diff-files (diff)
+  "Return the absolute paths of the existing text files in session DIFF.
+Binary files have an empty patch."
+  (cl-loop for entry in diff
+           unless (or (equal (alist-get 'status entry) "deleted")
+                      (equal (alist-get 'patch entry) ""))
+           when (opencode--resolve-file-reference (alist-get 'file entry))
+           collect it))
+
 (defun opencode--maybe-run-files-finished-editing-hook (session-id interrupted)
-  "Run `opencode-files-finished-editing-functions' for SESSION-ID's pending files.
-If the session was INTERRUPTED, cancel any running hooks instead, and
-keep the pending files for the next turn that finishes."
+  "Run `opencode-files-finished-editing-functions' on SESSION-ID's turn's diff.
+If the session was INTERRUPTED, cancel any running hooks instead."
   (opencode--with-session-buffer session-id
     (if interrupted
-        (setq opencode--files-finished-editing-run nil)
-      (when opencode--files-edited-this-turn
-        (let ((files opencode--files-edited-this-turn))
-          (setq opencode--files-edited-this-turn nil)
-          (when-let* ((hooks (append opencode-files-finished-editing-functions
-                                     opencode-project-files-finished-editing-functions)))
-            (opencode--run-files-finished-editing-hooks files hooks)))))))
+        (setq opencode--files-finished-editing-run nil
+              opencode--files-finished-editing-request nil)
+      (when-let* ((hooks (append opencode-files-finished-editing-functions
+                                 opencode-project-files-finished-editing-functions)))
+        (let ((request (gensym "request")))
+          (setq opencode--files-finished-editing-request request)
+          (opencode-api-session-diff (session-id)
+              diff
+            :else (lambda (message)
+                    (opencode--log-event "WARNING FINISHED EDITING HOOK"
+                                         (format "Session diff failed: %s" message)))
+            ;; A prompt sent since would make this the diff of an unfinished turn
+            (when (and diff
+                       (eq request opencode--files-finished-editing-request)
+                       (equal opencode-session-status "idle"))
+              (opencode--run-files-finished-editing-hooks
+               (opencode--session-diff-files diff) hooks))))))))
 
 (defun opencode-indent-files (files done)
   "Indent FILES with Emacs, then call DONE."

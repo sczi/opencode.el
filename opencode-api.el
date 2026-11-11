@@ -69,8 +69,8 @@ otherwise signal it."
     (apply
      #'plz method (concat opencode-api-url path)
      :as (lambda () (unless (string-empty-p (buffer-string))
-                      (json-parse-buffer :array-type 'list
-                                         :object-type 'alist)))
+                 (json-parse-buffer :array-type 'list
+                                    :object-type 'alist)))
      :headers (delq nil
                     (list '("Content-Type" . "application/json")
                           (cons "x-opencode-directory"
@@ -103,28 +103,44 @@ otherwise signal it."
      (when body-p
        (list :body (json-encode body))))))
 
-(defun opencode-api--fetch-all-messages (session-id then &optional else)
-  "Call THEN with all of SESSION-ID's messages, oldest first.
-The server returns them newest first, a page at a time.
+(defun opencode-api--fetch-all-pages (path then &optional else)
+  "Call THEN with the items of every page of PATH, in the server's order.
+PATH must already have a query string.
 Call ELSE with the error message if given and a request fails."
-  (let (messages)
+  (let (pages)
     (cl-labels ((fetch (cursor)
                   (opencode-api--request
-                   'get (format "/api/session/%s/message?limit=200%s"
-                                session-id
-                                (if cursor
-                                    (concat "&cursor=" (url-hexify-string cursor))
-                                  ""))
+                   'get (if cursor
+                            (concat path "&cursor=" (url-hexify-string cursor))
+                          path)
                    :raw t
                    :else else
                    :then (lambda (result)
                            (let ((page (alist-get 'data result))
                                  (next (map-nested-elt result '(cursor next))))
-                             (setq messages (append (reverse page) messages))
+                             (push page pages)
                              (if (and page (not (opencode--json-falsy next)))
                                  (fetch next)
-                               (funcall then messages)))))))
+                               (funcall then (apply #'append (nreverse pages)))))))))
       (fetch nil))))
+
+(defun opencode-api--fetch-all-messages (session-id then &optional else)
+  "Call THEN with all of SESSION-ID's messages, oldest first.
+The server returns them newest first, a page at a time.
+Call ELSE with the error message if given and a request fails."
+  (opencode-api--fetch-all-pages
+   (format "/api/session/%s/message?limit=200" session-id)
+   (lambda (messages) (funcall then (reverse messages)))
+   else))
+
+(defun opencode-api--fetch-all-sessions (project-id include-subagents then)
+  "Call THEN with all of PROJECT-ID's sessions that aren't archived.
+Subagent sessions are only included if INCLUDE-SUBAGENTS is non-nil."
+  (opencode-api--fetch-all-pages
+   (format "/api/session?project=%s&archived=false&limit=200%s"
+           project-id
+           (if include-subagents "" "&parentID=null"))
+   then))
 
 (eval-and-compile
   (defun opencode-api--expand (method path args data return-var body)
@@ -181,7 +197,6 @@ may start with :else HANDLER to handle errors."
  (post nodata enable-mcp "/api/experimental/mcp/%s/connect")
  (post nodata disable-mcp "/api/experimental/mcp/%s/disconnect")
  (session "/api/session/%s")
- (sessions-for-project "/api/session?project=%s&archived=false&limit=200")
  (root-sessions-for-project
   "/api/session?project=%s&archived=false&limit=200&parentID=null")
  (session-children "/api/session?parentID=%s")

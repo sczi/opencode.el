@@ -236,7 +236,8 @@ An alias of a model family, such as opus, uses the family's newest model."
      (:name "Title" :max-width "50%")
      ,(lambda (object)
         (let ((icon (opencode--session-status-icon object)))
-          (concat (when icon (concat icon " "))
+          (concat (alist-get 'tree-prefix object)
+                  (when icon (concat icon " "))
                   (opencode--session-title object)))))
     (branch
      (:name "Branch" :min-width 6)
@@ -287,20 +288,68 @@ An alias of a model family, such as opus, uses the family's newest model."
   "Alist of (KEY VTABLE-COLUMN-SPEC GETTER) for the session control table.
 GETTER is called with the session object.")
 
+(defun opencode--session-control-tree (sessions)
+  "Return SESSIONS with subagents directly under the session that spawned them.
+Top level sessions are ordered by last update, newest first, and the
+subagents of a session by creation, oldest first.  Sessions below the
+top level get a `tree-prefix' entry with the characters connecting them
+to their parent.  A session whose parent isn't in SESSIONS is top level."
+  (let ((ids (make-hash-table :test #'equal))
+        (children (make-hash-table :test #'equal))
+        roots tree)
+    (dolist (session sessions)
+      (puthash (alist-get 'id session) t ids))
+    (dolist (session sessions)
+      (let ((parent (alist-get 'parentID session)))
+        (if (gethash parent ids)
+            (push session (gethash parent children))
+          (push session roots))))
+    (cl-labels ((time-getter (type)
+                  (lambda (session)
+                    (or (map-nested-elt session `(time ,type)) 0)))
+                (walk (session prefix connector)
+                  (push (if connector
+                            (cons (cons 'tree-prefix (concat prefix connector))
+                                  session)
+                          session)
+                        tree)
+                  (let* ((subagents (seq-sort-by
+                                     (time-getter 'created) #'<
+                                     (gethash (alist-get 'id session) children)))
+                         (last-subagent (car (last subagents)))
+                         (indent (concat prefix
+                                         (pcase connector
+                                           ("├─ " "│  ")
+                                           ("└─ " "   ")))))
+                    (dolist (subagent subagents)
+                      (walk subagent indent
+                            (if (eq subagent last-subagent) "└─ " "├─ "))))))
+      (dolist (root (seq-sort-by (time-getter 'updated) #'> roots))
+        (walk root "" nil)))
+    (nreverse tree)))
+
 (defun opencode--session-control-insert-table (sessions columns)
-  "Insert a vtable of SESSIONS with COLUMNS, a list of column keys."
+  "Insert a vtable of SESSIONS with COLUMNS, a list of column keys.
+If `opencode-session-control-verbose' is non-nil show them as a tree."
   (let* ((columns (mapcar (lambda (key)
                             (or (alist-get key opencode--session-control-columns)
                                 (error "Unknown session control column: %s" key)))
                           columns))
-         (getters (vconcat (mapcar #'cadr columns))))
-    (make-vtable
-     :columns (mapcar #'car columns)
-     :objects sessions
-     :getter (lambda (object column _vtable)
-               (funcall (aref getters column) object))
-     :separator-width 3
-     :keymap opencode-session-control-mode-map)))
+         (getters (vconcat (mapcar #'cadr columns)))
+         (table (make-vtable
+                 :columns (mapcar #'car columns)
+                 :objects (if opencode-session-control-verbose
+                              (opencode--session-control-tree sessions)
+                            sessions)
+                 :getter (lambda (object column _vtable)
+                           (funcall (aref getters column) object))
+                 :separator-width 3
+                 :keymap opencode-session-control-mode-map
+                 :insert nil)))
+    ;; The primary column's sort would undo the tree order
+    (when opencode-session-control-verbose
+      (setf (vtable-sort-by table) nil))
+    (vtable-insert table)))
 
 (defun opencode--session-control-display (sessions)
   "Display SESSIONS in the current session control buffer.
@@ -346,13 +395,9 @@ only shown if the table fits in the window."
   "Refresh the session display table for DIRECTORY."
   (interactive)
   (when opencode-session-control-project-id
-    (if opencode-session-control-verbose
-        (opencode-api-sessions-for-project (opencode-session-control-project-id)
-            sessions
-          (opencode--session-control-display sessions))
-      (opencode-api-root-sessions-for-project (opencode-session-control-project-id)
-          sessions
-        (opencode--session-control-display sessions)))))
+    (opencode-api--fetch-all-sessions opencode-session-control-project-id
+                                      opencode-session-control-verbose
+                                      #'opencode--session-control-display)))
 
 (defun opencode--redisplay-session-control-buffers ()
   "Refresh all live session control buffers."

@@ -1441,6 +1441,89 @@ claude-agent."
                     (opencode-session-test--claude-session
                      "gpt-5" 0 "openai"))))))
 
+(defun opencode-session-test--tree-session (id parent created updated)
+  "Return a session ID spawned by PARENT with CREATED and UPDATED times."
+  `((id . ,id)
+    ,@(when parent `((parentID . ,parent)))
+    (title . ,id)
+    (time (created . ,created) (updated . ,updated))))
+
+(defconst opencode-session-test--tree-sessions
+  (mapcar (lambda (args)
+            (apply #'opencode-session-test--tree-session args))
+          '(("second" "old-root" 20000 90000)
+            ("new-root" nil 5000 100000)
+            ("first" "old-root" 10000 95000)
+            ("nested" "first" 12000 70000)
+            ("old-root" nil 1000 50000)
+            ("orphan" "missing" 3000 60000)))
+  "Sessions in no particular order, forming a tree when arranged.")
+
+(defconst opencode-session-test--tree-expected
+  '("new-root" "orphan" "old-root" "├─ first" "│  └─ nested" "└─ second")
+  "Titles and connectors of `opencode-session-test--tree-sessions' as a tree.")
+
+(ert-deftest opencode-session-control-tree-order-and-prefixes ()
+  "Subagents follow their parent oldest first, connected by tree characters."
+  (should (equal opencode-session-test--tree-expected
+                 (mapcar (lambda (session)
+                           (concat (alist-get 'tree-prefix session)
+                                   (alist-get 'id session)))
+                         (opencode--session-control-tree
+                          opencode-session-test--tree-sessions)))))
+
+(defun opencode-session-test--table-titles (verbose)
+  "Return the title column of a session control table, with VERBOSE set."
+  (with-temp-buffer
+    (let ((opencode-session-control-verbose verbose))
+      (opencode--session-control-insert-table
+       opencode-session-test--tree-sessions '(title last-update))
+      (goto-char (point-min))
+      (let (titles)
+        (while (not (eobp))
+          (push (replace-regexp-in-string
+                 " +[^ ]+\\'" ""
+                 (buffer-substring-no-properties
+                  (point) (line-end-position)))
+                titles)
+          (forward-line 1))
+        (nreverse titles)))))
+
+(ert-deftest opencode-session-control-verbose-table-keeps-tree-order ()
+  "The verbose table isn't reordered by the last updated column."
+  (should (equal opencode-session-test--tree-expected
+                 (opencode-session-test--table-titles t))))
+
+(ert-deftest opencode-session-control-normal-table-sorted-by-update ()
+  "Without verbose the table has no connectors and sorts by last update."
+  (should (equal '("new-root" "first" "second" "nested" "orphan" "old-root")
+                 (opencode-session-test--table-titles nil))))
+
+(ert-deftest opencode-api-fetch-all-sessions-test ()
+  "Sessions of every page are combined in the server's order."
+  (let (paths result)
+    (cl-letf (((symbol-function 'opencode-api--request)
+               (cl-function
+                (lambda (_method path &key then &allow-other-keys)
+                  (push path paths)
+                  (funcall then
+                           (if (string-search "cursor=" path)
+                               '((data ((id . "c")))
+                                 (cursor (next . :null)))
+                             '((data ((id . "a")) ((id . "b")))
+                               (cursor (next . "a=b")))))))))
+      (opencode-api--fetch-all-sessions
+       "project" t (lambda (sessions) (setq result sessions)))
+      (should (equal '("a" "b" "c")
+                     (mapcar (lambda (s) (alist-get 'id s)) result)))
+      (should (equal '("/api/session?project=project&archived=false&limit=200&cursor=a%3Db"
+                       "/api/session?project=project&archived=false&limit=200")
+                     paths))
+      (setq paths nil)
+      (opencode-api--fetch-all-sessions "project" nil #'ignore)
+      (should (equal "/api/session?project=project&archived=false&limit=200&parentID=null"
+                     (car (last paths)))))))
+
 (defmacro opencode-session-test--with-finished-editing (&rest body)
   "Run BODY in a session whose finished editing hook records its FILES.
 BODY can refer to `hook-calls', the base names of the FILES of each call

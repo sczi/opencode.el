@@ -154,7 +154,7 @@ Buffer-wide shortcuts:
 | <c> |                                                    |
 |  =n=  | new session                                        |
 |  =M=  | toggle MCP - fuzzy completes on all available MCPs |
-|  =v=  | toggle verbose - whether to show subagent sessions |
+|  =v=  | toggle verbose - whether to show subagent sessions, as a tree under their parent |
 
 * Chat Sessions
 [[file:screenshots/session.png]]

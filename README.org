@@ -280,6 +280,9 @@ rather than creating and deleting copies. Then from your somewhat more secure
 and non AI-infected development environment, review and then pull the changes
 from the shared folder.
 
+opencode.el sets a random password for the opencode server we start, to guard
+against a [[https://cy.md/opencode-rce/][history]] of [[https://github.com/anomalyco/opencode/security/advisories/GHSA-c83v-7274-4vgp][vulnerabilities]] in [[https://securitylabs.datadoghq.com/articles/opencode-upgrade-remote-code-execution/][OpenCode's server]].
+
 * Performance
 Make sure you are using [[https://github.com/r0man/plz-event-source/][plz-event-source]] version >0.1.5-pre with a major
 performance fix, and set both =comint-scroll-show-maximum-output= and

@@ -544,21 +544,30 @@ If INITIAL-PROMPT is given, it is sent after CALLBACK is called."
      (list :title (read-string "Title: "))))
   (opencode-autoconnect
    (lambda ()
-     (opencode-api-create-session
-         `((location . ((directory . ,(directory-file-name
-                                       (expand-file-name default-directory)))))
-           ,@(when title
-               `((title . ,title))))
-         session
-       (opencode-open-session
-        session
-        :callback (lambda (session)
-                    (when callback
-                      (funcall callback session))
-                    (when initial-prompt
-                      (goto-char (point-max))
-                      (insert initial-prompt)
-                      (comint-send-input))))))))
+     ;; Create it with the agent and model `opencode-open-session' will select,
+     ;; as a session without an agent gets the reminders some agents add only
+     ;; during its first turn, which then causes an extra turn.
+     (let* ((agent (car (opencode--inherited-agents)))
+            (model (alist-get 'model agent)))
+       (opencode-api-create-session
+           `((location . ((directory . ,(directory-file-name
+                                         (expand-file-name default-directory)))))
+             ,@(when title
+                 `((title . ,title)))
+             ,@(when-let* ((id (alist-get 'id agent)))
+                 `((agent . ,id)))
+             ,@(when model
+                 `((model . ,model))))
+           session
+         (opencode-open-session
+          session
+          :callback (lambda (session)
+                      (when callback
+                        (funcall callback session))
+                      (when initial-prompt
+                        (goto-char (point-max))
+                        (insert initial-prompt)
+                        (comint-send-input)))))))))
 
 (defun opencode-fix-flycheck ()
   "Start a new opencode session to fix the current buffer's Flycheck errors."

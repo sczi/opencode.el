@@ -392,6 +392,20 @@ If CALLBACK is given, it will be called with SESSION afterwards."
         (when callback
           (funcall callback session))))))
 
+(defun opencode--inherited-agents ()
+  "Return the agent and agents a session opened from the current buffer gets.
+The value is (AGENT . AGENTS).  They are copied from the current buffer when it
+is a session, otherwise AGENTS are `opencode-agents' and AGENT is the first
+selectable one.  Agents without a model get `opencode-last-model'."
+  (let ((agents (mapcar (lambda (agent)
+                          (unless (alist-get 'model agent)
+                            (setf (alist-get 'model agent) opencode-last-model))
+                          agent)
+                        (copy-tree (or opencode-session-agents opencode-agents)))))
+    (cons (or (copy-tree opencode-session-agent)
+              (seq-find #'opencode--selectable-agent-p agents))
+          agents)))
+
 (cl-defun opencode-open-session (session &key callback)
   "Open comint based shell for SESSION.
 Returns the buffer.
@@ -402,23 +416,14 @@ If CALLBACK is given, it will be called with the session after it is initialized
           (opencode--switch-to-buffer old-buffer)
         (let ((buffer (generate-new-buffer
                        (format "*OpenCode: %s*" (opencode--session-title session))))
-              (agent (copy-tree opencode-session-agent))
-              (agents (copy-tree opencode-session-agents)))
+              (inherited (opencode--inherited-agents)))
           (with-current-buffer buffer
             (opencode-session-mode)
             (setq opencode-session-id .id
                   opencode-last-session-buffer buffer
                   default-directory (file-name-as-directory .location.directory)
-                  opencode-session-agents (mapcar (lambda (agent)
-                                                    (unless (alist-get 'model agent)
-                                                      (setf (alist-get 'model agent)
-                                                            opencode-last-model))
-                                                    agent)
-                                                  (or agents
-                                                      (copy-tree opencode-agents)))
-                  opencode-session-agent (or agent
-                                             (seq-find #'opencode--selectable-agent-p
-                                                       opencode-session-agents))
+                  opencode-session-agent (car inherited)
+                  opencode-session-agents (cdr inherited)
                   mode-line-process '(:eval (opencode--session-status-indicator)))
             (hack-dir-local-variables-non-file-buffer)
             (opencode--download-slash-commands default-directory)

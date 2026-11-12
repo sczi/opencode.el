@@ -370,8 +370,10 @@ usage window on its own line instead."
                       (cdr opencode--claude-rate-limit)
                       (and window (window-body-width window t))))))
     (unless (overlayp opencode--session-control-usage-overlay)
+      ;; Advancing both ends keeps it after the table when vtable deletes
+      ;; and reinserts the table, such as when sorting
       (setq opencode--session-control-usage-overlay
-            (make-overlay (point-max) (point-max))))
+            (make-overlay (point-max) (point-max) nil t t)))
     (move-overlay opencode--session-control-usage-overlay
                   (point-max) (point-max))
     (overlay-put opencode--session-control-usage-overlay 'after-string
@@ -450,7 +452,9 @@ GETTER is called with the session object.")
 Top level sessions are ordered by last update, newest first, and the
 subagents of a session by creation, oldest first.  Sessions below the
 top level get a `tree-prefix' entry with the characters connecting them
-to their parent.  A session whose parent isn't in SESSIONS is top level."
+to their parent.  Every session gets a `tree-root' entry with the id of
+its top level session.  A session whose parent isn't in SESSIONS is top
+level."
   (let ((ids (make-hash-table :test #'equal))
         (children (make-hash-table :test #'equal))
         roots tree)
@@ -464,11 +468,12 @@ to their parent.  A session whose parent isn't in SESSIONS is top level."
     (cl-labels ((time-getter (type)
                   (lambda (session)
                     (or (map-nested-elt session `(time ,type)) 0)))
-                (walk (session prefix connector)
-                  (push (if connector
-                            (cons (cons 'tree-prefix (concat prefix connector))
-                                  session)
-                          session)
+                (walk (session root-id prefix connector)
+                  (push (append (when connector
+                                  (list (cons 'tree-prefix
+                                              (concat prefix connector))))
+                                (list (cons 'tree-root root-id))
+                                session)
                         tree)
                   (let* ((subagents (seq-sort-by
                                      (time-getter 'created) #'<
@@ -479,11 +484,37 @@ to their parent.  A session whose parent isn't in SESSIONS is top level."
                                            ("├─ " "│  ")
                                            ("└─ " "   ")))))
                     (dolist (subagent subagents)
-                      (walk subagent indent
+                      (walk subagent root-id indent
                             (if (eq subagent last-subagent) "└─ " "├─ "))))))
       (dolist (root (seq-sort-by (time-getter 'updated) #'> roots))
-        (walk root "" nil)))
+        (walk root (alist-get 'id root) "" nil)))
     (nreverse tree)))
+
+(defun opencode--session-control-sort-tree (sort table cache)
+  "Keep subagents under their parent after SORT sorts TABLE's CACHE lines.
+Sessions without a parent keep the order SORT gave them, and each one's
+subagents follow it in the order of `opencode--session-control-tree'."
+  (funcall sort table cache)
+  (when (alist-get 'tree-root (car (vtable-objects table)))
+    (let ((tree-order (make-hash-table :test #'eq))
+          (root-order (make-hash-table :test #'equal)))
+      (seq-do-indexed (lambda (object index)
+                        (puthash object index tree-order))
+                      (vtable-objects table))
+      (seq-do-indexed (lambda (line index)
+                        (let ((object (car line)))
+                          (when (equal (alist-get 'id object)
+                                       (alist-get 'tree-root object))
+                            (puthash (alist-get 'id object) index root-order))))
+                      (car cache))
+      (setcar cache
+              (sort (car cache)
+                    :key (lambda (line)
+                           (list (gethash (alist-get 'tree-root (car line))
+                                          root-order)
+                                 (gethash (car line) tree-order))))))))
+
+(advice-add 'vtable--sort :around #'opencode--session-control-sort-tree)
 
 (defun opencode--session-control-insert-table (sessions columns)
   "Insert a vtable of SESSIONS with COLUMNS, a list of column keys.
@@ -492,21 +523,16 @@ If `opencode-session-control-verbose' is non-nil show them as a tree."
                             (or (alist-get key opencode--session-control-columns)
                                 (error "Unknown session control column: %s" key)))
                           columns))
-         (getters (vconcat (mapcar #'cadr columns)))
-         (table (make-vtable
-                 :columns (mapcar #'car columns)
-                 :objects (if opencode-session-control-verbose
-                              (opencode--session-control-tree sessions)
-                            sessions)
-                 :getter (lambda (object column _vtable)
-                           (funcall (aref getters column) object))
-                 :separator-width 3
-                 :keymap opencode-session-control-mode-map
-                 :insert nil)))
-    ;; The primary column's sort would undo the tree order
-    (when opencode-session-control-verbose
-      (setf (vtable-sort-by table) nil))
-    (vtable-insert table)))
+         (getters (vconcat (mapcar #'cadr columns))))
+    (make-vtable
+     :columns (mapcar #'car columns)
+     :objects (if opencode-session-control-verbose
+                  (opencode--session-control-tree sessions)
+                sessions)
+     :getter (lambda (object column _vtable)
+               (funcall (aref getters column) object))
+     :separator-width 3
+     :keymap opencode-session-control-mode-map)))
 
 (defun opencode--session-control-display (sessions)
   "Display SESSIONS in the current session control buffer.

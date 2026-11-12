@@ -1543,13 +1543,19 @@ claude-agent."
                          (opencode--session-control-tree
                           opencode-session-test--tree-sessions)))))
 
-(defun opencode-session-test--table-titles (verbose)
-  "Return the title column of a session control table, with VERBOSE set."
+(defun opencode-session-test--table-titles (verbose &optional sort-by)
+  "Return the title column of a session control table, with VERBOSE set.
+If SORT-BY is non-nil, sort the table by it, a list of vtable sort keys
+for the columns title and last-update."
   (with-temp-buffer
     (let ((opencode-session-control-verbose verbose))
       (opencode--session-control-insert-table
        opencode-session-test--tree-sessions '(title last-update))
       (goto-char (point-min))
+      (when sort-by
+        (setf (vtable-sort-by (vtable-current-table)) sort-by)
+        (vtable-revert-command)
+        (goto-char (point-min)))
       (let (titles)
         (while (not (eobp))
           (push (replace-regexp-in-string
@@ -1564,6 +1570,29 @@ claude-agent."
   "The verbose table isn't reordered by the last updated column."
   (should (equal opencode-session-test--tree-expected
                  (opencode-session-test--table-titles t))))
+
+(ert-deftest opencode-session-control-verbose-table-sorts-only-parents ()
+  "Sorting the verbose table reorders top level sessions, not subagents."
+  (should (equal '("old-root" "├─ first" "│  └─ nested" "└─ second"
+                   "orphan" "new-root")
+                 (opencode-session-test--table-titles t '((1 . descend)))))
+  (should (equal '("orphan" "old-root" "├─ first" "│  └─ nested"
+                   "└─ second" "new-root")
+                 (opencode-session-test--table-titles t '((0 . descend))))))
+
+(ert-deftest opencode-session-control-usage-stays-at-end-when-sorting ()
+  "The Claude usage overlay stays after the table when it's sorted."
+  (with-temp-buffer
+    (let ((opencode--claude-rate-limit
+           '(0 (unifiedWindows (five_hour (utilization . 0.5))))))
+      (opencode--session-control-insert-table
+       opencode-session-test--tree-sessions '(title last-update))
+      (opencode--session-control-update-usage)
+      (goto-char (point-min))
+      (setf (vtable-sort-by (vtable-current-table)) '((0 . descend)))
+      (vtable-revert-command)
+      (should (= (point-max)
+                 (overlay-start opencode--session-control-usage-overlay))))))
 
 (ert-deftest opencode-session-control-normal-table-sorted-by-update ()
   "Without verbose the table has no connectors and sorts by last update."

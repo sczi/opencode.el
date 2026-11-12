@@ -13,6 +13,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'color)
 (require 'comint)
 (require 'hideshow)
 (require 'markdown-ts-mode)
@@ -296,17 +297,41 @@ Retain one line of context for headers whose delimiter has yet to arrive."
             (set-marker limit nil)
             (set-marker complete-end nil)))))))
 
+(defun opencode--logo-render (line face)
+  "Render logo LINE using FACE, expanding the TUI's shadow markers.
+`_' is a shadow-background space, `^' is `▀' on a shadow background,
+`~' is a shadow `▀' and `,' is a shadow `▄'.  The shadow color is
+FACE's foreground blended 25% into the default background."
+  (let* ((fg (or (face-foreground face nil t)
+                 (face-foreground 'default nil t)))
+         (bg (face-background 'default nil t))
+         (shadow (apply #'color-rgb-to-hex
+                        (append (color-blend (color-name-to-rgb fg)
+                                             (color-name-to-rgb bg)
+                                             0.25)
+                                '(2))))
+         (weight (and (eq face 'bold) '(:weight bold))))
+    (mapconcat
+     (lambda (ch)
+       (pcase ch
+         (?_ (propertize " " 'font-lock-face `(:background ,shadow)))
+         (?^ (propertize "▀" 'font-lock-face `(:foreground ,fg :background ,shadow ,@weight)))
+         (?~ (propertize "▀" 'font-lock-face `(:foreground ,shadow)))
+         (?, (propertize "▄" 'font-lock-face `(:foreground ,shadow)))
+         (_ (propertize (string ch) 'font-lock-face face))))
+     line "")))
+
 (defun opencode-insert-logo ()
   "Insert the opencode logo."
   (let ((logo-left '("                   " "█▀▀█ █▀▀█ █▀▀█ █▀▀▄"
-                     "█░░█ █░░█ █▀▀▀ █░░█" "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀  ▀"))
+                     "█__█ █__█ █^^^ █__█" "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"))
         (logo-right '("             ▄     " "█▀▀▀ █▀▀█ █▀▀█ █▀▀█"
-                      "█░░░ █░░█ █░░█ █▀▀▀" "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀")))
+                      "█___ █__█ █__█ █^^^" "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀")))
     (cl-loop for left in logo-left
              for right in logo-right
-             do (opencode--output (propertize left 'face 'shadow))
+             do (opencode--output (opencode--logo-render left 'shadow))
              (opencode--output " ")
-             (opencode--output (propertize right 'face 'bold))
+             (opencode--output (opencode--logo-render right 'bold))
              (opencode--output "\n"))
     (opencode--output "\n")))
 
@@ -434,7 +459,7 @@ Return the plist of the call, from `opencode--tool-calls'."
   "Insert the status line for a compaction starting."
   (opencode-session--start-block 'compaction (float-time))
   (opencode--maybe-insert-block-spacing)
-  (opencode--output (propertize "🗜 Compacting session...\n\n" 'face 'shadow)))
+  (opencode--output (propertize "🗜 Compacting session...\n\n" 'font-lock-face 'shadow)))
 
 (defun opencode--insert-compaction-summary (summary)
   "Insert the SUMMARY of a finished compaction, folded."

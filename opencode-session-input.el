@@ -242,8 +242,7 @@ PARTS are those of the labels in the input, which TEXT shows as code."
   (let ((display-name (or display-name
                           (opencode--relative-path-for-display file))))
     (opencode--insert-label display-name
-                            (opencode--file-attachment file display-name))
-    (insert " ")))
+                            (opencode--file-attachment file display-name))))
 
 (defun opencode--image-extension (mime)
   "Return a file extension for image MIME."
@@ -333,8 +332,7 @@ Otherwise prompt for file in current project."
       (opencode--text-attachment
        (with-current-buffer buffer
          (buffer-substring-no-properties (point-min) (point-max)))
-       buffer))
-     (insert " "))))
+       buffer)))))
 
 (defun opencode--region-location (beg end)
   "Return (END START-LINE START-COL END-LINE END-COL) for BEG to END.
@@ -402,8 +400,7 @@ line numbers."
                                   region 24 0 nil (truncate-string-ellipsis)))
                          region)))))
     (with-last-opencode-session
-     (opencode--insert-label name (opencode--text-attachment text name))
-     (insert " "))))
+     (opencode--insert-label name (opencode--text-attachment text name)))))
 
 (defun opencode-add-region ()
   "Add the active region to context.

@@ -1441,6 +1441,77 @@ claude-agent."
                     (opencode-session-test--claude-session
                      "gpt-5" 0 "openai"))))))
 
+(defun opencode-session-test--rate-limit (now)
+  "Return claude-agent rate limit info with windows resetting relative to NOW."
+  `((status . "allowed")
+    (unifiedWindows
+     (five_hour (utilization . 0.09) (resetsAt . ,(+ now 3600)))
+     (seven_day (utilization . 0.31) (resetsAt . ,(- now 60)))
+     (seven_day_sonnet (utilization . 0.85) (resetsAt . ,(+ now 3600))))))
+
+(ert-deftest opencode-claude-usage-fresh ()
+  "Fresh usage shows exact percentages, and windows past their reset as 0%."
+  (let* ((now (float-time))
+         (usage (opencode--format-claude-usage
+                 (opencode-session-test--rate-limit now))))
+    (should (string-match-p
+             (rx bos "Claude usage: 5h " (= 2 "━") (= 18 "─")
+                 " 9% (resets " (+ (not ")")) ") · "
+                 "week " (= 20 "─") " 0% (reset " (+ (not ")")) ") · "
+                 "seven day sonnet " (= 17 "━") (= 3 "─")
+                 " 85% (resets " (+ (not ")")) ")" eos)
+             usage))
+    (should (eq 'success (get-text-property (string-search "━" usage)
+                                            'face usage)))
+    (should (eq 'error (get-text-property
+                        (string-search "━" usage (string-search "sonnet" usage))
+                        'face usage)))
+    (should-not (get-text-property (string-search "85%" usage) 'face usage))))
+
+(ert-deftest opencode-claude-usage-wrap ()
+  "Usage is split one window per line when it doesn't fit in WIDTH."
+  (let* ((now (float-time))
+         (rate-limit (opencode-session-test--rate-limit now))
+         (line (opencode--format-claude-usage rate-limit))
+         (narrow (opencode--format-claude-usage rate-limit 10)))
+    (should (equal line (opencode--format-claude-usage rate-limit 100000)))
+    (should-not (string-search " · " narrow))
+    (should (string-match-p
+             (rx bos "Claude usage:\n5h " (+ nonl) "\nweek " (+ nonl)
+                 "\nseven day sonnet " (+ nonl) eos)
+             narrow))))
+
+(ert-deftest opencode-claude-usage-bar-face ()
+  "Usage bars are green below 60%, warning below 85% and error above."
+  (should (eq 'success (opencode--usage-bar-face 0.59)))
+  (should (eq 'warning (opencode--usage-bar-face 0.6)))
+  (should (eq 'warning (opencode--usage-bar-face 0.84)))
+  (should (eq 'error (opencode--usage-bar-face 0.85))))
+
+(ert-deftest opencode-claude-usage-overlay ()
+  "Recorded usage is shown after the end of session control buffers."
+  (let ((opencode--claude-rate-limit nil)
+        (opencode--session-control-buffers nil))
+    (with-temp-buffer
+      (insert "table\n")
+      (push (current-buffer) opencode--session-control-buffers)
+      (opencode--session-control-update-usage)
+      (should-not (overlay-get opencode--session-control-usage-overlay
+                               'after-string))
+      (opencode--update-claude-rate-limit
+       (opencode-session-test--rate-limit (float-time)))
+      (should (= (point-max) (overlay-start
+                              opencode--session-control-usage-overlay)))
+      (should (string-match-p
+               (rx bos "\nClaude usage: 5h " (+ (any "━─")) " 9%")
+               (overlay-get opencode--session-control-usage-overlay
+                            'after-string)))
+      ;; An older report doesn't replace a newer one
+      (opencode--update-claude-rate-limit '((unifiedWindows)) 0)
+      (should (string-search
+               " 9% (resets" (overlay-get opencode--session-control-usage-overlay
+                                          'after-string))))))
+
 (defun opencode-session-test--tree-session (id parent created updated)
   "Return a session ID spawned by PARENT with CREATED and UPDATED times."
   `((id . ,id)

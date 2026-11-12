@@ -349,6 +349,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
              (setq opencode--current-block nil
                    opencode--blocks-with-output nil)))
           (session.step.ended
+           (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID
              (opencode--align-finished-tables t)
              (setq opencode-session-tokens (opencode--tokens-total .tokens))
@@ -356,6 +357,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
              (when (equal "stop" .finish)
                (opencode--maybe-insert-block-spacing))))
           (session.step.failed
+           (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID
              (opencode--align-finished-tables t)))
           (session.retry.scheduled

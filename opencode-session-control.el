@@ -11,12 +11,14 @@
 
 ;;; Code:
 
+(require 'color)
 (require 'magit)
 (require 'opencode-api)
 (require 'opencode-common)
 (require 'opencode-session-output)
 (require 'opencode-sessions)
 (require 'profiler)
+(require 'svg)
 (require 'vtable)
 (require 'xdg)
 
@@ -220,6 +222,161 @@ An alias of a model family, such as opus, uses the family's newest model."
              (when opencode--claude-plan-tier
                (opencode--redisplay-session-control-buffers)))))))))
 
+(defvar opencode--claude-rate-limit 'unfetched
+  "The latest Claude subscription rate limit info, nil if there is none.
+A cons of the time in seconds it was reported and the rateLimit alist that
+claude-agent puts in a step's native metadata.  The symbol `unfetched' before
+the latest stored one has been requested.")
+
+(defvar-local opencode--session-control-usage-overlay nil
+  "Overlay at the end of the session control buffer showing Claude usage.")
+
+(defconst opencode--claude-usage-window-names
+  '((five_hour . "5h") (seven_day . "week"))
+  "Alist of names to show for Claude rate limit windows.
+Windows not in it are shown with their name's underscores replaced by spaces.")
+
+(defun opencode--update-claude-rate-limit (rate-limit &optional time)
+  "Record RATE-LIMIT, reported at TIME in seconds, or now if nil.
+It is ignored if older than the one already recorded."
+  (let ((time (or time (float-time))))
+    (when (and rate-limit
+               (or (not (consp opencode--claude-rate-limit))
+                   (>= time (car opencode--claude-rate-limit))))
+      (setq opencode--claude-rate-limit (cons time rate-limit))
+      (opencode--map-session-control-buffers
+       #'opencode--session-control-update-usage))))
+
+(defun opencode--fetch-claude-rate-limit (sessions)
+  "Record the latest rate limit info stored in the newest of SESSIONS, once.
+Only claude-agent sessions are considered."
+  (when-let* (((eq opencode--claude-rate-limit 'unfetched))
+              (session (car (seq-sort-by
+                             (lambda (session)
+                               (or (map-nested-elt session '(time updated)) 0))
+                             #'>
+                             (seq-filter
+                              (lambda (session)
+                                (equal (map-nested-elt session '(model providerID))
+                                       "claude-agent"))
+                              sessions)))))
+    (setq opencode--claude-rate-limit nil)
+    ;; Only steps that got a rate_limit_event have it
+    (opencode--request-messages-with-rate-limit (alist-get 'id session))))
+
+(defun opencode--request-messages-with-rate-limit (session-id)
+  "Record the rate limit info of SESSION-ID's newest message that has it."
+  (opencode-api-recent-assistant-messages (session-id)
+      messages
+    :else (lambda (error-msg)
+            (opencode--log-event
+             "WARNING" (format "Couldn't fetch Claude rate limit: %s" error-msg)))
+    (when-let* ((message (seq-find (lambda (message)
+                                     (map-nested-elt message '(native rateLimit)))
+                                   messages)))
+      (let-alist message
+        (opencode--update-claude-rate-limit
+         .native.rateLimit
+         (/ (or .time.completed .time.created) 1000.0))))))
+
+(defun opencode--format-claude-reset (resets-at)
+  "Return RESETS-AT, in epoch seconds, as a short time."
+  (format-time-string (if (< (- resets-at (float-time)) (* 20 3600))
+                          "%H:%M"
+                        "%a %H:%M")
+                      resets-at))
+
+(defconst opencode--usage-bar-width 20
+  "Width in characters of Claude usage bars.")
+
+(defun opencode--usage-bar-face (fraction)
+  "Return the face for a usage bar FRACTION full."
+  (cond ((>= fraction 0.85) 'error)
+        ((>= fraction 0.6) 'warning)
+        (t 'success)))
+
+(defun opencode--usage-bar-svg (fraction face)
+  "Return an SVG image of a rounded bar FRACTION full, filled in FACE's color."
+  (let* ((width (* opencode--usage-bar-width (frame-char-width)))
+         (height (max 4 (round (* 0.5 (frame-char-height)))))
+         (radius (/ height 2.0))
+         (background (color-name-to-rgb
+                      (or (face-background 'default nil t) "white")))
+         (fill-rgb (or (color-name-to-rgb (face-foreground face nil t))
+                       background))
+         (blend (lambda (alpha)
+                  (apply #'color-rgb-to-hex
+                         (append (color-blend fill-rgb background alpha)
+                                 '(2)))))
+         (filled (* (min 1 (max 0 fraction)) width))
+         (svg (svg-create width height)))
+    (svg-rectangle svg 0.5 0.5 (- width 1) (- height 1)
+                   :rx (- radius 0.5) :fill (funcall blend 0.12)
+                   :stroke (funcall blend 0.25) :stroke-width 1)
+    (when (> filled 0)
+      (svg-rectangle svg 0 0 (max height filled) height
+                     :rx radius :fill (funcall blend 1)))
+    (svg-image svg :ascent 'center)))
+
+(defun opencode--usage-bar (fraction)
+  "Return a bar showing FRACTION, colored by how full it is.
+It is drawn with box drawing characters, displayed as an SVG on graphical
+frames."
+  (let* ((face (opencode--usage-bar-face fraction))
+         (filled (round (* opencode--usage-bar-width (min 1 (max 0 fraction)))))
+         (text (concat (propertize (make-string filled ?━) 'face face)
+                       (propertize (make-string (- opencode--usage-bar-width
+                                                   filled)
+                                                ?─)
+                                   'face 'shadow))))
+    (if (and (display-graphic-p) (image-type-available-p 'svg))
+        (propertize text 'display (opencode--usage-bar-svg fraction face))
+      text)))
+
+(defun opencode--format-claude-usage (rate-limit &optional width)
+  "Return a line describing Claude usage from RATE-LIMIT.
+If WIDTH, in pixels, is too narrow to fit it on one line, put each
+usage window on its own line instead."
+  (let* ((now (float-time))
+         (windows
+          (mapcar
+           (pcase-lambda (`(,name . ,window))
+             (let-alist window
+               (let* ((reset (and .resetsAt (<= .resetsAt now)))
+                      (utilization (if reset 0 (or .utilization 0))))
+                 (concat
+                  (or (alist-get name opencode--claude-usage-window-names)
+                      (string-replace "_" " " (symbol-name name)))
+                  " "
+                  (opencode--usage-bar utilization)
+                  " "
+                  (format "%d%%" (round (* 100 utilization)))
+                  (when .resetsAt
+                    (format " (%s %s)"
+                            (if reset "reset" "resets")
+                            (opencode--format-claude-reset .resetsAt)))))))
+           (alist-get 'unifiedWindows rate-limit))))
+    (when windows
+      (let ((line (concat "Claude usage: " (string-join windows " · "))))
+        (if (and width (> (string-pixel-width line) width))
+            (concat "Claude usage:\n" (string-join windows "\n"))
+          line)))))
+
+(defun opencode--session-control-update-usage ()
+  "Show Claude usage at the end of the current session control buffer."
+  (let* ((window (get-buffer-window (current-buffer)))
+         (usage (and (consp opencode--claude-rate-limit)
+                     (opencode--format-claude-usage
+                      (cdr opencode--claude-rate-limit)
+                      (and window (window-body-width window t))))))
+    (unless (overlayp opencode--session-control-usage-overlay)
+      (setq opencode--session-control-usage-overlay
+            (make-overlay (point-max) (point-max))))
+    (move-overlay opencode--session-control-usage-overlay
+                  (point-max) (point-max))
+    (overlay-put opencode--session-control-usage-overlay 'after-string
+                 (when usage (concat "\n" usage "\n")))))
+
 (defun opencode--session-control-cost (session)
   "Return the text of the cost column for SESSION."
   (if (opencode--claude-subscription-session-p session)
@@ -359,6 +516,7 @@ only shown if the table fits in the window."
   (clrhash opencode--session-control-branch-cache)
   (when (seq-some #'opencode--claude-subscription-session-p sessions)
     (opencode--fetch-claude-plan-tier))
+  (opencode--fetch-claude-rate-limit sessions)
   (let ((inhibit-read-only t)
         (point (point))
         (window (get-buffer-window (current-buffer) t))
@@ -381,6 +539,7 @@ only shown if the table fits in the window."
             (opencode--session-control-insert-table sessions required)))))
     (setq opencode--session-control-width
           (and window (window-body-width window t)))
+    (opencode--session-control-update-usage)
     (goto-char point)))
 
 (defun opencode--session-control-window-size-change (window)
@@ -399,13 +558,17 @@ only shown if the table fits in the window."
                                       opencode-session-control-verbose
                                       #'opencode--session-control-display)))
 
-(defun opencode--redisplay-session-control-buffers ()
-  "Refresh all live session control buffers."
+(defun opencode--map-session-control-buffers (fn)
+  "Call FN with no arguments in each live session control buffer."
   (setq opencode--session-control-buffers
         (seq-filter #'buffer-live-p opencode--session-control-buffers))
   (dolist (buffer opencode--session-control-buffers)
     (with-current-buffer buffer
-      (opencode-sessions-redisplay))))
+      (funcall fn))))
+
+(defun opencode--redisplay-session-control-buffers ()
+  "Refresh all live session control buffers."
+  (opencode--map-session-control-buffers #'opencode-sessions-redisplay))
 
 (defun opencode-open-project (directory)
   "Open the session control buffer for the project of DIRECTORY.

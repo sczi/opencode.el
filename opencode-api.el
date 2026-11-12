@@ -213,6 +213,8 @@ may start with :else HANDLER to handle errors."
  (post session-model "/api/session/%s/model")
  (post session-agent "/api/session/%s/agent")
  (post session-generate "/api/session/%s/generate")
+ (recent-assistant-messages
+  "/api/session/%s/message?type=assistant&order=desc&limit=50")
  (session-diff "/api/session/%s/diff?context=0")
  (post revert-message "/api/session/%s/revert/stage")
  (delete unrevert-all "/api/session/%s/revert")

@@ -33,6 +33,7 @@
 (defvar opencode-session-mode-map
   (define-keymap
     "C-c C-y" 'opencode-yank-code-block
+    "C-c y" 'yank-media
     "C-c Y" 'opencode-copy-conversation
     "C-c C-c" 'opencode-abort-session
     "C-c C-p" 'opencode-respond-permission

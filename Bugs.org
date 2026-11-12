@@ -1,0 +1,47 @@
+#+title: Bugs
+#+OPTIONS: toc:nil
+
+A list of known bugs in other packages affecting users of opencode.el. For bugs
+in opencode.el itself, see the issue tracker.
+
+* unfixed
+** [[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=82218][occasional permission prompts despite adding project directory to safe-local-variable-directories]]
+if you configure =opencode-project-files-finished-editing-functions= in
+=.dir-locals.el=, and add to =safe-local-variable-directories= you still get
+occasional permission prompts. As a fix, if you're on linux or mac or any unix
+(windows will need something different), add to your config:
+#+begin_src elisp
+(defun my/file-equal-p (file1 file2)
+  "Return non-nil if files FILE1 and FILE2 name the same file.
+If FILE1 or FILE2 does not exist, the return value is unspecified."
+  (let ((handler (or (find-file-name-handler file1 'file-equal-p)
+                     (find-file-name-handler file2 'file-equal-p))))
+    (if handler
+        (funcall handler 'file-equal-p file1 file2)
+      (when-let* ((f1-attr (file-attributes (file-truename file1)))
+                  (f2-attr (file-attributes (file-truename file2))))
+        (equal (file-attribute-file-identifier f1-attr)
+               (file-attribute-file-identifier f2-attr))))))
+
+(advice-add 'file-equal-p :override 'my/file-equal-p)
+#+end_src
+** [[https://github.com/emacs-evil/evil/issues/2037][emacs-evil/evil#2037 evil-next-line can move up a line]]
+pressing j on prompt at the end of buffer makes it move up a line
+** [[https://github.com/emacs-evil/evil/pull/1857][evil-paste-after removes text properties]]
+the labels we use to attach buffers, regions, and files to prompts depend on
+text properties, which evil removes when pasting. Use standard emacs yank
+commands to preserve them.
+
+* in emacs 31 but fixed in master
+** [[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=81712][fill-forward-paragraph: Args out of range:]]
+happens when the prompt you're typing wraps
+** [[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=82035][Single char markdown headings are hidden]]
+** [[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=81979][handling line numbers in markdown links]]
+
+* other fixed bugs
+** [[https://github.com/iqbalansari/emacs-emojify/issues/119][Recovering from confusing calls to ‘before/after-change-functions’!]]
+if you regularly get that warning message, the cause is probably a bug in
+emojify-mode. emojify-mode is no longer needed since emacs 29, so the fix
+is just to disable it.
+** [[https://github.com/r0man/plz-event-source/pull/15][plz-event-source-parser-parse-line: Stack overflow in regexp matcher]]
+make sure you are using at least version 0.1.5-pre

@@ -308,6 +308,7 @@ tool call would give an empty answer.")
     (with-current-buffer buffer
       (insert "> " (string-replace "\n" "\n> " question) "\n\n" answer "\n")
       (markdown-ts-view-mode)
+      (visual-line-mode)
       (goto-char (point-min)))
     (opencode--switch-to-buffer buffer)))
 

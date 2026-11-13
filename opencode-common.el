@@ -13,11 +13,13 @@
 
 (require 'button)
 (require 'cl-lib)
+(require 'color)
 (require 'json)
 (require 'map)
 (require 'notifications)
 (require 'project)
 (require 'savehist)
+(require 'svg)
 
 (defvar opencode-last-model nil
   "Last model used, as a Model.Ref alist of id, providerID and optional variant.
@@ -407,6 +409,60 @@ Or nil to disable logging.")
                         type
                         event))
         (opencode--truncate-at-max-lines opencode-event-log-max-lines)))))
+
+(defconst opencode--usage-bar-width 20
+  "Width in characters of usage bars.")
+
+(defun opencode--usage-bar-face (fraction)
+  "Return the face for a usage bar FRACTION full."
+  (cond ((>= fraction 0.85) 'error)
+        ((>= fraction 0.6) 'warning)
+        (t 'success)))
+
+(defun opencode--usage-bar-svg (fraction face &optional background-face)
+  "Return an SVG image of a rounded bar FRACTION full, filled in FACE's color.
+Its track is blended with the background of BACKGROUND-FACE, by default
+`default'."
+  (let* ((width (* opencode--usage-bar-width (frame-char-width)))
+         (height (max 4 (round (* 0.5 (frame-char-height)))))
+         (radius (/ height 2.0))
+         (background (color-name-to-rgb
+                      (or (face-background (or background-face 'default)
+                                           nil 'default)
+                          "white")))
+         (fill-rgb (or (color-name-to-rgb (face-foreground face nil t))
+                       background))
+         (blend (lambda (alpha)
+                  (apply #'color-rgb-to-hex
+                         (append (color-blend fill-rgb background alpha)
+                                 '(2)))))
+         (filled (* (min 1 (max 0 fraction)) width))
+         (svg (svg-create width height)))
+    (svg-rectangle svg 0 0 width height :fill (funcall blend 0))
+    (svg-rectangle svg 0.5 0.5 (- width 1) (- height 1)
+                   :rx (- radius 0.5) :fill (funcall blend 0.12)
+                   :stroke (funcall blend 0.25) :stroke-width 1)
+    (when (> filled 0)
+      (svg-rectangle svg 0 0 (max height filled) height
+                     :rx radius :fill (funcall blend 1)))
+    (svg-image svg :ascent 'center)))
+
+(defun opencode--usage-bar (fraction &optional background-face)
+  "Return a bar showing FRACTION, colored by how full it is.
+It is drawn with box drawing characters, displayed as an SVG on graphical
+frames.  The SVG blends with the background of BACKGROUND-FACE, by default
+`default'."
+  (let* ((face (opencode--usage-bar-face fraction))
+         (filled (round (* opencode--usage-bar-width (min 1 (max 0 fraction)))))
+         (text (concat (propertize (make-string filled ?━) 'face face)
+                       (propertize (make-string (- opencode--usage-bar-width
+                                                   filled)
+                                                ?─)
+                                   'face 'shadow))))
+    (if (and (display-graphic-p) (image-type-available-p 'svg))
+        (propertize text 'display
+                    (opencode--usage-bar-svg fraction face background-face))
+      text)))
 
 (provide 'opencode-common)
 ;;; opencode-common.el ends here

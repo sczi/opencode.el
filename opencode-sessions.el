@@ -157,7 +157,7 @@ Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty."
         (opencode--setup-mode-line))))
   (force-mode-line-update t))
 
-(defcustom opencode-mode-line-process "[🤖 %a · %m%V] %c %I  "
+(defcustom opencode-mode-line-process "🤖 %a · %m%V %c %I  "
   "Format of the session information shown in `mode-line-process'.
 Expanded with `format-spec', so specs take modifiers like %>30t to
 truncate the title to 30 characters.  The specs are:
@@ -166,11 +166,12 @@ truncate the title to 30 characters.  The specs are:
   %a  agent                 %m  model
   %v  variant               %V  variant level as dots, like ●●○
   %c  percent of the context window used
+  %C  percent of the context window used, as a bar
   %T  tokens used           %t  session title
   %d  session directory     %%  a literal percent sign
 
 Other specs, like %b, are left for the mode line to expand.  Ours take
-precedence over the mode line's %c, %i and %I.
+precedence over the mode line's %c, %C, %i and %I.
 
 When the mode line is too wide for the window, this is hidden from the
 mode line and shown where `overflow' is in `opencode-header-line-format'.
@@ -213,21 +214,27 @@ the mode line and makes `opencode-mode-line-process' unused."
 (defvar opencode--mode-line-measuring nil
   "Non-nil while measuring the mode line, so it includes everything.")
 
-(defun opencode--format-specs ()
+(defun opencode--format-specs (&optional face)
   "Return the `format-spec' specs for the current session's mode line.
-Values are marked with the `opencode--spec' property, so their percent
-signs can be escaped after `format-spec' truncates them."
+FACE is the face of the line they're shown in, for the background of the
+context bar.  Values are marked with the `opencode--spec' property, so
+their percent signs can be escaped after `format-spec' truncates them.
+Values that are expensive to compute are functions, called only when used."
   (let-alist opencode-session-agent
     (let* ((model (opencode--current-model))
            (limit (map-nested-elt model '(limit context)))
            (context (if (and (numberp limit) (> limit 0))
                         (* 100 (/ (float opencode-session-tokens) limit))
-                      0)))
+                      0))
+           (mark (lambda (value)
+                   (let ((value (copy-sequence (or value ""))))
+                     (put-text-property 0 (length value) 'opencode--spec t value)
+                     value))))
       (mapcar
        (pcase-lambda (`(,char . ,value))
-         (let ((value (copy-sequence (or value ""))))
-           (put-text-property 0 (length value) 'opencode--spec t value)
-           (cons char value)))
+         (cons char (if (functionp value)
+                        (lambda () (funcall mark (funcall value)))
+                      (funcall mark value))))
        `((?I . ,(pcase opencode-session-status
                   ("busy" "⏳")
                   ("idle" "🚀")))
@@ -246,6 +253,7 @@ signs can be escaped after `format-spec' truncates them."
                   (concat " " (make-string pos ?●)
                           (make-string (- (length ids) 1 pos) ?○))))
          (?c . ,(format "%.0f%%" context))
+         (?C . ,(lambda () (opencode--usage-bar (/ context 100) face)))
          (?T . ,(opencode--format-tokens opencode-session-tokens))
          (?t . ,opencode-session-title)
          (?d . ,(abbreviate-file-name default-directory)))))))
@@ -272,11 +280,23 @@ literal %% are escaped, and other specs are left for the mode line."
        (not opencode--mode-line-measuring)
        (window-parameter nil 'opencode-overflow)))
 
+(defun opencode--line-face (line)
+  "Return the face of LINE, `mode-line' or `header-line', in this window.
+It's the active or inactive variant, depending on whether the window is
+selected."
+  (let ((active (mode-line-window-selected-p)))
+    (pcase line
+      ('mode-line (if active 'mode-line-active 'mode-line-inactive))
+      ('header-line (if active 'header-line-active 'header-line-inactive))
+      (_ line))))
+
 (defun opencode--mode-line-process ()
   "Return `opencode-mode-line-process' expanded, if shown in the mode line."
   (if (or opencode-mode-line-format (opencode--mode-line-overflow-p))
       ""
-    (opencode--mode-line-expand opencode-mode-line-process)))
+    (opencode--mode-line-expand
+     opencode-mode-line-process
+     (opencode--format-specs (opencode--line-face 'mode-line)))))
 
 (defun opencode--right-align-space (rest face)
   "Return a space that right-aligns REST, mode line constructs, in FACE."
@@ -296,7 +316,7 @@ literal %% are escaped, and other specs are left for the mode line."
 Strings are expanded with `opencode--format-specs', and `right-align' and
 `overflow' are handled as in `opencode-header-line-format'.  FACE is the
 face it's shown in, for measuring."
-  (let* ((specs (opencode--format-specs))
+  (let* ((specs (opencode--format-specs (opencode--line-face face)))
          (convert
           (lambda (element)
             (pcase element

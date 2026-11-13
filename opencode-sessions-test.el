@@ -953,12 +953,13 @@ The server reports no variant as \"default\", which is no selection."
                  (lambda () '((name . "Model")
                               (variants . (((id . "low")) ((id . "medium"))
                                            ((id . "high")) ((id . "max"))))))))
-        (should (string-search
-                 "Model]"
-                 (indicator '((id . "a") (model . ((id . "m") (variant . "default")))))))
-        (should (string-search
-                 "Model ●●○]"
-                 (indicator '((id . "a") (model . ((id . "m") (variant . "high")))))))
+        (let ((opencode-mode-line-process "[%m%V]"))
+          (should (string-search
+                   "Model]"
+                   (indicator '((id . "a") (model . ((id . "m") (variant . "default")))))))
+          (should (string-search
+                   "Model ●●○]"
+                   (indicator '((id . "a") (model . ((id . "m") (variant . "high"))))))))
         (let ((opencode-mode-line-process "%m%v"))
           (should-not (string-search
                        "default"
@@ -1004,6 +1005,28 @@ Specs that aren't ours, and a literal %%, are left for the mode line."
                      (opencode--mode-line-expand "%t %c %I %i %T %a %%")))
       (should (equal "[100%%]" (opencode--mode-line-expand "[%>4t]")))
       (should (equal "%b" (opencode--mode-line-expand "%b"))))))
+
+(ert-deftest opencode-mode-line-context-bar-test ()
+  "%C is a bar of the context window used, blended with the line's face,
+and only made when used."
+  (with-opencode-session-test-buffer
+    (setq opencode-session-tokens 140000)
+    (let (bar-args)
+      (cl-letf (((symbol-function 'opencode--current-model)
+                 (lambda () '((name . "Model") (limit . ((context . 200000))))))
+                ((symbol-function 'opencode--usage-bar)
+                 (lambda (&rest args) (setq bar-args args) "bar")))
+        (opencode--mode-line-expand "%c" (opencode--format-specs 'header-line))
+        (should-not bar-args)
+        (should (equal "bar" (opencode--mode-line-expand
+                              "%C" (opencode--format-specs 'header-line))))
+        (should (equal '(0.7 header-line) bar-args))))
+    (cl-letf (((symbol-function 'display-graphic-p) #'ignore))
+      (let ((bar (opencode--usage-bar 0.7)))
+        (should (equal (concat (make-string 14 ?━) (make-string 6 ?─))
+                       (substring-no-properties bar)))
+        (should (eq 'warning (get-text-property 0 'face bar)))
+        (should (eq 'shadow (get-text-property 19 'face bar)))))))
 
 (ert-deftest opencode-mode-line-render-format-test ()
   "Everything after `right-align' is right-aligned, and `overflow' shows

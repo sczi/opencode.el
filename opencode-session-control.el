@@ -11,14 +11,12 @@
 
 ;;; Code:
 
-(require 'color)
 (require 'magit)
 (require 'opencode-api)
 (require 'opencode-common)
 (require 'opencode-session-output)
 (require 'opencode-sessions)
 (require 'profiler)
-(require 'svg)
 (require 'vtable)
 (require 'xdg)
 
@@ -285,53 +283,6 @@ Only claude-agent sessions are considered."
                           "%H:%M"
                         "%a %H:%M")
                       resets-at))
-
-(defconst opencode--usage-bar-width 20
-  "Width in characters of Claude usage bars.")
-
-(defun opencode--usage-bar-face (fraction)
-  "Return the face for a usage bar FRACTION full."
-  (cond ((>= fraction 0.85) 'error)
-        ((>= fraction 0.6) 'warning)
-        (t 'success)))
-
-(defun opencode--usage-bar-svg (fraction face)
-  "Return an SVG image of a rounded bar FRACTION full, filled in FACE's color."
-  (let* ((width (* opencode--usage-bar-width (frame-char-width)))
-         (height (max 4 (round (* 0.5 (frame-char-height)))))
-         (radius (/ height 2.0))
-         (background (color-name-to-rgb
-                      (or (face-background 'default nil t) "white")))
-         (fill-rgb (or (color-name-to-rgb (face-foreground face nil t))
-                       background))
-         (blend (lambda (alpha)
-                  (apply #'color-rgb-to-hex
-                         (append (color-blend fill-rgb background alpha)
-                                 '(2)))))
-         (filled (* (min 1 (max 0 fraction)) width))
-         (svg (svg-create width height)))
-    (svg-rectangle svg 0.5 0.5 (- width 1) (- height 1)
-                   :rx (- radius 0.5) :fill (funcall blend 0.12)
-                   :stroke (funcall blend 0.25) :stroke-width 1)
-    (when (> filled 0)
-      (svg-rectangle svg 0 0 (max height filled) height
-                     :rx radius :fill (funcall blend 1)))
-    (svg-image svg :ascent 'center)))
-
-(defun opencode--usage-bar (fraction)
-  "Return a bar showing FRACTION, colored by how full it is.
-It is drawn with box drawing characters, displayed as an SVG on graphical
-frames."
-  (let* ((face (opencode--usage-bar-face fraction))
-         (filled (round (* opencode--usage-bar-width (min 1 (max 0 fraction)))))
-         (text (concat (propertize (make-string filled ?━) 'face face)
-                       (propertize (make-string (- opencode--usage-bar-width
-                                                   filled)
-                                                ?─)
-                                   'face 'shadow))))
-    (if (and (display-graphic-p) (image-type-available-p 'svg))
-        (propertize text 'display (opencode--usage-bar-svg fraction face))
-      text)))
 
 (defun opencode--format-claude-usage (rate-limit &optional width)
   "Return a line describing Claude usage from RATE-LIMIT.

@@ -950,13 +950,44 @@ The server reports no variant as \"default\", which is no selection."
       (should (string-search "🤖 -" (indicator '((model . ((id . "m")))))))
       (should-not (string-search "nil" (indicator nil)))
       (cl-letf (((symbol-function 'opencode--current-model)
-                 (lambda () '((name . "Model")))))
-        (should-not (string-search
-                     "default"
-                     (indicator '((id . "a") (model . ((id . "m") (variant . "default")))))))
+                 (lambda () '((name . "Model")
+                              (variants . (((id . "low")) ((id . "medium"))
+                                           ((id . "high")) ((id . "max"))))))))
         (should (string-search
-                 "Model high"
-                 (indicator '((id . "a") (model . ((id . "m") (variant . "high")))))))))))
+                 "Model]"
+                 (indicator '((id . "a") (model . ((id . "m") (variant . "default")))))))
+        (should (string-search
+                 "Model ●●○]"
+                 (indicator '((id . "a") (model . ((id . "m") (variant . "high")))))))
+        (let ((opencode-mode-line-process "%m%v"))
+          (should-not (string-search
+                       "default"
+                       (indicator '((id . "a") (model . ((id . "m") (variant . "default")))))))
+          (should (string-search
+                   "Model high"
+                   (indicator '((id . "a") (model . ((id . "m") (variant . "high"))))))))))))
+
+(ert-deftest opencode-variant-dots-test ()
+  "%V shows one dot fewer than the number of variants, filled up to the
+selected one, and nothing when there's no selection or only one variant."
+  (with-opencode-session-test-buffer
+    (cl-flet ((dots (variants variant)
+                (cl-letf (((symbol-function 'opencode--current-model)
+                           (lambda ()
+                             `((name . "Model")
+                               (variants . ,(mapcar (lambda (id) `((id . ,id)))
+                                                    variants))))))
+                  (let ((opencode-session-agent
+                         `((id . "a") (model . ((id . "m") (variant . ,variant))))))
+                    (substring-no-properties
+                     (alist-get ?V (opencode--format-specs)))))))
+      (let ((levels '("low" "medium" "high" "max")))
+        (should (equal " ○○○" (dots levels "low")))
+        (should (equal " ●○○" (dots levels "medium")))
+        (should (equal " ●●●" (dots levels "max")))
+        (should (equal "" (dots levels nil)))
+        (should (equal "" (dots levels "default"))))
+      (should (equal "" (dots '("high") "high"))))))
 
 (ert-deftest opencode-mode-line-format-specs-test ()
   "Specs expand with their percent signs escaped for the mode line.

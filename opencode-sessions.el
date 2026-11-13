@@ -157,14 +157,15 @@ Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty."
         (opencode--setup-mode-line))))
   (force-mode-line-update t))
 
-(defcustom opencode-mode-line-process "[🤖 %a · %m%v] %c %I  "
+(defcustom opencode-mode-line-process "[🤖 %a · %m%V] %c %I  "
   "Format of the session information shown in `mode-line-process'.
 Expanded with `format-spec', so specs take modifiers like %>30t to
 truncate the title to 30 characters.  The specs are:
 
   %I  busy/idle icon        %i  busy/idle
   %a  agent                 %m  model
-  %v  variant               %c  percent of the context window used
+  %v  variant               %V  variant level as dots, like ●●○
+  %c  percent of the context window used
   %T  tokens used           %t  session title
   %d  session directory     %%  a literal percent sign
 
@@ -238,6 +239,12 @@ signs can be escaped after `format-spec' truncates them."
          (?v . ,(when (and .model.variant
                            (not (equal .model.variant "default")))
                   (concat " " .model.variant)))
+         (?V . ,(when-let* ((ids (mapcar (lambda (variant) (alist-get 'id variant))
+                                         (alist-get 'variants model)))
+                            ((length> ids 1))
+                            (pos (cl-position .model.variant ids :test #'equal)))
+                  (concat " " (make-string pos ?●)
+                          (make-string (- (length ids) 1 pos) ?○))))
          (?c . ,(format "%.0f%%" context))
          (?T . ,(opencode--format-tokens opencode-session-tokens))
          (?t . ,opencode-session-title)

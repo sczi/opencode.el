@@ -1516,9 +1516,9 @@ claude-agent."
 
 (ert-deftest opencode-session-control-cost-shows-budget-share ()
   "Claude subscription sessions show API dollars and the share of the budget."
-  (dolist (case '(("pro" . "$2.00 10.0%")
-                  ("max_5x" . "$2.00 1.6%")
-                  ("max_20x" . "$2.00 0.7%")))
+  (dolist (case '(("pro" . "~$2.00 10.0%")
+                  ("max_5x" . "~$2.00 1.6%")
+                  ("max_20x" . "~$2.00 0.7%")))
     (opencode-session-test--with-claude-plan (car case)
       (should (equal (cdr case)
                      (opencode--session-control-cost
@@ -1529,7 +1529,7 @@ claude-agent."
   "Plans without a budget, or an unknown plan, show dollars only."
   (dolist (tier '("other" "max_other" nil unfetched))
     (opencode-session-test--with-claude-plan tier
-      (should (equal "$2.00"
+      (should (equal "~$2.00"
                      (opencode--session-control-cost
                       (opencode-session-test--claude-session
                        "claude-opus-5-5")))))))
@@ -1538,7 +1538,7 @@ claude-agent."
   "An alias uses the newest model of its family, and [1m] is ignored."
   (opencode-session-test--with-claude-plan "pro"
     (dolist (model '("opus" "opus[1m]" "claude-opus-5-5[1m]"))
-      (should (equal "$2.00 10.0%"
+      (should (equal "~$2.00 10.0%"
                      (opencode--session-control-cost
                       (opencode-session-test--claude-session model)))))))
 
@@ -1553,12 +1553,20 @@ claude-agent."
                      (opencode--session-control-cost
                       (opencode-session-test--claude-session "opus")))))))
 
-(ert-deftest opencode-session-control-cost-real-dollars-unchanged ()
-  "Sessions the server charged for, and other providers, show the server's cost."
+(ert-deftest opencode-session-control-cost-real-dollars ()
+  "Sessions the server charged for show its cost, before any estimate, and
+other providers show only the server's cost."
   (opencode-session-test--with-claude-plan "pro"
-    (should (equal "$3.21"
+    (should (equal "$3.21 + ~$2.00 10.0%"
                    (opencode--session-control-cost
                     (opencode-session-test--claude-session "opus" 3.21))))
+    (should (equal "$3.21"
+                   (opencode--session-control-cost
+                    (opencode-session-test--claude-session
+                     "claude-fable-5-2" 3.21))))
+    (should (equal "$3.21"
+                   (opencode--session-control-cost
+                    (opencode-session-test--claude-session "gpt-5" 3.21 "openai"))))
     (should (equal "$0.00"
                    (opencode--session-control-cost
                     (opencode-session-test--claude-session

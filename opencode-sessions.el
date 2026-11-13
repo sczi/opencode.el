@@ -235,6 +235,15 @@ the mode line and makes `opencode-mode-line-process' unused."
 (defvar opencode--mode-line-measuring nil
   "Non-nil while measuring the mode line, so it includes everything.")
 
+(defun opencode-claude-subscription-p (&optional session)
+  "Return non-nil if SESSION uses the claude-agent provider.
+SESSION defaults to the current session buffer's session.  For use in
+functions that are the value of `opencode-mode-line-process' and the
+other mode line and header line options."
+  (equal (map-nested-elt (or session opencode-session-agent)
+                         '(model providerID))
+         "claude-agent"))
+
 (defun opencode--format-specs (&optional face)
   "Return the `format-spec' specs for the current session's mode line.
 FACE is the face of the line they're shown in, for the background of the

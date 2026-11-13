@@ -185,11 +185,6 @@ An alias of a model family, such as opus, uses the family's newest model."
                (or (alist-get 'cache_write price) 0)))
          1e6))))
 
-(defun opencode--claude-subscription-session-p (session)
-  "Return non-nil if SESSION uses claude-agent and the server charged nothing."
-  (and (equal (map-nested-elt session '(model providerID)) "claude-agent")
-       (zerop (or (alist-get 'cost session) 0))))
-
 (defun opencode--fetch-claude-plan-tier ()
   "Find the Claude plan, once, then refresh the session control buffers."
   (when (eq opencode--claude-plan-tier 'unfetched)
@@ -316,15 +311,23 @@ usage window on its own line instead."
                  (when usage (concat "\n" usage "\n")))))
 
 (defun opencode--session-control-cost (session)
-  "Return the text of the cost column for SESSION."
-  (if (opencode--claude-subscription-session-p session)
-      (if-let* ((cost (opencode--claude-api-cost session)))
-          (if-let* ((budget (cdr (assoc opencode--claude-plan-tier
-                                        opencode-claude-five-hour-budgets))))
-              (format "$%.2f %.1f%%" cost (/ (* 100 cost) budget))
-            (format "$%.2f" cost))
-        "-")
-    (format "$%.2f" (or (alist-get 'cost session) 0))))
+  "Return the text of the cost column for SESSION.
+Claude subscription sessions show what their tokens would cost at API
+prices, as ~$N, and the share of the 5h budget, after the server's cost
+if it charged for other models."
+  (let* ((cost (or (alist-get 'cost session) 0))
+         (real (and (not (zerop cost)) (format "$%.2f" cost)))
+         (estimate
+          (when-let* (((opencode-claude-subscription-p session))
+                      (api (opencode--claude-api-cost session)))
+            (if-let* ((budget (cdr (assoc opencode--claude-plan-tier
+                                          opencode-claude-five-hour-budgets))))
+                (format "~$%.2f %.1f%%" api (/ (* 100 api) budget))
+              (format "~$%.2f" api)))))
+    (cond ((and real estimate) (concat real " + " estimate))
+          ((or real estimate))
+          ((opencode-claude-subscription-p session) "-")
+          (t "$0.00"))))
 
 (defconst opencode--session-control-columns
   `((title
@@ -476,7 +479,7 @@ Optional columns from `opencode-session-control-table-columns' are
 only shown if the table fits in the window."
   (setq opencode--session-control-sessions sessions)
   (clrhash opencode--session-control-branch-cache)
-  (when (seq-some #'opencode--claude-subscription-session-p sessions)
+  (when (seq-some #'opencode-claude-subscription-p sessions)
     (opencode--fetch-claude-plan-tier))
   (opencode--fetch-claude-rate-limit sessions)
   (let ((inhibit-read-only t)

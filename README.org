@@ -317,8 +317,8 @@ Known bugs in other packages that affect users of opencode.el are documented in
   window or in the current window
 - =opencode-session-control-table-columns= configures what columns are shown in
   the session management buffer
-- =opencode-mode-line-process=, =opencode-header-line-format= and
-  =opencode-mode-line-format= configure the session information shown in the
+- =opencode-mode-line-process=, =opencode-header-line-format=,
+  =opencode-overflow-format= and =opencode-mode-line-format= configure the session information shown in the
   mode line and header line
 
 # Local Variables:

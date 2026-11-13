@@ -180,8 +180,8 @@ Other specs, like %b, are left for the mode line to expand.  Ours take
 precedence over the mode line's %c, %C, %i, %I, %o, %u and %U.
 
 When the mode line is too wide for the window, this is hidden from the
-mode line and shown where `overflow' is in `opencode-header-line-format'.
-Ignored when `opencode-mode-line-format' is non-nil."
+mode line and shown where `overflow' is in `opencode-header-line-format',
+unless `opencode-overflow-format' is non-nil.  Ignored when `opencode-mode-line-format' is non-nil."
   :type 'string
   :group 'opencode)
 
@@ -192,8 +192,9 @@ A list whose elements are strings expanded like
 symbols:
 
   `right-align'  right-align everything after it
-  `overflow'     `opencode-mode-line-process', when it didn't fit in the
-                 mode line
+  `overflow'     `opencode-overflow-format', or `opencode-mode-line-process'
+                 if that is nil, when `opencode-mode-line-process' didn't
+                 fit in the mode line
 
 The header line is hidden when it would be blank, so the default only
 shows one when the mode line overflows."
@@ -201,6 +202,19 @@ shows one when the mode line overflows."
                          (const right-align)
                          (const overflow)
                          sexp))
+  :group 'opencode)
+
+(defcustom opencode-overflow-format nil
+  "What `overflow' in `opencode-header-line-format' shows, or nil.
+It's shown when `opencode-mode-line-process' is hidden from the mode
+line because the mode line is too wide.  When nil,
+`opencode-mode-line-process' is shown.  Otherwise a list like
+`opencode-header-line-format', except without `overflow'.  A
+`right-align' in it right-aligns the rest of the header line."
+  :type '(choice (const :tag "Show opencode-mode-line-process" nil)
+          (repeat (choice string
+                          (const right-align)
+                          sexp)))
   :group 'opencode)
 
 (defcustom opencode-mode-line-format nil
@@ -329,15 +343,22 @@ Strings are expanded with `opencode--format-specs', and `right-align' and
 `overflow' are handled as in `opencode-header-line-format'.  FACE is the
 face it's shown in, for measuring."
   (let* ((specs (opencode--format-specs (opencode--line-face face)))
+         ;; Splice in the overflow first, so a `right-align' in
+         ;; `opencode-overflow-format' aligns the rest of the line
+         (format (mapcan
+                  (lambda (element)
+                    (cond ((not (eq element 'overflow)) (list element))
+                          ((not (opencode--mode-line-overflow-p)) nil)
+                          (opencode-overflow-format
+                           (copy-sequence
+                            (remq 'overflow opencode-overflow-format)))
+                          (t (list opencode-mode-line-process))))
+                  format))
          (convert
           (lambda (element)
-            (pcase element
-              ((pred stringp) (opencode--mode-line-expand element specs))
-              ('overflow (if (opencode--mode-line-overflow-p)
-                             (opencode--mode-line-expand
-                              opencode-mode-line-process specs)
-                           ""))
-              (_ element))))
+            (if (stringp element)
+                (opencode--mode-line-expand element specs)
+              element)))
          (tail (memq 'right-align format))
          (left (mapcar convert (take (- (length format) (length tail)) format)))
          (right (mapcar convert (remq 'right-align (cdr tail)))))

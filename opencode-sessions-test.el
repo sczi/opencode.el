@@ -1047,13 +1047,31 @@ and only made when used."
         (should (equal "Title" left))
         (should (equal "x" right))
         (should (eq 'space (car (get-text-property 0 'display space)))))
-      (should (equal '("" "") (opencode--render-format '(overflow) 'header-line)))
+      (should (equal '("") (opencode--render-format '(overflow) 'header-line)))
       (should (equal "[Title]" (opencode--mode-line-process)))
       (cl-letf (((symbol-function 'window-parameter)
                  (lambda (_window parameter) (eq parameter 'opencode-overflow))))
         (should (equal '("" "[Title]")
                        (opencode--render-format '(overflow) 'header-line)))
         (should (equal "" (opencode--mode-line-process)))))))
+
+(ert-deftest opencode-overflow-format-test ()
+  "`opencode-overflow-format' replaces `overflow', and can right-align."
+  (with-opencode-session-test-buffer
+    (setq opencode-session-title "Title")
+    (let ((opencode-mode-line-process "[%t]")
+          (opencode-overflow-format '("%t" right-align "x")))
+      (should (equal '("" "a") (opencode--render-format '("a" overflow) 'header-line)))
+      (cl-letf (((symbol-function 'window-parameter)
+                 (lambda (_window parameter) (eq parameter 'opencode-overflow))))
+        (pcase-let ((`("" ,a ,left ,space ,right)
+                     (opencode--render-format '("a" overflow) 'header-line)))
+          (should (equal "a" a))
+          (should (equal "Title" left))
+          (should (equal "x" right))
+          (should (eq 'space (car (get-text-property 0 'display space)))))
+        ;; the user's list isn't modified by splicing
+        (should (equal '("%t" right-align "x") opencode-overflow-format))))))
 
 (ert-deftest opencode-mode-line-format-option-test ()
   "`opencode-mode-line-format' replaces the mode line and its process."

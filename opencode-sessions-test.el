@@ -1573,14 +1573,15 @@ claude-agent."
      (seven_day_sonnet (utilization . 0.85) (resetsAt . ,(+ now 3600))))))
 
 (ert-deftest opencode-claude-usage-fresh ()
-  "Fresh usage shows exact percentages, and windows past their reset as 0%."
+  "Fresh usage shows exact percentages, and windows past their reset as 0%
+without a reset time."
   (let* ((now (float-time))
          (usage (opencode--format-claude-usage
                  (opencode-session-test--rate-limit now))))
     (should (string-match-p
              (rx bos "Claude usage: 5h " (= 2 "━") (= 18 "─")
                  " 9% (resets " (+ (not ")")) ") · "
-                 "week " (= 20 "─") " 0% (reset " (+ (not ")")) ") · "
+                 "week " (= 20 "─") " 0% · "
                  "seven day sonnet " (= 17 "━") (= 3 "─")
                  " 85% (resets " (+ (not ")")) ")" eos)
              usage))
@@ -1636,7 +1637,7 @@ claude-agent."
                                           'after-string))))))
 
 (ert-deftest opencode-mode-line-claude-usage-test ()
-  "%u and %U show the Claude 5h usage, only in claude-agent sessions."
+  "%u, %U and %r show the Claude 5h usage, only in claude-agent sessions."
   (with-opencode-session-test-buffer
     (setq opencode-session-agent
           '((name . "build") (model (id . "opus") (providerID . "claude-agent"))))
@@ -1648,6 +1649,7 @@ claude-agent."
         (let ((opencode--claude-rate-limit 'unfetched))
           (should (equal "[]" (opencode--mode-line-expand "[%u]")))
           (should (equal "[]" (opencode--mode-line-expand "[%U]")))
+          (should (equal "[]" (opencode--mode-line-expand "[%r]")))
           (should-not bar-args))
         (let ((opencode--claude-rate-limit
                (cons now (opencode-session-test--rate-limit now))))
@@ -1656,13 +1658,18 @@ claude-agent."
           (should (equal "bar" (opencode--mode-line-expand
                                 "%U" (opencode--format-specs 'header-line))))
           (should (equal '(0.09 header-line) bar-args))
-          ;; Past its reset nothing has been used
+          (should (equal (format-time-string "%H:%M" (+ now 3600))
+                         (opencode--mode-line-expand "%r")))
+          ;; Past its reset nothing has been used, and there's no reset time
           (setq opencode--claude-rate-limit
                 (cons now (opencode-session-test--rate-limit (- now 7200))))
           (should (equal "0%%" (opencode--mode-line-expand "%u")))
+          (should (equal "[]" (opencode--mode-line-expand "[%r]")))
+          (setq opencode--claude-rate-limit
+                (cons now (opencode-session-test--rate-limit now)))
           (setq opencode-session-agent
                 '((name . "build") (model (id . "gpt") (providerID . "openai"))))
-          (should (equal "[]" (opencode--mode-line-expand "[%u%U]"))))))))
+          (should (equal "[]" (opencode--mode-line-expand "[%u%U%r]"))))))))
 
 (defun opencode-session-test--tree-session (id parent created updated)
   "Return a session ID spawned by PARENT with CREATED and UPDATED times."

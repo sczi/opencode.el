@@ -273,36 +273,25 @@ Only claude-agent sessions are considered."
          .native.rateLimit
          (/ (or .time.completed .time.created) 1000.0))))))
 
-(defun opencode--format-claude-reset (resets-at)
-  "Return RESETS-AT, in epoch seconds, as a short time."
-  (format-time-string (if (< (- resets-at (float-time)) (* 20 3600))
-                          "%H:%M"
-                        "%a %H:%M")
-                      resets-at))
-
 (defun opencode--format-claude-usage (rate-limit &optional width)
   "Return a line describing Claude usage from RATE-LIMIT.
 If WIDTH, in pixels, is too narrow to fit it on one line, put each
 usage window on its own line instead."
-  (let* ((now (float-time))
-         (windows
-          (mapcar
-           (pcase-lambda (`(,name . ,window))
-             (let-alist window
-               (let ((reset (and .resetsAt (<= .resetsAt now)))
-                     (utilization (opencode--claude-window-utilization window)))
-                 (concat
-                  (or (alist-get name opencode--claude-usage-window-names)
-                      (string-replace "_" " " (symbol-name name)))
-                  " "
-                  (opencode--usage-bar utilization)
-                  " "
-                  (format "%d%%" (round (* 100 utilization)))
-                  (when .resetsAt
-                    (format " (%s %s)"
-                            (if reset "reset" "resets")
-                            (opencode--format-claude-reset .resetsAt)))))))
-           (alist-get 'unifiedWindows rate-limit))))
+  (let ((windows
+         (mapcar
+          (pcase-lambda (`(,name . ,window))
+            (let ((utilization (opencode--claude-window-utilization window))
+                  (reset (opencode--claude-window-reset window)))
+              (concat
+               (or (alist-get name opencode--claude-usage-window-names)
+                   (string-replace "_" " " (symbol-name name)))
+               " "
+               (opencode--usage-bar utilization)
+               " "
+               (format "%d%%" (round (* 100 utilization)))
+               (when reset
+                 (format " (resets %s)" reset)))))
+          (alist-get 'unifiedWindows rate-limit))))
     (when windows
       (let ((line (concat "Claude usage: " (string-join windows " · "))))
         (if (and width (> (string-pixel-width line) width))

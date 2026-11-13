@@ -479,11 +479,25 @@ has reset this is 0."
         0
       (or .utilization 0))))
 
+(defun opencode--claude-window-reset (window)
+  "Return when Claude rate limit WINDOW resets as a short time.
+It is nil if WINDOW has no reset time or it has passed."
+  (when-let* ((resets-at (alist-get 'resetsAt window))
+              ((> resets-at (float-time))))
+    (format-time-string (if (< (- resets-at (float-time)) (* 20 3600))
+                            "%H:%M"
+                          "%a %H:%M")
+                        resets-at)))
+
+(defun opencode--claude-five-hour-window ()
+  "Return the Claude 5h usage limit window, nil if unknown."
+  (when (consp opencode--claude-rate-limit)
+    (map-nested-elt (cdr opencode--claude-rate-limit)
+                    '(unifiedWindows five_hour))))
+
 (defun opencode--claude-five-hour-utilization ()
   "Return the fraction used of the Claude 5h usage limit, nil if unknown."
-  (when-let* (((consp opencode--claude-rate-limit))
-              (window (map-nested-elt (cdr opencode--claude-rate-limit)
-                                      '(unifiedWindows five_hour))))
+  (when-let* ((window (opencode--claude-five-hour-window)))
     (opencode--claude-window-utilization window)))
 
 (provide 'opencode-common)

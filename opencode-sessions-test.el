@@ -1082,6 +1082,53 @@ and only made when used."
     (should (equal '("" "idle") (opencode--mode-line)))
     (should (equal "" (opencode--mode-line-process)))))
 
+(ert-deftest opencode-mode-line-options-as-functions-test ()
+  "The mode line and header line options can be functions returning them."
+  (with-opencode-session-test-buffer
+    (setq opencode-session-title "Title")
+    (let* ((opencode-mode-line-process (lambda () "[%t]"))
+           (opencode-overflow-format
+            (lambda ()
+              (if (opencode-claude-subscription-p) '("claude") '("other"))))
+           (opencode-header-line-format (lambda () '("h" overflow))))
+      (should (equal "[Title]" (opencode--mode-line-process)))
+      (should (equal '("" "h") (opencode--header-line)))
+      (cl-letf (((symbol-function 'window-parameter)
+                 (lambda (_window parameter) (eq parameter 'opencode-overflow))))
+        (setq opencode-session-agent
+              '((model (providerID . "openai") (modelID . "gpt-5"))))
+        (should (equal '("" "h" "other") (opencode--header-line)))
+        (setq opencode-session-agent
+              '((model (providerID . "claude-agent") (modelID . "opus"))))
+        (should (equal '("" "h" "claude") (opencode--header-line)))
+        ;; falls back to `opencode-mode-line-process' when it returns nil
+        (let ((opencode-overflow-format #'ignore))
+          (should (equal '("" "h" "[Title]") (opencode--header-line))))))
+    ;; a mode line function returning nil uses the global mode line
+    (let ((format '("%i")))
+      (setq-local opencode-mode-line-format (lambda () format))
+      (opencode--setup-mode-line)
+      (should (equal '(:eval (opencode--mode-line)) mode-line-format))
+      (should (equal '("" "idle") (opencode--mode-line)))
+      (should (equal "" (opencode--mode-line-process)))
+      (setq format nil)
+      (should (equal (default-value 'mode-line-format) (opencode--mode-line)))
+      (should (equal "[Title]"
+                     (let ((opencode-mode-line-process "[%t]"))
+                       (opencode--mode-line-process)))))))
+
+(ert-deftest opencode-claude-subscription-p-test ()
+  "Sessions and session buffers using claude-agent are subscriptions."
+  (should (opencode-claude-subscription-p
+           (opencode-session-test--claude-session "opus" 3.21)))
+  (should-not (opencode-claude-subscription-p
+               (opencode-session-test--claude-session "gpt-5" 0 "openai")))
+  (with-temp-buffer
+    (setq-local opencode-session-agent '((model (providerID . "claude-agent"))))
+    (should (opencode-claude-subscription-p))
+    (setq-local opencode-session-agent nil)
+    (should-not (opencode-claude-subscription-p))))
+
 (ert-deftest opencode-open-project-buffers-test ()
   "A control buffer is named after the main checkout of its project."
   (let (opencode--session-control-buffers buffers)

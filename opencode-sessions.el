@@ -182,8 +182,14 @@ precedence over the mode line's %c, %C, %i, %I, %o, %u and %U.
 
 When the mode line is too wide for the window, this is hidden from the
 mode line and shown where `overflow' is in `opencode-header-line-format',
-unless `opencode-overflow-format' is non-nil.  Ignored when `opencode-mode-line-format' is non-nil."
-  :type 'string
+unless `opencode-overflow-format' is non-nil.  Ignored when `opencode-mode-line-format' is non-nil.
+
+This and `opencode-header-line-format', `opencode-overflow-format' and
+`opencode-mode-line-format' can also be a function, called with no
+arguments in the session buffer on each mode line update, that returns
+the value to use.  For example, it could return a different value when
+`opencode-claude-subscription-p'.  It should be fast."
+  :type '(choice string function)
   :group 'opencode)
 
 (defcustom opencode-header-line-format '(overflow)
@@ -198,11 +204,13 @@ symbols:
                  fit in the mode line
 
 The header line is hidden when it would be blank, so the default only
-shows one when the mode line overflows."
-  :type '(repeat (choice string
-                         (const right-align)
-                         (const overflow)
-                         sexp))
+shows one when the mode line overflows.  Can also be a function
+returning the list, see `opencode-mode-line-process'."
+  :type '(choice (repeat (choice string
+                                 (const right-align)
+                                 (const overflow)
+                                 sexp))
+          function)
   :group 'opencode)
 
 (defcustom opencode-overflow-format nil
@@ -211,11 +219,13 @@ It's shown when `opencode-mode-line-process' is hidden from the mode
 line because the mode line is too wide.  When nil,
 `opencode-mode-line-process' is shown.  Otherwise a list like
 `opencode-header-line-format', except without `overflow'.  A
-`right-align' in it right-aligns the rest of the header line."
+`right-align' in it right-aligns the rest of the header line.  Can also
+be a function returning one of these, see `opencode-mode-line-process'."
   :type '(choice (const :tag "Show opencode-mode-line-process" nil)
           (repeat (choice string
                           (const right-align)
-                          sexp)))
+                          sexp))
+          function)
   :group 'opencode)
 
 (defcustom opencode-mode-line-format nil
@@ -223,11 +233,13 @@ line because the mode line is too wide.  When nil,
 When nil, the global `mode-line-format' is used, with session information
 in `opencode-mode-line-process'.  Otherwise a list like
 `opencode-header-line-format', except without `overflow', which replaces
-the mode line and makes `opencode-mode-line-process' unused."
+the mode line and makes `opencode-mode-line-process' unused.  Can also be
+a function returning one of these, see `opencode-mode-line-process'."
   :type '(choice (const :tag "Use mode-line-format" nil)
           (repeat (choice string
                           (const right-align)
-                          sexp)))
+                          sexp))
+          function)
   :initialize #'custom-initialize-default
   :set #'opencode--set-mode-line-option
   :group 'opencode)
@@ -244,6 +256,10 @@ other mode line and header line options."
                          '(model providerID))
          "claude-agent"))
 
+(defun opencode--option-value (value)
+  "Return VALUE, or the result of calling it if it's a function."
+  (if (functionp value) (funcall value) value))
+
 (defun opencode--format-specs (&optional face)
   "Return the `format-spec' specs for the current session's mode line.
 FACE is the face of the line they're shown in, for the background of the
@@ -257,7 +273,7 @@ Values that are expensive to compute are functions, called only when used."
                         (* 100 (/ (float opencode-session-tokens) limit))
                       0))
            ;; Only claude-agent reports it, it'd be misleading for others
-           (claude (equal .model.providerID "claude-agent"))
+           (claude (opencode-claude-subscription-p))
            (usage (and claude (opencode--claude-five-hour-utilization)))
            (reset (and claude (opencode--claude-window-reset
                                (opencode--claude-five-hour-window))))
@@ -315,8 +331,8 @@ literal %% are escaped, and other specs are left for the mode line."
 
 (defun opencode--mode-line-overflow-p ()
   "Return non-nil if `opencode-mode-line-process' goes in the header line."
-  (and (not opencode-mode-line-format)
-       (not opencode--mode-line-measuring)
+  (and (not opencode--mode-line-measuring)
+       (not (opencode--option-value opencode-mode-line-format))
        (window-parameter nil 'opencode-overflow)))
 
 (defun opencode--line-face (line)
@@ -331,10 +347,11 @@ selected."
 
 (defun opencode--mode-line-process ()
   "Return `opencode-mode-line-process' expanded, if shown in the mode line."
-  (if (or opencode-mode-line-format (opencode--mode-line-overflow-p))
+  (if (or (opencode--option-value opencode-mode-line-format)
+          (opencode--mode-line-overflow-p))
       ""
     (opencode--mode-line-expand
-     opencode-mode-line-process
+     (opencode--option-value opencode-mode-line-process)
      (opencode--format-specs (opencode--line-face 'mode-line)))))
 
 (defun opencode--right-align-space (rest face)
@@ -362,10 +379,11 @@ face it's shown in, for measuring."
                   (lambda (element)
                     (cond ((not (eq element 'overflow)) (list element))
                           ((not (opencode--mode-line-overflow-p)) nil)
-                          (opencode-overflow-format
-                           (copy-sequence
-                            (remq 'overflow opencode-overflow-format)))
-                          (t (list opencode-mode-line-process))))
+                          ((when-let* ((overflow (opencode--option-value
+                                                  opencode-overflow-format)))
+                             (copy-sequence (remq 'overflow overflow))))
+                          (t (list (opencode--option-value
+                                    opencode-mode-line-process)))))
                   format))
          (convert
           (lambda (element)
@@ -380,12 +398,16 @@ face it's shown in, for measuring."
       `("" ,@left))))
 
 (defun opencode--mode-line ()
-  "Return the mode line for `opencode-mode-line-format'."
-  (opencode--render-format opencode-mode-line-format 'mode-line))
+  "Return the mode line for `opencode-mode-line-format'.
+It's the global `mode-line-format' if that's a function returning nil."
+  (if-let* ((format (opencode--option-value opencode-mode-line-format)))
+      (opencode--render-format format 'mode-line)
+    (default-value 'mode-line-format)))
 
 (defun opencode--header-line ()
   "Return the header line for `opencode-header-line-format'."
-  (opencode--render-format opencode-header-line-format 'header-line))
+  (opencode--render-format (opencode--option-value opencode-header-line-format)
+                           'header-line))
 
 (defun opencode--update-header-line (window)
   "Show or hide the header line of WINDOW, which shows a session buffer.
@@ -394,7 +416,7 @@ and is hidden when blank.  For `pre-redisplay-functions'."
   (when (and (windowp window) (window-live-p window)
              (eq (window-buffer window) (current-buffer)))
     (let* ((overflow
-            (and (not opencode-mode-line-format)
+            (and (not (opencode--option-value opencode-mode-line-format))
                  mode-line-format
                  (> (let ((opencode--mode-line-measuring t))
                       (string-pixel-width
@@ -402,7 +424,7 @@ and is hidden when blank.  For `pre-redisplay-functions'."
                     (- (window-pixel-width window)
                        (window-right-divider-width window)))))
            (_ (set-window-parameter window 'opencode-overflow overflow))
-           (header (and opencode-header-line-format
+           (header (and (opencode--option-value opencode-header-line-format)
                         (not (string-blank-p
                               (format-mode-line '(:eval (opencode--header-line))
                                                 'header-line window)))

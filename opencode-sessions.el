@@ -168,10 +168,11 @@ truncate the title to 30 characters.  The specs are:
   %c  percent of the context window used
   %C  percent of the context window used, as a bar
   %T  tokens used           %t  session title
-  %d  session directory     %%  a literal percent sign
+  %o  session cost          %d  session directory
+  %%  a literal percent sign
 
 Other specs, like %b, are left for the mode line to expand.  Ours take
-precedence over the mode line's %c, %C, %i and %I.
+precedence over the mode line's %c, %C, %i, %I and %o.
 
 When the mode line is too wide for the window, this is hidden from the
 mode line and shown where `overflow' is in `opencode-header-line-format'.
@@ -255,6 +256,7 @@ Values that are expensive to compute are functions, called only when used."
          (?c . ,(format "%.0f%%" context))
          (?C . ,(lambda () (opencode--usage-bar (/ context 100) face)))
          (?T . ,(opencode--format-tokens opencode-session-tokens))
+         (?o . ,(format "$%.2f" opencode-session-cost))
          (?t . ,opencode-session-title)
          (?d . ,(abbreviate-file-name default-directory)))))))
 
@@ -587,6 +589,7 @@ If CALLBACK is given, it will be called with SESSION afterwards."
     (opencode-api-all-messages (.id)
         messages
       (setq opencode--replayed-unfinished-messages nil
+            opencode-session-cost (or .cost 0)
             opencode--server-agent
             (or .agent
                 ;; sessions migrated from v1 only have it on their messages

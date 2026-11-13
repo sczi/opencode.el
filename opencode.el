@@ -353,6 +353,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            (opencode--with-session-buffer .sessionID
              (opencode--align-finished-tables t)
              (setq opencode-session-tokens (opencode--tokens-total .tokens))
+             (setq opencode-session-cost (+ opencode-session-cost (or .cost 0)))
              (force-mode-line-update)
              (when (equal "stop" .finish)
                (opencode--maybe-insert-block-spacing))))

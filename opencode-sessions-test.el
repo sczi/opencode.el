@@ -1006,6 +1006,14 @@ Specs that aren't ours, and a literal %%, are left for the mode line."
       (should (equal "[100%%]" (opencode--mode-line-expand "[%>4t]")))
       (should (equal "%b" (opencode--mode-line-expand "%b"))))))
 
+(ert-deftest opencode-mode-line-cost-test ()
+  "%o is the session's cost in dollars."
+  (with-opencode-session-test-buffer
+    (cl-letf (((symbol-function 'opencode--current-model) #'ignore))
+      (should (equal "$0.00" (opencode--mode-line-expand "%o")))
+      (setq opencode-session-cost 1.234)
+      (should (equal "cost $1.23" (opencode--mode-line-expand "cost %o"))))))
+
 (ert-deftest opencode-mode-line-context-bar-test ()
   "%C is a bar of the context window used, blended with the line's face,
 and only made when used."

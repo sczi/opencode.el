@@ -50,6 +50,9 @@ Shown outputs can still be folded manually with `hs-toggle-hiding'."
 (defvar-local opencode-session-tokens 0
   "Tokens consumed by the current session.")
 
+(defvar-local opencode-session-cost 0
+  "Cost of the current session in dollars, as reported by the server.")
+
 (defvar-local opencode--table-scan-marker nil
   "Marker at the unprocessed Markdown in the current assistant text part.")
 

@@ -377,6 +377,9 @@ it again on redisplay, which is harmless."
 (defvar-local opencode-session-status "idle"
   "Status of the current opencode session (busy or idle).")
 
+(defvar-local opencode-session-title nil
+  "Title of the current opencode session.")
+
 (defvar opencode-session-buffers
   (make-hash-table :test 'equal)
   "A mapping of session ids to Emacs buffers.")

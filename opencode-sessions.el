@@ -142,31 +142,219 @@ Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty."
           (opencode-open-session parent-session))
       (message "This session has no parent"))))
 
-(defun opencode--session-status-indicator ()
-  "Return mode line indicator for session status."
+;;; Mode line and header line
+
+(defun opencode--set-mode-line-option (symbol value)
+  "Set SYMBOL to VALUE and update the mode line of session buffers."
+  (set-default-toplevel-value symbol value)
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (derived-mode-p 'opencode-session-mode)
+        (opencode--setup-mode-line))))
+  (force-mode-line-update t))
+
+(defcustom opencode-mode-line-process "[🤖 %a · %m%v] %c %I  "
+  "Format of the session information shown in `mode-line-process'.
+Expanded with `format-spec', so specs take modifiers like %>30t to
+truncate the title to 30 characters.  The specs are:
+
+  %I  busy/idle icon        %i  busy/idle
+  %a  agent                 %m  model
+  %v  variant               %c  percent of the context window used
+  %T  tokens used           %t  session title
+  %d  session directory     %%  a literal percent sign
+
+Other specs, like %b, are left for the mode line to expand.  Ours take
+precedence over the mode line's %c, %i and %I.
+
+When the mode line is too wide for the window, this is hidden from the
+mode line and shown where `overflow' is in `opencode-header-line-format'.
+Ignored when `opencode-mode-line-format' is non-nil."
+  :type 'string
+  :group 'opencode)
+
+(defcustom opencode-header-line-format '(overflow)
+  "Format of the header line of session buffers.
+A list whose elements are strings expanded like
+`opencode-mode-line-process', other mode line constructs, and the
+symbols:
+
+  `right-align'  right-align everything after it
+  `overflow'     `opencode-mode-line-process', when it didn't fit in the
+                 mode line
+
+The header line is hidden when it would be blank, so the default only
+shows one when the mode line overflows."
+  :type '(repeat (choice string
+                         (const right-align)
+                         (const overflow)
+                         sexp))
+  :group 'opencode)
+
+(defcustom opencode-mode-line-format nil
+  "Format of the whole mode line of session buffers, or nil.
+When nil, the global `mode-line-format' is used, with session information
+in `opencode-mode-line-process'.  Otherwise a list like
+`opencode-header-line-format', except without `overflow', which replaces
+the mode line and makes `opencode-mode-line-process' unused."
+  :type '(choice (const :tag "Use mode-line-format" nil)
+          (repeat (choice string
+                          (const right-align)
+                          sexp)))
+  :initialize #'custom-initialize-default
+  :set #'opencode--set-mode-line-option
+  :group 'opencode)
+
+(defvar opencode--mode-line-measuring nil
+  "Non-nil while measuring the mode line, so it includes everything.")
+
+(defun opencode--format-specs ()
+  "Return the `format-spec' specs for the current session's mode line.
+Values are marked with the `opencode--spec' property, so their percent
+signs can be escaped after `format-spec' truncates them."
   (let-alist opencode-session-agent
-    (let* ((agent (pcase (or .name .id "-")
-                    ("Planner-Sisyphus" "Planner")
-                    (name name)))
-           (model (opencode--current-model))
-           (status (pcase opencode-session-status
-                     ("busy" "⏳")
-                     ("idle" "🚀")
-                     (_ "")))
+    (let* ((model (opencode--current-model))
            (limit (map-nested-elt model '(limit context)))
-           (context-used (if (and (numberp limit) (> limit 0))
-                             (* 100 (/ (float opencode-session-tokens) limit))
-                           0)))
-      (if (< (window-width) 115)
-          (format "[🤖 %s] %.0f%%%% %s  " agent context-used status)
-        (format "[🤖 %s - %s] %.0f%%%% %s  "
-                agent
-                (concat (alist-get 'name model)
-                        (when (and .model.variant
-                                   (not (equal .model.variant "default")))
-                          (propertize (format " %s" .model.variant)
-                                      'face '(bold opencode-request-margin-highlight))))
-                context-used status)))))
+           (context (if (and (numberp limit) (> limit 0))
+                        (* 100 (/ (float opencode-session-tokens) limit))
+                      0)))
+      (mapcar
+       (pcase-lambda (`(,char . ,value))
+         (let ((value (copy-sequence (or value ""))))
+           (put-text-property 0 (length value) 'opencode--spec t value)
+           (cons char value)))
+       `((?I . ,(pcase opencode-session-status
+                  ("busy" "⏳")
+                  ("idle" "🚀")))
+         (?i . ,opencode-session-status)
+         (?a . ,(pcase (or .name .id "-")
+                  ("Planner-Sisyphus" "Planner")
+                  (name name)))
+         (?m . ,(alist-get 'name model))
+         (?v . ,(when (and .model.variant
+                           (not (equal .model.variant "default")))
+                  (concat " " .model.variant)))
+         (?c . ,(format "%.0f%%" context))
+         (?T . ,(opencode--format-tokens opencode-session-tokens))
+         (?t . ,opencode-session-title)
+         (?d . ,(abbreviate-file-name default-directory)))))))
+
+(defun opencode--mode-line-expand (string &optional specs)
+  "Expand STRING with SPECS, by default `opencode--format-specs'.
+The result is a mode line construct, so percent signs from specs and a
+literal %% are escaped, and other specs are left for the mode line."
+  (let ((result (format-spec (string-replace "%%" "%%%%" string)
+                             (or specs (opencode--format-specs))
+                             'ignore))
+        (start 0))
+    (while (setq start (string-search "%" result start))
+      (if (get-text-property start 'opencode--spec result)
+          (setq result (concat (substring result 0 start) "%" (substring result start))
+                start (+ start 2))
+        ;; skip the mode line's own construct, or an escaped %%
+        (setq start (+ start 2))))
+    result))
+
+(defun opencode--mode-line-overflow-p ()
+  "Return non-nil if `opencode-mode-line-process' goes in the header line."
+  (and (not opencode-mode-line-format)
+       (not opencode--mode-line-measuring)
+       (window-parameter nil 'opencode-overflow)))
+
+(defun opencode--mode-line-process ()
+  "Return `opencode-mode-line-process' expanded, if shown in the mode line."
+  (if (or opencode-mode-line-format (opencode--mode-line-overflow-p))
+      ""
+    (opencode--mode-line-expand opencode-mode-line-process)))
+
+(defun opencode--right-align-space (rest face)
+  "Return a space that right-aligns REST, mode line constructs, in FACE."
+  (let ((width (string-pixel-width (format-mode-line `("" ,@rest) face))))
+    (propertize " " 'display
+                `(space :align-to
+                  (,(- (window-pixel-width)
+                       (window-scroll-bar-width)
+                       (window-right-divider-width)
+                       (* (or (car (window-margins)) 0)
+                          (frame-char-width))
+                       (car (window-fringes))
+                       width))))))
+
+(defun opencode--render-format (format face)
+  "Return FORMAT, a list of mode line elements, as a mode line construct.
+Strings are expanded with `opencode--format-specs', and `right-align' and
+`overflow' are handled as in `opencode-header-line-format'.  FACE is the
+face it's shown in, for measuring."
+  (let* ((specs (opencode--format-specs))
+         (convert
+          (lambda (element)
+            (pcase element
+              ((pred stringp) (opencode--mode-line-expand element specs))
+              ('overflow (if (opencode--mode-line-overflow-p)
+                             (opencode--mode-line-expand
+                              opencode-mode-line-process specs)
+                           ""))
+              (_ element))))
+         (tail (memq 'right-align format))
+         (left (mapcar convert (take (- (length format) (length tail)) format)))
+         (right (mapcar convert (remq 'right-align (cdr tail)))))
+    (if tail
+        `("" ,@left ,(opencode--right-align-space right face) ,@right)
+      `("" ,@left))))
+
+(defun opencode--mode-line ()
+  "Return the mode line for `opencode-mode-line-format'."
+  (opencode--render-format opencode-mode-line-format 'mode-line))
+
+(defun opencode--header-line ()
+  "Return the header line for `opencode-header-line-format'."
+  (opencode--render-format opencode-header-line-format 'header-line))
+
+(defun opencode--update-header-line (window)
+  "Show or hide the header line of WINDOW, which shows a session buffer.
+It overflows the mode line when `opencode-mode-line-process' doesn't fit,
+and is hidden when blank.  For `pre-redisplay-functions'."
+  (when (and (windowp window) (window-live-p window)
+             (eq (window-buffer window) (current-buffer)))
+    (let* ((overflow
+            (and (not opencode-mode-line-format)
+                 mode-line-format
+                 (> (let ((opencode--mode-line-measuring t))
+                      (string-pixel-width
+                       (format-mode-line mode-line-format 'mode-line window)))
+                    (- (window-pixel-width window)
+                       (window-right-divider-width window)))))
+           (_ (set-window-parameter window 'opencode-overflow overflow))
+           (header (and opencode-header-line-format
+                        (not (string-blank-p
+                              (format-mode-line '(:eval (opencode--header-line))
+                                                'header-line window)))
+                        '(:eval (opencode--header-line)))))
+      (unless (equal header (window-parameter window 'header-line-format))
+        (set-window-parameter window 'header-line-format header)
+        (set-window-parameter window 'opencode-header (and header t))
+        (force-mode-line-update)))))
+
+(defun opencode--clear-stale-header-lines (frame)
+  "Remove session header lines from windows of FRAME showing other buffers.
+For `window-buffer-change-functions'."
+  (dolist (window (window-list frame 'never))
+    (when (and (window-parameter window 'opencode-header)
+               (not (with-current-buffer (window-buffer window)
+                      (derived-mode-p 'opencode-session-mode))))
+      (set-window-parameter window 'header-line-format nil)
+      (set-window-parameter window 'opencode-header nil)
+      (set-window-parameter window 'opencode-overflow nil))))
+
+(add-hook 'window-buffer-change-functions #'opencode--clear-stale-header-lines)
+
+(defun opencode--setup-mode-line ()
+  "Set up the mode line and header line of a session buffer."
+  (setq-local mode-line-process '(:eval (opencode--mode-line-process)))
+  (if opencode-mode-line-format
+      (setq-local mode-line-format '(:eval (opencode--mode-line)))
+    (kill-local-variable 'mode-line-format))
+  (add-hook 'pre-redisplay-functions #'opencode--update-header-line nil t))
 
 (defun opencode--session-title (session)
   "Return the title of SESSION, which a new session may not have yet."
@@ -224,6 +412,7 @@ ended, like the OpenCode app's inbox."
   (setq-local font-lock-extra-managed-props
               (cl-set-difference font-lock-extra-managed-props
                                  '(button category action help-echo display)))
+  (opencode--setup-mode-line)
   (visual-line-mode)
   (yank-media-handler "\\`image/" #'opencode--yank-image)
   ;; A foldable block starts with a line whose first char has an
@@ -424,7 +613,7 @@ If CALLBACK is given, it will be called with the session after it is initialized
                   default-directory (file-name-as-directory .location.directory)
                   opencode-session-agent (car inherited)
                   opencode-session-agents (cdr inherited)
-                  mode-line-process '(:eval (opencode--session-status-indicator)))
+                  opencode-session-title (opencode--session-title session))
             (hack-dir-local-variables-non-file-buffer)
             (opencode--download-slash-commands default-directory)
             (opencode--download-skills default-directory)

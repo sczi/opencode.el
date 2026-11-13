@@ -944,20 +944,63 @@ The server reports no variant as \"default\", which is no selection."
   (with-opencode-session-test-buffer
     (cl-flet ((indicator (agent)
                 (let ((opencode-session-agent agent))
-                  (opencode--session-status-indicator))))
+                  (opencode--mode-line-process))))
       (should (string-search "🤖 Plan" (indicator '((id . "plan") (name . "Plan")))))
       (should (string-search "🤖 plan" (indicator '((id . "plan")))))
       (should (string-search "🤖 -" (indicator '((model . ((id . "m")))))))
       (should-not (string-search "nil" (indicator nil)))
       (cl-letf (((symbol-function 'opencode--current-model)
-                 (lambda () '((name . "Model"))))
-                ((symbol-function 'window-width) (lambda () 200)))
+                 (lambda () '((name . "Model")))))
         (should-not (string-search
                      "default"
                      (indicator '((id . "a") (model . ((id . "m") (variant . "default")))))))
         (should (string-search
                  "Model high"
                  (indicator '((id . "a") (model . ((id . "m") (variant . "high")))))))))))
+
+(ert-deftest opencode-mode-line-format-specs-test ()
+  "Specs expand with their percent signs escaped for the mode line.
+Specs that aren't ours, and a literal %%, are left for the mode line."
+  (with-opencode-session-test-buffer
+    (setq opencode-session-title "100% done"
+          opencode-session-tokens 50000
+          opencode-session-status "busy"
+          opencode-session-agent '((id . "build") (name . "Build")))
+    (cl-letf (((symbol-function 'opencode--current-model)
+               (lambda () '((name . "Model") (limit . ((context . 200000)))))))
+      ;; the results are mode line constructs, where %% is a percent sign
+      (should (equal "100%% done 25%% ⏳ busy 50k Build %%"
+                     (opencode--mode-line-expand "%t %c %I %i %T %a %%")))
+      (should (equal "[100%%]" (opencode--mode-line-expand "[%>4t]")))
+      (should (equal "%b" (opencode--mode-line-expand "%b"))))))
+
+(ert-deftest opencode-mode-line-render-format-test ()
+  "Everything after `right-align' is right-aligned, and `overflow' shows
+`opencode-mode-line-process' only when it overflowed the mode line."
+  (with-opencode-session-test-buffer
+    (setq opencode-session-title "Title")
+    (let ((opencode-mode-line-process "[%t]"))
+      (pcase-let ((`("" ,left ,space ,right)
+                   (opencode--render-format '("%t" right-align "x") 'header-line)))
+        (should (equal "Title" left))
+        (should (equal "x" right))
+        (should (eq 'space (car (get-text-property 0 'display space)))))
+      (should (equal '("" "") (opencode--render-format '(overflow) 'header-line)))
+      (should (equal "[Title]" (opencode--mode-line-process)))
+      (cl-letf (((symbol-function 'window-parameter)
+                 (lambda (_window parameter) (eq parameter 'opencode-overflow))))
+        (should (equal '("" "[Title]")
+                       (opencode--render-format '(overflow) 'header-line)))
+        (should (equal "" (opencode--mode-line-process)))))))
+
+(ert-deftest opencode-mode-line-format-option-test ()
+  "`opencode-mode-line-format' replaces the mode line and its process."
+  (with-opencode-session-test-buffer
+    (setq-local opencode-mode-line-format '("%i"))
+    (opencode--setup-mode-line)
+    (should (equal '(:eval (opencode--mode-line)) mode-line-format))
+    (should (equal '("" "idle") (opencode--mode-line)))
+    (should (equal "" (opencode--mode-line-process)))))
 
 (ert-deftest opencode-open-project-buffers-test ()
   "A control buffer is named after the main checkout of its project."

@@ -310,11 +310,14 @@ Known bugs in other packages that affect users of opencode.el are documented in
 - =opencode-shown-outputs= lists what to show unfolded: =reasoning=, tool
   names like =shell= or =edit=, or =shell-non-zero= to show shell tool output only when the
   command failed. Shell commands you run yourself are always shown. Shown outputs
-  can still be folded the same way.
+  can still be folded the same way
 - =opencode-open-session-same-window= controls whether to open sessions in a new
   window or in the current window
 - =opencode-session-control-table-columns= configures what columns are shown in
   the session management buffer
+- =opencode-mode-line-process=, =opencode-header-line-format= and
+  =opencode-mode-line-format= configure the session information shown in the
+  mode line and header line
 
 # Local Variables:
 # flycheck-org-lint-disabled-checkers: (invalid-id-link wrong-header-value)

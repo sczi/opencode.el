@@ -369,6 +369,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
                 (variant . "warning")))))
           (session.renamed
            (opencode--with-session-buffer .sessionID
+             (setq opencode-session-title .title)
              (rename-buffer (format "*OpenCode: %s*" .title) t))
            (opencode--redisplay-session-control-buffers))
           (session.deleted

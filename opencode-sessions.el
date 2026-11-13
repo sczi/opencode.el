@@ -51,7 +51,11 @@
     "C-c b" 'opencode-btw
     "C-c B" 'opencode-add-buffer-dwim
     "C-c m" 'opencode-select-model
-    "C-c v" 'opencode-select-variant
+    "M-TAB" 'opencode-cycle-variant
+    "M-<backtab>" 'opencode-cycle-variant-backwards
+    "M-S-<iso-lefttab>" 'opencode-cycle-variant-backwards
+    "M-S-<tab>" 'opencode-cycle-variant-backwards
+    "ESC <backtab>" 'opencode-cycle-variant-backwards
     "C-c M" 'opencode-toggle-mcp
     "C-c F" 'opencode-fork-session
     "C-c R" 'opencode-revert-message
@@ -588,7 +592,7 @@ is a session, otherwise AGENTS are `opencode-agents' and AGENT is the first
 selectable one.  Agents without a model get `opencode-last-model'."
   (let ((agents (mapcar (lambda (agent)
                           (unless (alist-get 'model agent)
-                            (setf (alist-get 'model agent) opencode-last-model))
+                            (setf (alist-get 'model agent) (copy-alist opencode-last-model)))
                           agent)
                         (copy-tree (or opencode-session-agents opencode-agents)))))
     (cons (or (copy-tree opencode-session-agent)

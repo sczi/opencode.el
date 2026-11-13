@@ -115,25 +115,34 @@ Each element is (display-name model-ref provider-id)."
   "Return the active model for this session, as a Model.Info."
   (opencode--find-model (alist-get 'model opencode-session-agent)))
 
-(defun opencode-select-variant ()
-  "Select a variant for the current model."
-  (interactive)
+(defun opencode--cycle-variant (step)
+  "Move STEP places through the current model's variants, wrapping around.
+With no variant selected, start from the first or last variant."
   (unless opencode-session-agent
     (user-error "not in a session"))
-  (let ((variants (alist-get 'variants (opencode--current-model))))
-    (if variants
-        (let ((variant (opencode--annotated-completion
-                        "Variant: "
-                        (cl-loop for variant in variants
-                                 for id = (alist-get 'id variant)
-                                 collect (list id id
-                                               (format "%s" (or (alist-get 'settings variant)
-                                                                "")))))))
-          (setf (alist-get 'model opencode-session-agent)
-                (copy-alist (alist-get 'model opencode-session-agent)))
-          (setf (alist-get 'variant (alist-get 'model opencode-session-agent))
-                variant))
-      (message "No variants"))))
+  (let* ((ids (mapcar (lambda (variant) (alist-get 'id variant))
+                      (alist-get 'variants (opencode--current-model))))
+         (current (map-nested-elt opencode-session-agent '(model variant)))
+         (pos (cl-position current ids :test #'equal)))
+    (if (null ids)
+        (message "No variants")
+      (let ((variant (nth (if pos
+                              (mod (+ pos step) (length ids))
+                            (if (> step 0) 0 (1- (length ids))))
+                          ids)))
+        (setf (alist-get 'variant (alist-get 'model opencode-session-agent))
+              variant)
+        (force-mode-line-update)))))
+
+(defun opencode-cycle-variant ()
+  "Switch to the next variant of the current model."
+  (interactive)
+  (opencode--cycle-variant 1))
+
+(defun opencode-cycle-variant-backwards ()
+  "Switch to the previous variant of the current model."
+  (interactive)
+  (opencode--cycle-variant -1))
 
 (defun opencode--download-slash-commands (directory &optional force)
   "Download slash commands for DIRECTORY, unless already downloaded or FORCE."

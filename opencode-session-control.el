@@ -220,12 +220,6 @@ An alias of a model family, such as opus, uses the family's newest model."
              (when opencode--claude-plan-tier
                (opencode--redisplay-session-control-buffers)))))))))
 
-(defvar opencode--claude-rate-limit 'unfetched
-  "The latest Claude subscription rate limit info, nil if there is none.
-A cons of the time in seconds it was reported and the rateLimit alist that
-claude-agent puts in a step's native metadata.  The symbol `unfetched' before
-the latest stored one has been requested.")
-
 (defvar-local opencode--session-control-usage-overlay nil
   "Overlay at the end of the session control buffer showing Claude usage.")
 
@@ -242,6 +236,8 @@ It is ignored if older than the one already recorded."
                (or (not (consp opencode--claude-rate-limit))
                    (>= time (car opencode--claude-rate-limit))))
       (setq opencode--claude-rate-limit (cons time rate-limit))
+      ;; For %u and %U in every session's mode line
+      (force-mode-line-update t)
       (opencode--map-session-control-buffers
        #'opencode--session-control-update-usage))))
 
@@ -293,8 +289,8 @@ usage window on its own line instead."
           (mapcar
            (pcase-lambda (`(,name . ,window))
              (let-alist window
-               (let* ((reset (and .resetsAt (<= .resetsAt now)))
-                      (utilization (if reset 0 (or .utilization 0))))
+               (let ((reset (and .resetsAt (<= .resetsAt now)))
+                     (utilization (opencode--claude-window-utilization window)))
                  (concat
                   (or (alist-get name opencode--claude-usage-window-names)
                       (string-replace "_" " " (symbol-name name)))

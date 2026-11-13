@@ -1617,6 +1617,35 @@ claude-agent."
                " 9% (resets" (overlay-get opencode--session-control-usage-overlay
                                           'after-string))))))
 
+(ert-deftest opencode-mode-line-claude-usage-test ()
+  "%u and %U show the Claude 5h usage, only in claude-agent sessions."
+  (with-opencode-session-test-buffer
+    (setq opencode-session-agent
+          '((name . "build") (model (id . "opus") (providerID . "claude-agent"))))
+    (let ((now (float-time))
+          bar-args)
+      (cl-letf (((symbol-function 'opencode--current-model) #'ignore)
+                ((symbol-function 'opencode--usage-bar)
+                 (lambda (&rest args) (setq bar-args args) "bar")))
+        (let ((opencode--claude-rate-limit 'unfetched))
+          (should (equal "[]" (opencode--mode-line-expand "[%u]")))
+          (should (equal "[]" (opencode--mode-line-expand "[%U]")))
+          (should-not bar-args))
+        (let ((opencode--claude-rate-limit
+               (cons now (opencode-session-test--rate-limit now))))
+          ;; Escaped for the mode line
+          (should (equal "5h 9%%" (opencode--mode-line-expand "5h %u")))
+          (should (equal "bar" (opencode--mode-line-expand
+                                "%U" (opencode--format-specs 'header-line))))
+          (should (equal '(0.09 header-line) bar-args))
+          ;; Past its reset nothing has been used
+          (setq opencode--claude-rate-limit
+                (cons now (opencode-session-test--rate-limit (- now 7200))))
+          (should (equal "0%%" (opencode--mode-line-expand "%u")))
+          (setq opencode-session-agent
+                '((name . "build") (model (id . "gpt") (providerID . "openai"))))
+          (should (equal "[]" (opencode--mode-line-expand "[%u%U]"))))))))
+
 (defun opencode-session-test--tree-session (id parent created updated)
   "Return a session ID spawned by PARENT with CREATED and UPDATED times."
   `((id . ,id)

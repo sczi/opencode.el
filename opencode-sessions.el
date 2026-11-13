@@ -167,12 +167,17 @@ truncate the title to 30 characters.  The specs are:
   %v  variant               %V  variant level as dots, like ●●○
   %c  percent of the context window used
   %C  percent of the context window used, as a bar
+  %u  percent of the Claude subscription's 5h usage limit used
+  %U  percent of the Claude subscription's 5h usage limit used, as a bar
   %T  tokens used           %t  session title
   %o  session cost          %d  session directory
   %%  a literal percent sign
 
+%u and %U are empty unless the session uses the claude-agent provider
+and it has reported its usage.
+
 Other specs, like %b, are left for the mode line to expand.  Ours take
-precedence over the mode line's %c, %C, %i, %I and %o.
+precedence over the mode line's %c, %C, %i, %I, %o, %u and %U.
 
 When the mode line is too wide for the window, this is hidden from the
 mode line and shown where `overflow' is in `opencode-header-line-format'.
@@ -227,6 +232,9 @@ Values that are expensive to compute are functions, called only when used."
            (context (if (and (numberp limit) (> limit 0))
                         (* 100 (/ (float opencode-session-tokens) limit))
                       0))
+           ;; Only claude-agent reports it, it'd be misleading for others
+           (usage (and (equal .model.providerID "claude-agent")
+                       (opencode--claude-five-hour-utilization)))
            (mark (lambda (value)
                    (let ((value (copy-sequence (or value ""))))
                      (put-text-property 0 (length value) 'opencode--spec t value)
@@ -255,6 +263,8 @@ Values that are expensive to compute are functions, called only when used."
                           (make-string (- (length ids) 1 pos) ?○))))
          (?c . ,(format "%.0f%%" context))
          (?C . ,(lambda () (opencode--usage-bar (/ context 100) face)))
+         (?u . ,(when usage (format "%d%%" (round (* 100 usage)))))
+         (?U . ,(lambda () (when usage (opencode--usage-bar usage face))))
          (?T . ,(opencode--format-tokens opencode-session-tokens))
          (?o . ,(format "$%.2f" opencode-session-cost))
          (?t . ,opencode-session-title)

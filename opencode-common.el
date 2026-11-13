@@ -464,5 +464,27 @@ frames.  The SVG blends with the background of BACKGROUND-FACE, by default
                     (opencode--usage-bar-svg fraction face background-face))
       text)))
 
+(defvar opencode--claude-rate-limit 'unfetched
+  "The latest Claude subscription rate limit info, nil if there is none.
+A cons of the time in seconds it was reported and the rateLimit alist that
+claude-agent puts in a step's native metadata.  The symbol `unfetched' before
+the latest stored one has been requested.")
+
+(defun opencode--claude-window-utilization (window)
+  "Return the fraction used of Claude rate limit WINDOW.
+WINDOW is an alist of utilization and resetsAt, in epoch seconds.  Once it
+has reset this is 0."
+  (let-alist window
+    (if (and .resetsAt (<= .resetsAt (float-time)))
+        0
+      (or .utilization 0))))
+
+(defun opencode--claude-five-hour-utilization ()
+  "Return the fraction used of the Claude 5h usage limit, nil if unknown."
+  (when-let* (((consp opencode--claude-rate-limit))
+              (window (map-nested-elt (cdr opencode--claude-rate-limit)
+                                      '(unifiedWindows five_hour))))
+    (opencode--claude-window-utilization window)))
+
 (provide 'opencode-common)
 ;;; opencode-common.el ends here

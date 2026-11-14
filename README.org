@@ -59,6 +59,10 @@ of advantages over the official TUI:
    - add function at point to context with =opencode-add-defun=
    - start a new session to fix all flycheck errors in the current buffer with
      =opencode-fix-flycheck=
+   - start a new session to diagnose and fix failed tests from the ERT results
+     buffer with =opencode-fix-ert=, bound to =o= in =ert-results-mode=. By default it
+     will diagnose all failed tests, but with a prefix argument will just
+     diagnose the test at point.
    - integration with magit is possible, =opencode-new-worktree= will create a new
      git branch and worktree for the current project, and start an opencode session in it
    - =`file`= and =file:line= references in LLM output are turned into clickable buttons
@@ -220,7 +224,7 @@ If a session buffer and frame is not active, emacs will show a notification when
                           opencode-select-idle opencode-visit-last-idle
                           opencode-add-file-dwim opencode-add-region opencode-add-defun
                           opencode-add-buffer-dwim opencode-fix-flycheck opencode-reload-locations
-                          opencode-unrevert-all)
+                          opencode-unrevert-all opencode-fix-ert)
          collect (list command
                        (string-join (string-lines (documentation command)) " ")))
 #+end_src
@@ -244,6 +248,7 @@ If a session buffer and frame is not active, emacs will show a notification when
 | opencode-fix-flycheck        | Start a new opencode session to fix the current buffer’s Flycheck errors.                                                                                                                                                                                                                                                            |
 | opencode-reload-locations    | Make the server resolve the project of each directory again. Run this after a directory’s project changes, such as on ‘git init’, its first commit or adding a remote.                                                                                                                                                               |
 | opencode-unrevert-all        | Unrevert all reverted messages in the current session.                                                                                                                                                                                                                                                                               |
+| opencode-fix-ert             | Start a new opencode session to diagnose and fix ERT test failures. Uses all unexpected results in the current ERT results buffer. With a prefix argument AT-POINT, only use the test at point.                                                                                                                                      |
 
 * Question Tool
 #+CAPTION: Single choice question

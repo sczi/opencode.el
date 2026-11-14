@@ -135,14 +135,23 @@ set `opencode-server-password' to connect to it"))))
    opencode--process
    (lambda (process event)
      (when (memq (process-status process) '(exit signal))
-       (unless (zerop (process-exit-status process))
-         (pop-to-buffer (process-buffer process))
-         (error "OpenCode failed, %s" (string-trim-right event "\n")))))))
+       (when (eq process opencode--process)
+         (opencode-disconnect event))
+       (let ((buffer (process-buffer process)))
+         ;; A killed buffer means the server was deliberately killed with it
+         (unless (or (zerop (process-exit-status process))
+                     (not (buffer-live-p buffer)))
+           (pop-to-buffer buffer)
+           (display-warning
+            'opencode
+            (format "OpenCode server failed, %s" (string-trim-right event "\n"))
+            :error)))))))
 
 (defun opencode-autoconnect (on-connect)
   "Connect to an existing server if one is running, otherwise start a new one.
 Only starts new one if `opencode-auto-start-server' is non-nil.
 Run ON-CONNECT after connected."
+  (opencode--disconnect-if-stream-dead)
   (cond
    ;; Already connected
    (opencode--event-subscription
@@ -177,6 +186,7 @@ Call ON-CONNECT once connected."
   (interactive
    (list (read-string "Host: " opencode-host)
          (read-number "Port: " opencode-port)))
+  (opencode--disconnect-if-stream-dead)
   (when opencode--event-subscription
     (user-error "Already connected"))
   (setq opencode-api-url (format "http://%s:%d" host port))
@@ -506,6 +516,14 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
   (setq opencode--slash-commands-by-directory nil
         opencode--skills-by-directory nil
         opencode--location-by-directory nil))
+
+(defun opencode--disconnect-if-stream-dead ()
+  "Disconnect if the event stream died without reporting it ended.
+plz ignores some ways curl can die, such as a hangup when its buffer is
+killed, so the stream's callbacks never run."
+  (when (and opencode--event-subscription
+             (not (process-live-p opencode--event-subscription)))
+    (opencode-disconnect "event stream process died")))
 
 (defun opencode--fetch-models (callback)
   "Fetch enabled models and the default model from server.

@@ -213,7 +213,7 @@ returning the list, see `opencode-mode-line-process'."
           function)
   :group 'opencode)
 
-(defcustom opencode-overflow-format nil
+(defcustom opencode-overflow-format '("%d %o%U%r" right-align  "🤖 %a · %m%V %T %c %I ")
   "What `overflow' in `opencode-header-line-format' shows, or nil.
 It's shown when `opencode-mode-line-process' is hidden from the mode
 line because the mode line is too wide.  When nil,
@@ -307,9 +307,10 @@ Values that are expensive to compute are functions, called only when used."
          (?C . ,(lambda () (opencode--usage-bar (/ context 100) face)))
          (?u . ,(when usage (format "%d%%" (round (* 100 usage)))))
          (?U . ,(lambda () (when usage (opencode--usage-bar usage face))))
-         (?r . ,reset)
+         (?r . ,(when reset (format " resets %s" reset)))
          (?T . ,(opencode--format-tokens opencode-session-tokens))
-         (?o . ,(format "$%.2f" opencode-session-cost))
+         (?o . ,(when (plusp opencode-session-cost)
+                  (format "$%.2f" opencode-session-cost)))
          (?t . ,opencode-session-title)
          (?d . ,(abbreviate-file-name default-directory)))))))
 

@@ -1010,7 +1010,8 @@ Specs that aren't ours, and a literal %%, are left for the mode line."
   "%o is the session's cost in dollars."
   (with-opencode-session-test-buffer
     (cl-letf (((symbol-function 'opencode--current-model) #'ignore))
-      (should (equal "$0.00" (opencode--mode-line-expand "%o")))
+      ;; No cost shows nothing
+      (should (equal "[]" (opencode--mode-line-expand "[%o]")))
       (setq opencode-session-cost 1.234)
       (should (equal "cost $1.23" (opencode--mode-line-expand "cost %o"))))))
 
@@ -1041,7 +1042,8 @@ and only made when used."
 `opencode-mode-line-process' only when it overflowed the mode line."
   (with-opencode-session-test-buffer
     (setq opencode-session-title "Title")
-    (let ((opencode-mode-line-process "[%t]"))
+    (let ((opencode-mode-line-process "[%t]")
+          (opencode-overflow-format nil))
       (pcase-let ((`("" ,left ,space ,right)
                    (opencode--render-format '("%t" right-align "x") 'header-line)))
         (should (equal "Title" left))
@@ -1713,7 +1715,8 @@ without a reset time."
           (should (equal "bar" (opencode--mode-line-expand
                                 "%U" (opencode--format-specs 'header-line))))
           (should (equal '(0.09 header-line) bar-args))
-          (should (equal (format-time-string "%H:%M" (+ now 3600))
+          (should (equal (format " resets %s"
+                                 (format-time-string "%H:%M" (+ now 3600)))
                          (opencode--mode-line-expand "%r")))
           ;; Past its reset nothing has been used, and there's no reset time
           (setq opencode--claude-rate-limit

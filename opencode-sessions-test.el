@@ -969,8 +969,9 @@ The server reports no variant as \"default\", which is no selection."
                    (indicator '((id . "a") (model . ((id . "m") (variant . "high"))))))))))))
 
 (ert-deftest opencode-variant-dots-test ()
-  "%V shows one dot fewer than the number of variants, filled up to the
-selected one, and nothing when there's no selection or only one variant."
+  "%V shows one dot fewer than the number of variants.
+They're filled up to the selected one, and there are none when there's no
+selection or only one variant."
   (with-opencode-session-test-buffer
     (cl-flet ((dots (variants variant)
                 (cl-letf (((symbol-function 'opencode--current-model)
@@ -1016,8 +1017,8 @@ Specs that aren't ours, and a literal %%, are left for the mode line."
       (should (equal "cost $1.23" (opencode--mode-line-expand "cost %o"))))))
 
 (ert-deftest opencode-mode-line-context-bar-test ()
-  "%C is a bar of the context window used, blended with the line's face,
-and only made when used."
+  "%C is a bar of the context window used.
+It's blended with the line's face, and only made when used."
   (with-opencode-session-test-buffer
     (setq opencode-session-tokens 140000)
     (let (bar-args)
@@ -1038,8 +1039,9 @@ and only made when used."
         (should (eq 'shadow (get-text-property 19 'face bar)))))))
 
 (ert-deftest opencode-mode-line-render-format-test ()
-  "Everything after `right-align' is right-aligned, and `overflow' shows
-`opencode-mode-line-process' only when it overflowed the mode line."
+  "Everything after `right-align' is right-aligned.
+`overflow' shows `opencode-mode-line-process' only when it overflowed the
+mode line."
   (with-opencode-session-test-buffer
     (setq opencode-session-title "Title")
     (let ((opencode-mode-line-process "[%t]")
@@ -1133,7 +1135,7 @@ and only made when used."
 
 (ert-deftest opencode-open-project-buffers-test ()
   "A control buffer is named after the main checkout of its project."
-  (let (opencode--session-control-buffers buffers)
+  (let (opencode--session-control-buffers opencode--location-by-directory buffers)
     (cl-letf* (((symbol-function 'opencode-sessions-redisplay) #'ignore)
                ((symbol-function 'switch-to-buffer)
                 (lambda (buffer &rest _) (push buffer buffers)))
@@ -1142,12 +1144,18 @@ and only made when used."
                   (funcall
                    (plist-get args :then)
                    (pcase default-directory
-                     ((or "/src/repo/" "/src/worktree/")
-                      '((project . ((id . "repo") (canonical . "/src/repo")))))
+                     ((or "/src/repo/" "/src/repo/sub/")
+                      '((project . ((id . "repo") (directory . "/src/repo")
+                                    (canonical . "/src/repo")))))
+                     ("/src/worktree/"
+                      '((project . ((id . "repo") (directory . "/src/worktree")
+                                    (canonical . "/src/repo")))))
                      ("/other/repo/"
-                      '((project . ((id . "other") (canonical . "/other/repo")))))
+                      '((project . ((id . "other") (directory . "/other/repo")
+                                    (canonical . "/other/repo")))))
                      ("/scratch/"
-                      '((project . ((id . "global") (canonical . "/"))))))))))
+                      '((project . ((id . "global") (directory . "/scratch")
+                                    (canonical . "/"))))))))))
       (unwind-protect
           (progn
             (opencode-open-project "/src/repo")
@@ -1156,6 +1164,11 @@ and only made when used."
             (opencode-open-project "/src/worktree/")
             (should (eq (car buffers) (cadr buffers)))
             (should (equal "/src/worktree/"
+                           (buffer-local-value 'default-directory (car buffers))))
+            ;; From a subdirectory, new sessions go in the project root.
+            (opencode-open-project "/src/repo/sub/")
+            (should (eq (car buffers) (cadr buffers)))
+            (should (equal "/src/repo/"
                            (buffer-local-value 'default-directory (car buffers))))
             ;; Same name, different project: it shows the one last opened.
             (opencode-open-project "/other/repo/")
@@ -1603,8 +1616,8 @@ claude-agent."
                       (opencode-session-test--claude-session "opus")))))))
 
 (ert-deftest opencode-session-control-cost-real-dollars ()
-  "Sessions the server charged for show its cost, before any estimate, and
-other providers show only the server's cost."
+  "Sessions the server charged for show its cost before any estimate.
+Other providers show only the server's cost."
   (opencode-session-test--with-claude-plan "pro"
     (should (equal "$3.21 + ~$2.00 10.0%"
                    (opencode--session-control-cost
@@ -1630,8 +1643,8 @@ other providers show only the server's cost."
      (seven_day_sonnet (utilization . 0.85) (resetsAt . ,(+ now 3600))))))
 
 (ert-deftest opencode-claude-usage-fresh ()
-  "Fresh usage shows exact percentages, and windows past their reset as 0%
-without a reset time."
+  "Fresh usage shows exact percentages.
+Windows past their reset show as 0% without a reset time."
   (let* ((now (float-time))
          (usage (opencode--format-claude-usage
                  (opencode-session-test--rate-limit now))))

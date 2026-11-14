@@ -168,11 +168,8 @@ Run ON-CONNECT after connected."
 Connects to an existing server if one is running, otherwise starts a new one
 if `opencode-auto-start-server' is non-nil."
   (interactive)
-  (let ((project-dir (expand-file-name
-                      (if-let* ((proj (project-current)))
-                          (project-root proj)
-                        default-directory))))
-    (opencode-autoconnect (lambda () (opencode-open-project project-dir)))))
+  (let ((directory (expand-file-name default-directory)))
+    (opencode-autoconnect (lambda () (opencode-open-project directory)))))
 
 (defun opencode-connect (host port on-connect)
   "Connect to opencode server, prompting for HOST and PORT.
@@ -575,11 +572,8 @@ If INITIAL-PROMPT is given, it is sent after CALLBACK is called."
   (interactive)
   (unless (bound-and-true-p flycheck-mode)
     (user-error "Flycheck is not enabled in this buffer"))
-  (let* ((default-directory (if-let* ((proj (project-current)))
-                                (project-root proj)
-                              default-directory))
-         (prompt (or (opencode--flycheck-fix-prompt default-directory)
-                     (user-error "No Flycheck errors in this buffer"))))
+  (let ((prompt (or (opencode--flycheck-fix-prompt default-directory)
+                    (user-error "No Flycheck errors in this buffer"))))
     (opencode-new-session :initial-prompt prompt)))
 
 (defun opencode-toggle-mcp ()

@@ -89,10 +89,7 @@ With a prefix argument AT-POINT, only use the test at point."
                   (user-error "Test at point passed as expected"))
                 (list (cons test result)))
             (or (opencode--ert-failed-tests stats)
-                (user-error "No unexpected ERT failures"))))
-         (default-directory (if-let* ((proj (project-current)))
-                                (project-root proj)
-                              default-directory)))
+                (user-error "No unexpected ERT failures")))))
     (opencode-new-session
      :initial-prompt (opencode--ert-fix-prompt failures default-directory))))
 

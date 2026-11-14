@@ -569,8 +569,10 @@ only shown if the table fits in the window."
 
 (defun opencode-open-project (directory)
   "Open the session control buffer for the project of DIRECTORY.
-Worktrees of a project share one, and new sessions started from it go in the
-directory it was last opened for."
+The server decides the project: the git repository containing DIRECTORY, or
+DIRECTORY itself outside git.  Worktrees of a project share one buffer, and
+new sessions started from it go in the root of the worktree it was last
+opened for."
   (let* ((directory (file-name-as-directory directory))
          (default-directory directory))
     (opencode-api--cached-location
@@ -586,7 +588,7 @@ directory it was last opened for."
            (unless (derived-mode-p 'opencode-session-control-mode)
              (opencode-session-control-mode)
              (push (current-buffer) opencode--session-control-buffers))
-           (setq default-directory directory
+           (setq default-directory (file-name-as-directory .project.directory)
                  opencode-session-control-project-id .project.id)
            (opencode-sessions-redisplay)
            (opencode--switch-to-buffer (current-buffer))))))))

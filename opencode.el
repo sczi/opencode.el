@@ -228,13 +228,12 @@ Then open an opencode session in it."
          (cl-loop for project in projects
                   for canonical = (alist-get 'canonical project)
                   when canonical
-                  collect (list (string-remove-prefix
-                                 (expand-file-name "~/")
-                                 canonical)
+                  collect (list (string-remove-prefix (expand-file-name "~/")
+                                                      canonical)
                                 canonical
                                 (opencode--format-time-ago
-                                 (opencode--time-ago
-                                  project 'updated))))))))))
+                                 (opencode--time-ago project 'active))
+                                (opencode--time-ago project 'active)))))))))
 
 (defun opencode-select-session ()
   "Select and open a session from the current project using completion."

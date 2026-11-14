@@ -777,10 +777,15 @@ Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
     ;; Run the change hooks, like jit-lock's, once for the whole replay
     ;; rather than for every insertion.
     (combine-change-calls (point-min) (point-max)
-      (dolist (message messages)
-        (unless (and revert-message-id
-                     (not (string< (alist-get 'id message) revert-message-id)))
-          (opencode--replay-message message))))
+      ;; Replayed history isn't undoable.  Recording it would be wasted
+      ;; work, and anything resetting the undo list meanwhile, like Doom's
+      ;; `comint-output-filter' advice, makes `combine-change-calls' warn
+      ;; that it was truncated.
+      (let ((buffer-undo-list t))
+        (dolist (message messages)
+          (unless (and revert-message-id
+                       (not (string< (alist-get 'id message) revert-message-id)))
+            (opencode--replay-message message)))))
     (setq opencode--current-block nil)))
 
 (defun opencode--insert-error (message)

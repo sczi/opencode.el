@@ -642,6 +642,30 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
     (should (opencode-session-test--error-face-p "It broke"))
     (should (opencode-session-test--error-face-p "Interrupted"))))
 
+(ert-deftest opencode-session-replay-undo-test ()
+  "Replay isn't recorded for undo, even if output resets the undo list.
+Doom resets it after comint output, which made `combine-change-calls'
+warn that it was truncated."
+  (with-opencode-session-test-buffer
+    (buffer-enable-undo)
+    (opencode--output "logo\n\n")
+    (let ((undo-list buffer-undo-list)
+          (reset (lambda (&rest _) (setq buffer-undo-list nil)))
+          messages)
+      (should (consp undo-list))
+      (advice-add 'comint-output-filter :after reset)
+      (unwind-protect
+          (cl-letf (((symbol-function 'message)
+                     (lambda (&rest args) (push (apply #'format-message args) messages))))
+            (opencode--replay-session-messages
+             '(((id . "msg_1") (type . "user") (text . "hello"))
+               ((id . "msg_2") (type . "idle") (outcome . "failed")
+                (error . ((type . "unknown") (message . "It broke")))))))
+        (advice-remove 'comint-output-filter reset))
+      (should (opencode-session-test--error-face-p "It broke"))
+      (should-not messages)
+      (should (eq buffer-undo-list undo-list)))))
+
 (ert-deftest opencode-session-tool-error-test ()
   "Failed calls show their error, including tools that normally hide output.
 Unless `error' is not in `opencode-shown-outputs', when they start folded."

@@ -359,7 +359,9 @@ if it charged for other models."
      ,(lambda (object) (opencode--time-ago object 'created)))
     (cost
      (:name "Cost" :min-width 8 :align right)
-     ,#'opencode--session-control-cost)
+     ,#'opencode--session-control-cost
+     ;; Only what the server charged, not subscription estimates
+     ,(lambda (object) (or (alist-get 'cost object) 0)))
     (tokens
      (:name "Tokens")
      ,(lambda (object)
@@ -370,21 +372,36 @@ if it charged for other models."
                       (or .tokens.cache.read 0)
                       (or .tokens.cache.write 0)))
                   (opencode--format-tokens .tokens.output)
-                  (opencode--format-tokens .tokens.reasoning)))))
+                  (opencode--format-tokens .tokens.reasoning))))
+     ,(lambda (object)
+        (let-alist object
+          (+ (or .tokens.input 0)
+             (or .tokens.output 0)
+             (or .tokens.reasoning 0)
+             (or .tokens.cache.read 0)
+             (or .tokens.cache.write 0)))))
     (cache
-     (:name "Cache" :width 6 :align right)
+     (:name "Cache" :width 6 :align right
+      :formatter ,(lambda (ratio)
+                    (if (< ratio 0)
+                        "-"
+                      (format "%d%%" (round (* 100 ratio))))))
      ,(lambda (object)
         (let-alist object
           (let ((total (+ (or .tokens.input 0)
                           (or .tokens.cache.read 0)
                           (or .tokens.cache.write 0))))
+            ;; A number rather than "-" keeps the column numerical
             (if (zerop total)
-                "-"
-              (format "%d%%"
-                      (round (* 100.0 (or .tokens.cache.read 0))
-                             total))))))))
-  "Alist of (KEY VTABLE-COLUMN-SPEC GETTER) for the session control table.
-GETTER is called with the session object.")
+                -1
+              (/ (float (or .tokens.cache.read 0)) total)))))))
+  "Alist of (KEY VTABLE-COLUMN-SPEC GETTER [SORT-KEY]) for the session control table.
+GETTER is called with the session object.  If SORT-KEY is given, the
+column is sorted by the number it returns when called with the session
+object, instead of by the value GETTER returns.")
+
+(defvar-local opencode--session-control-sort-keys nil
+  "Vector of the SORT-KEY of each column of the session control table, or nil.")
 
 (defun opencode--session-control-tree (sessions)
   "Return SESSIONS with subagents directly under the session that spawned them.
@@ -432,8 +449,22 @@ level."
 (defun opencode--session-control-sort-tree (sort table cache)
   "Keep subagents under their parent after SORT sorts TABLE's CACHE lines.
 Sessions without a parent keep the order SORT gave them, and each one's
-subagents follow it in the order of `opencode--session-control-tree'."
-  (funcall sort table cache)
+subagents follow it in the order of `opencode--session-control-tree'.
+Columns with a SORT-KEY in `opencode--session-control-columns' are
+sorted by it."
+  ;; Like `vtable--sort', stably sort by each column in turn, so the last
+  ;; one in `vtable-sort-by' takes precedence
+  (let ((sort-by (vtable-sort-by table)))
+    (unwind-protect
+        (pcase-dolist ((and entry `(,index . ,direction)) sort-by)
+          (if-let* ((key (and opencode--session-control-sort-keys
+                              (aref opencode--session-control-sort-keys index))))
+              (setcar cache (sort (car cache)
+                                  :key (lambda (line) (funcall key (car line)))
+                                  :reverse (eq direction 'descend)))
+            (setf (vtable-sort-by table) (list entry))
+            (funcall sort table cache)))
+      (setf (vtable-sort-by table) sort-by)))
   (when (alist-get 'tree-root (car (vtable-objects table)))
     (let ((tree-order (make-hash-table :test #'eq))
           (root-order (make-hash-table :test #'equal)))
@@ -463,6 +494,7 @@ If `opencode-session-control-verbose' is non-nil show them as a tree."
                                 (error "Unknown session control column: %s" key)))
                           columns))
          (getters (vconcat (mapcar #'cadr columns))))
+    (setq opencode--session-control-sort-keys (vconcat (mapcar #'caddr columns)))
     (make-vtable
      :columns (mapcar #'car columns)
      :objects (if opencode-session-control-verbose

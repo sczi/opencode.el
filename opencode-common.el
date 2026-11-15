@@ -376,9 +376,10 @@ it again on redisplay, which is harmless."
 (defmacro opencode--with-session-buffer (session-id &rest body)
   "Run BODY in the live session buffer for SESSION-ID."
   (declare (indent 1))
-  `(when-let* ((buffer (opencode--session-buffer ,session-id)))
-     (with-current-buffer buffer
-       ,@body)))
+  (cl-with-gensyms (buffer)
+    `(when-let* ((,buffer (opencode--session-buffer ,session-id)))
+       (with-current-buffer ,buffer
+         ,@body))))
 
 (defvar opencode-event-log-max-lines nil
   "Maximum number of lines to log in the opencode event log buffer.

@@ -16,20 +16,9 @@
 (require 'json)
 (require 'url-util)
 
-(defvar opencode-api-url nil
-  "URL of the opencode server we're connected to.")
-
 (defvar opencode-api-log-max-lines nil
   "Maximum number of lines of opencode api requests and responses to log.
 Or nil (default) to turn off logging.")
-
-(defun opencode--auth-header ()
-  "Return auth header based on `opencode-server-password'."
-  (when opencode-server-password
-    (cons "Authorization"
-          (concat "Basic "
-                  (base64-encode-string
-                   (format "opencode:%s" opencode-server-password) t)))))
 
 (defun opencode-api--log (label value)
   "Log VALUE under LABEL to the api log, if logging is on."
@@ -61,44 +50,49 @@ Shows the _tag and message of the server's JSON error body, if it has one."
 Call THEN with the result in the buffer current now, unless it's been killed.
 The result's {data} envelope is removed unless RAW is non-nil.
 Call ELSE with the error message if given, in that buffer if it's still live,
-otherwise signal it."
-  (let ((buffer (current-buffer)))
+otherwise signal it.
+The request goes to the server of `opencode-current-connection', which THEN
+and ELSE run with as their current connection too."
+  (let ((buffer (current-buffer))
+        (connection (opencode--conn)))
     (opencode-api--log "REQUEST" path)
     (when body-p
       (opencode-api--log "REQUEST BODY" body))
     (apply
-     #'plz method (concat opencode-api-url path)
+     #'plz method (concat (opencode-connection-url connection) path)
      :as (lambda () (unless (string-empty-p (buffer-string))
-                 (json-parse-buffer :array-type 'list
-                                    :object-type 'alist)))
+                      (json-parse-buffer :array-type 'list
+                                         :object-type 'alist)))
      :headers (delq nil
                     (list '("Content-Type" . "application/json")
                           (cons "x-opencode-directory"
                                 (url-hexify-string
                                  (directory-file-name
                                   (expand-file-name default-directory))))
-                          (opencode--auth-header)))
+                          (opencode--auth-header connection)))
      :then (lambda (result)
              (opencode-api--log "RESPONSE" (or result "<empty>"))
              (let ((result (if-let* ((data (and (not raw)
                                                 (consp result)
                                                 (assq 'data result))))
                                (cdr data)
-                             result)))
+                             result))
+                   (opencode--dispatching-connection connection))
                (if (buffer-live-p buffer)
                    (with-current-buffer buffer
                      (when then
                        (funcall then result)))
                  (message "Buffer closed so opencode api response handler not run"))))
      :else (lambda (err)
-             (let ((error-msg (opencode-api--error-message path err)))
+             (let ((error-msg (opencode-api--error-message path err))
+                   (opencode--dispatching-connection connection))
                (opencode-api--log "ERROR" error-msg)
                (cond
                 (else (if (buffer-live-p buffer)
                           (with-current-buffer buffer
                             (funcall else error-msg))
                         (funcall else error-msg)))
-                (opencode--event-subscription (error "%s" error-msg))
+                ((opencode-connection-connected-p connection) (error "%s" error-msg))
                 (t (error "Not connected to opencode")))))
      (when body-p
        (list :body (json-encode body))))))
@@ -240,12 +234,13 @@ handle errors."
   "Call THEN with the location of `default-directory'.
 Only the first call for a directory requests it from the server, which also
 caches it until `opencode-reload-locations'."
-  (let ((directory (directory-file-name (expand-file-name default-directory))))
-    (if-let* ((location (alist-get directory opencode--location-by-directory
+  (let ((directory (directory-file-name (expand-file-name default-directory)))
+        (connection (opencode--conn)))
+    (if-let* ((location (alist-get directory (opencode-connection-locations connection)
                                    nil nil #'equal)))
         (funcall then location)
       (opencode-api-location location
-        (setf (alist-get directory opencode--location-by-directory
+        (setf (alist-get directory (opencode-connection-locations connection)
                          nil nil #'equal)
               location)
         (funcall then location)))))

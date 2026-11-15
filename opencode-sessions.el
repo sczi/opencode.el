@@ -59,6 +59,9 @@
     "C-c M" 'opencode-toggle-mcp
     "C-c F" 'opencode-fork-session
     "C-c R" 'opencode-revert-message
+    "C-c C-x n" 'opencode-next-connection
+    "C-c C-x p" 'opencode-prev-connection
+    "C-c C-x c" 'opencode-list-connections
     "/" 'opencode-insert-slash-command
     "@" 'opencode-add-mention))
 
@@ -157,7 +160,7 @@ Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty."
         (opencode--setup-mode-line))))
   (force-mode-line-update t))
 
-(defcustom opencode-mode-line-process "🤖 %a · %m%V %c %I  "
+(defcustom opencode-mode-line-process "%s🤖 %a · %m%V %c %I  "
   "Format of the session information shown in `mode-line-process'.
 Expanded with `format-spec', so specs take modifiers like %>30t to
 truncate the title to 30 characters.  The specs are:
@@ -172,13 +175,14 @@ truncate the title to 30 characters.  The specs are:
   %r  when the Claude subscription's 5h usage limit resets
   %T  tokens used           %t  session title
   %o  session cost          %d  session directory
+  %s  server name, only when connected to more than one
   %%  a literal percent sign
 
 %u, %U and %r are empty unless the session uses the claude-agent provider
 and it has reported its usage.  %r is also empty once the limit has reset.
 
 Other specs, like %b, are left for the mode line to expand.  Ours take
-precedence over the mode line's %c, %C, %i, %I, %o, %u and %U.
+precedence over the mode line's %c, %C, %i, %I, %o, %s, %u and %U.
 
 When the mode line is too wide for the window, this is hidden from the
 mode line and shown where `overflow' is in `opencode-header-line-format',
@@ -213,7 +217,7 @@ returning the list, see `opencode-mode-line-process'."
           function)
   :group 'opencode)
 
-(defcustom opencode-overflow-format '("%d %o%U%r" right-align  "🤖 %a · %m%V %T %c %I ")
+(defcustom opencode-overflow-format '("%d %o%U%r" right-align  "%s🤖 %a · %m%V %T %c %I ")
   "What `overflow' in `opencode-header-line-format' shows, or nil.
 It's shown when `opencode-mode-line-process' is hidden from the mode
 line because the mode line is too wide.  When nil,
@@ -312,7 +316,9 @@ Values that are expensive to compute are functions, called only when used."
          (?o . ,(when (plusp opencode-session-cost)
                   (format "$%.2f" opencode-session-cost)))
          (?t . ,opencode-session-title)
-         (?d . ,(abbreviate-file-name default-directory)))))))
+         (?d . ,(abbreviate-file-name default-directory))
+         (?s . ,(when-let* ((label (opencode--server-label)))
+                  (concat label " "))))))))
 
 (defun opencode--mode-line-expand (string &optional specs)
   "Expand STRING with SPECS, by default `opencode--format-specs'.
@@ -666,7 +672,7 @@ If CALLBACK is given, it will be called with SESSION afterwards."
                                      (reverse messages)))
                 ;; a session with no agent yet uses the default, listed first
                 (alist-get 'id (seq-find #'opencode--selectable-agent-p
-                                         opencode-agents))))
+                                         (opencode--agents)))))
       (opencode--replay-session-messages messages .revert.messageID)
       ;; A new session keeps the agent and model of where it was opened from.
       (when messages
@@ -685,46 +691,53 @@ If CALLBACK is given, it will be called with SESSION afterwards."
 (defun opencode--inherited-agents ()
   "Return the agent and agents a session opened from the current buffer gets.
 The value is (AGENT . AGENTS).  They are copied from the current buffer when it
-is a session, otherwise AGENTS are `opencode-agents' and AGENT is the first
-selectable one.  Agents without a model get `opencode-last-model'."
-  (let ((agents (mapcar (lambda (agent)
-                          (unless (alist-get 'model agent)
-                            (setf (alist-get 'model agent) (copy-alist opencode-last-model)))
-                          agent)
-                        (copy-tree (or opencode-session-agents opencode-agents)))))
-    (cons (or (copy-tree opencode-session-agent)
+is a session on the current connection's server, otherwise AGENTS are the
+server's and AGENT is the first selectable one.  Agents without a model get
+`opencode-last-model'."
+  (let* ((same-server (eq opencode-buffer-connection (opencode-current-connection)))
+         (agents (mapcar (lambda (agent)
+                           (unless (alist-get 'model agent)
+                             (setf (alist-get 'model agent) (copy-alist opencode-last-model)))
+                           agent)
+                         (copy-tree (or (and same-server opencode-session-agents)
+                                        (opencode--agents))))))
+    (cons (or (and same-server (copy-tree opencode-session-agent))
               (seq-find #'opencode--selectable-agent-p agents))
           agents)))
 
 (cl-defun opencode-open-session (session &key callback)
   "Open comint based shell for SESSION.
-Returns the buffer.
+Returns the buffer.  SESSION is on the current connection's server, or on
+that of its `opencode-connection' if it has one.
 If CALLBACK is given, it will be called with the session after it is initialized."
-  (let-alist session
-    (let ((old-buffer (gethash .id opencode-session-buffers)))
-      (if (buffer-live-p old-buffer)
-          (opencode--switch-to-buffer old-buffer)
-        (let ((buffer (generate-new-buffer
-                       (format "*OpenCode: %s*" (opencode--session-title session))))
-              (inherited (opencode--inherited-agents)))
-          (with-current-buffer buffer
-            (opencode-session-mode)
-            (setq opencode-session-id .id
-                  opencode-last-session-buffer buffer
-                  default-directory (file-name-as-directory .location.directory)
-                  opencode-session-agent (car inherited)
-                  opencode-session-agents (cdr inherited)
-                  opencode-session-title (opencode--session-title session))
-            (hack-dir-local-variables-non-file-buffer)
-            (opencode--download-slash-commands default-directory)
-            (opencode--download-skills default-directory)
-            (puthash .id buffer opencode-session-buffers)
-            (let ((proc (start-process "dummy" buffer nil)))
-              (set-process-query-on-exit-flag proc nil)
-              (add-hook 'kill-buffer-hook #'opencode--session-cleanup nil t)
-              (opencode-insert-logo)
-              (opencode--load-session session callback))
-            (opencode--switch-to-buffer buffer)))))))
+  (opencode--with-connection-of session
+    (let-alist session
+      (let* ((connection (opencode--conn))
+             (old-buffer (opencode--session-buffer .id)))
+        (if old-buffer
+            (opencode--switch-to-buffer old-buffer)
+          (let ((buffer (generate-new-buffer
+                         (format "*OpenCode: %s*" (opencode--session-title session))))
+                (inherited (opencode--inherited-agents)))
+            (with-current-buffer buffer
+              (opencode-session-mode)
+              (setq opencode-buffer-connection connection
+                    opencode-session-id .id
+                    opencode-last-session-buffer buffer
+                    default-directory (file-name-as-directory .location.directory)
+                    opencode-session-agent (car inherited)
+                    opencode-session-agents (cdr inherited)
+                    opencode-session-title (opencode--session-title session))
+              (hack-dir-local-variables-non-file-buffer)
+              (opencode--download-slash-commands default-directory)
+              (opencode--download-skills default-directory)
+              (puthash .id buffer (opencode-connection-session-buffers connection))
+              (let ((proc (start-process "dummy" buffer nil)))
+                (set-process-query-on-exit-flag proc nil)
+                (add-hook 'kill-buffer-hook #'opencode--session-cleanup nil t)
+                (opencode-insert-logo)
+                (opencode--load-session session callback))
+              (opencode--switch-to-buffer buffer))))))))
 
 (defun opencode--reload-session ()
   "Redisplay the current session from the server, keeping any typed input.

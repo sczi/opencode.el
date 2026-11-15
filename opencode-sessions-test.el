@@ -4,25 +4,7 @@
 (require 'ert)
 (require 'opencode)
 (require 'opencode-sessions)
-
-(defmacro with-opencode-session-test-buffer (&rest body)
-  "Run BODY in a temporary `opencode-session-mode' buffer.
-BODY can refer to the buffer's process as `process'.  The default directory
-is the opencode source directory, and session state is bound so that events
-for session \"session\" render here."
-  (declare (indent 0) (debug t))
-  `(with-temp-buffer
-     (setq default-directory
-           (file-name-directory (locate-library "opencode-sessions")))
-     (opencode-session-mode)
-     (let ((process (start-process "opencode-test" (current-buffer) nil))
-           (opencode-session-buffers (make-hash-table :test 'equal))
-           (opencode--tool-calls (make-hash-table :test 'equal)))
-       (setq opencode-session-id "session")
-       (puthash "session" (current-buffer) opencode-session-buffers)
-       (unwind-protect
-           (progn ,@body)
-         (delete-process process)))))
+(require 'opencode-test-helpers)
 
 (defmacro opencode-session-test--with-stubbed-api (active &rest body)
   "Run BODY with api requests answered, and toasts and alerts discarded.
@@ -1159,7 +1141,9 @@ mode line."
 
 (ert-deftest opencode-open-project-buffers-test ()
   "A control buffer is named after the main checkout of its project."
-  (let (opencode--session-control-buffers opencode--location-by-directory buffers)
+  (let* ((opencode-default-connection (opencode--make-connection :name 'local))
+         (opencode-default-server 'local)
+         opencode--session-control-buffers buffers)
     (cl-letf* (((symbol-function 'opencode-sessions-redisplay) #'ignore)
                ((symbol-function 'switch-to-buffer)
                 (lambda (buffer &rest _) (push buffer buffers)))
@@ -1230,7 +1214,10 @@ mode line."
   (with-opencode-session-test-buffer
     (let ((opencode-session-agents '(((id . "build") (name . "Build"))
                                      ((id . "plan") (name . "Plan"))))
-          (opencode-agents '(((id . "build") (name . "Build") (mode . "primary")))))
+          (opencode-default-connection
+           (opencode--make-connection
+            :name 'test
+            :agents '(((id . "build") (name . "Build") (mode . "primary"))))))
       (cl-flet ((load-session (session messages)
                   (cl-letf (((symbol-function 'opencode-api--fetch-all-messages)
                              (lambda (_id callback) (funcall callback messages)))
@@ -1407,11 +1394,12 @@ MENUS collects their selections.  Timers run immediately."
   "A form is only queued once, and forgotten once settled."
   (opencode-forms-test--with-server
     (let ((form (append '((id . "frm_2") (sessionID . "ses_1")) (cddr opencode-forms-test--websearch)))
-          (opencode-session-buffers (make-hash-table :test #'equal))
+          (opencode-default-connection (opencode--make-connection :name 'test))
           (buffer (generate-new-buffer " *form-test*")))
       (unwind-protect
           (progn
-            (puthash "ses_1" buffer opencode-session-buffers)
+            (puthash "ses_1" buffer
+                     (opencode-connection-session-buffers opencode-default-connection))
             (opencode--form-request form)
             (opencode--form-request form)
             (should (length= opencode-forms--queue 1))
@@ -1802,6 +1790,7 @@ Windows past their reset show as 0% without a reset time."
 If SORT-BY is non-nil, sort the table by it, a list of vtable sort keys
 for the columns title and last-update."
   (with-temp-buffer
+    (opencode-session-control-mode)
     (let ((opencode-session-control-verbose verbose))
       (opencode--session-control-insert-table
        opencode-session-test--tree-sessions '(title last-update))

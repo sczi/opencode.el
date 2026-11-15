@@ -26,8 +26,8 @@
 
 (defvar opencode-forms--queue nil
   "Forms waiting to be shown, oldest first.
-Each is a Form.Info with the `directory' it belongs to added, and the `error'
-from replying if it's being asked again.")
+Each is a Form.Info with the `directory' and `opencode-connection' it belongs to
+added, and the `error' from replying if it's being asked again.")
 
 (defvar opencode-forms--current nil
   "The form being answered, or nil.")
@@ -112,11 +112,12 @@ A condition on an unanswered field doesn't hold."
   "Cancel FORM."
   (let-alist form
     (let ((default-directory .directory))
-      (opencode-api-cancel-form (.sessionID .id)
-          _result
-        :else (lambda (error-msg)
-                (unless (opencode-forms--settled-error-p error-msg)
-                  (opencode--log-event "WARNING FORM CANCEL" error-msg)))))))
+      (opencode--with-connection-of form
+        (opencode-api-cancel-form (.sessionID .id)
+            _result
+          :else (lambda (error-msg)
+                  (unless (opencode-forms--settled-error-p error-msg)
+                    (opencode--log-event "WARNING FORM CANCEL" error-msg))))))))
 
 (defun opencode-forms--cancel ()
   "Cancel the current form, and show the next."
@@ -146,12 +147,13 @@ server checks patterns and formats.  Otherwise cancel so the session won't hang.
     (setq opencode-forms--current nil)
     (let-alist form
       (let ((default-directory .directory))
-        (opencode-api-reply-form (.sessionID .id)
-            ;; Without answers an alist would encode as null rather than {}.
-            `((answer . ,(or answers (make-hash-table))))
-            _result
-          :else (lambda (error-msg)
-                  (opencode-forms--reply-failed form error-msg)))))
+        (opencode--with-connection-of form
+          (opencode-api-reply-form (.sessionID .id)
+              ;; Without answers an alist would encode as null rather than {}.
+              `((answer . ,(or answers (make-hash-table))))
+              _result
+            :else (lambda (error-msg)
+                    (opencode-forms--reply-failed form error-msg))))))
     (opencode-forms--prompt-next)))
 
 ;;; Prompting
@@ -352,7 +354,8 @@ _CHILDREN is the statically-defined children, of which there are none."
   "Return non-nil if FORM can be shown now."
   (let-alist form
     (or (equal .sessionID "global")
-        (opencode--buffer-active-p (gethash .sessionID opencode-session-buffers)))))
+        (opencode--with-connection-of form
+          (opencode--buffer-active-p (opencode--session-buffer .sessionID))))))
 
 (defun opencode-forms--show-next ()
   "Start answering the first form that's ready, once the user isn't in a prompt."
@@ -399,17 +402,19 @@ If it has a session without a buffer, open it so the form gets shown."
      (t
       (setq opencode-forms--queue
             (append opencode-forms--queue
-                    (list (cons (cons 'directory default-directory) form))))
+                    (list `((directory . ,default-directory)
+                            (opencode-connection . ,(opencode-current-connection))
+                            ,@form))))
       (if (opencode-forms--ready-p form)
           (opencode-forms--prompt-next)
         (opencode--toast-show
          `((title . ,(if (equal .metadata.kind "question") "OpenCode Question" .title))
            (message . ,(or (opencode-forms--label (car .fields)) .title))
            (variant . "info")))
-        (unless (buffer-live-p (gethash .sessionID opencode-session-buffers))
+        (unless (opencode--session-buffer .sessionID)
           (opencode-api-session (.sessionID)
               session
-            (push session opencode-alerted-sessions)
+            (opencode--alert-session session)
             (opencode-open-session session))))))))
 
 (defun opencode--fetch-pending-forms (session-id)

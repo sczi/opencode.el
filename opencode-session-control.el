@@ -46,7 +46,10 @@
     "SPC" nil
     "n" 'opencode-new-session
     "M" 'opencode-toggle-mcp
-    "v" 'opencode-session-control-toggle-verbose))
+    "v" 'opencode-session-control-toggle-verbose
+    "C-c C-x n" 'opencode-next-connection
+    "C-c C-x p" 'opencode-prev-connection
+    "C-c C-x c" 'opencode-list-connections))
 
 (with-eval-after-load 'evil
   (declare-function evil-define-key* "evil-core")
@@ -96,7 +99,7 @@ after its messages were replayed."
   (interactive (list (or (vtable-current-object)
                          (user-error "No session at point")))
                opencode-session-control-mode)
-  (let* ((buffer (gethash (alist-get 'id session) opencode-session-buffers))
+  (let* ((buffer (opencode--session-buffer (alist-get 'id session)))
          (start (float-time))
          (redisplays 0)
          before-replay
@@ -451,38 +454,41 @@ level."
 Sessions without a parent keep the order SORT gave them, and each one's
 subagents follow it in the order of `opencode--session-control-tree'.
 Columns with a SORT-KEY in `opencode--session-control-columns' are
-sorted by it."
-  ;; Like `vtable--sort', stably sort by each column in turn, so the last
-  ;; one in `vtable-sort-by' takes precedence
-  (let ((sort-by (vtable-sort-by table)))
-    (unwind-protect
-        (pcase-dolist ((and entry `(,index . ,direction)) sort-by)
-          (if-let* ((key (and opencode--session-control-sort-keys
-                              (aref opencode--session-control-sort-keys index))))
-              (setcar cache (sort (car cache)
-                                  :key (lambda (line) (funcall key (car line)))
-                                  :reverse (eq direction 'descend)))
-            (setf (vtable-sort-by table) (list entry))
-            (funcall sort table cache)))
-      (setf (vtable-sort-by table) sort-by)))
-  (when (alist-get 'tree-root (car (vtable-objects table)))
-    (let ((tree-order (make-hash-table :test #'eq))
-          (root-order (make-hash-table :test #'equal)))
-      (seq-do-indexed (lambda (object index)
-                        (puthash object index tree-order))
-                      (vtable-objects table))
-      (seq-do-indexed (lambda (line index)
-                        (let ((object (car line)))
-                          (when (equal (alist-get 'id object)
-                                       (alist-get 'tree-root object))
-                            (puthash (alist-get 'id object) index root-order))))
-                      (car cache))
-      (setcar cache
-              (sort (car cache)
-                    :key (lambda (line)
-                           (list (gethash (alist-get 'tree-root (car line))
-                                          root-order)
-                                 (gethash (car line) tree-order))))))))
+sorted by it.  Tables in other modes are left to SORT, as this is advice
+on every table, and `vtable--sort' runs in the table's buffer."
+  (if (not (derived-mode-p 'opencode-session-control-mode))
+      (funcall sort table cache)
+    ;; Like `vtable--sort', stably sort by each column in turn, so the last
+    ;; one in `vtable-sort-by' takes precedence
+    (let ((sort-by (vtable-sort-by table)))
+      (unwind-protect
+          (pcase-dolist ((and entry `(,index . ,direction)) sort-by)
+            (if-let* ((key (and opencode--session-control-sort-keys
+                                (aref opencode--session-control-sort-keys index))))
+                (setcar cache (sort (car cache)
+                                    :key (lambda (line) (funcall key (car line)))
+                                    :reverse (eq direction 'descend)))
+              (setf (vtable-sort-by table) (list entry))
+              (funcall sort table cache)))
+        (setf (vtable-sort-by table) sort-by)))
+    (when (alist-get 'tree-root (car (vtable-objects table)))
+      (let ((tree-order (make-hash-table :test #'eq))
+            (root-order (make-hash-table :test #'equal)))
+        (seq-do-indexed (lambda (object index)
+                          (puthash object index tree-order))
+                        (vtable-objects table))
+        (seq-do-indexed (lambda (line index)
+                          (let ((object (car line)))
+                            (when (equal (alist-get 'id object)
+                                         (alist-get 'tree-root object))
+                              (puthash (alist-get 'id object) index root-order))))
+                        (car cache))
+        (setcar cache
+                (sort (car cache)
+                      :key (lambda (line)
+                             (list (gethash (alist-get 'tree-root (car line))
+                                            root-order)
+                                   (gethash (car line) tree-order)))))))))
 
 (advice-add 'vtable--sort :around #'opencode--session-control-sort-tree)
 
@@ -564,34 +570,57 @@ only shown if the table fits in the window."
       (funcall fn))))
 
 (defun opencode--redisplay-session-control-buffers ()
-  "Refresh all live session control buffers."
-  (opencode--map-session-control-buffers #'opencode-sessions-redisplay))
+  "Refresh the live session control buffers of the current connection's server."
+  (let ((connection (opencode-current-connection)))
+    (opencode--map-session-control-buffers
+     (lambda ()
+       (when (eq opencode-buffer-connection connection)
+         (opencode-sessions-redisplay))))))
 
 (defun opencode-open-project (directory)
   "Open the session control buffer for the project of DIRECTORY.
 The server decides the project: the git repository containing DIRECTORY, or
 DIRECTORY itself outside git.  Worktrees of a project share one buffer, and
 new sessions started from it go in the root of the worktree it was last
-opened for."
+opened for.  It's on the current connection's server."
   (let* ((directory (file-name-as-directory directory))
-         (default-directory directory))
+         (default-directory directory)
+         (connection (opencode--conn)))
     (opencode-api--cached-location
      (lambda (location)
        (let-alist location
          (with-current-buffer
              (get-buffer-create
-              (format "*OpenCode Sessions: %s*"
+              (format "*OpenCode Sessions%s: %s*"
+                      (opencode--server-tag connection)
                       (if (equal .project.id "global")
                           "global"
                         (file-name-nondirectory
                          (directory-file-name .project.canonical)))))
            (unless (derived-mode-p 'opencode-session-control-mode)
              (opencode-session-control-mode)
+             (setq opencode-buffer-connection connection)
              (push (current-buffer) opencode--session-control-buffers))
            (setq default-directory (file-name-as-directory .project.directory)
                  opencode-session-control-project-id .project.id)
            (opencode-sessions-redisplay)
            (opencode--switch-to-buffer (current-buffer))))))))
+
+(defun opencode--read-project ()
+  "Read a project of the current connection's server and open it."
+  (opencode-api-projects projects
+    (opencode-open-project
+     (opencode--annotated-completion
+      "Project: "
+      (cl-loop for project in projects
+               for canonical = (alist-get 'canonical project)
+               when canonical
+               collect (list (string-remove-prefix (expand-file-name "~/")
+                                                   canonical)
+                             canonical
+                             (opencode--format-time-ago
+                              (opencode--time-ago project 'active))
+                             (opencode--time-ago project 'active)))))))
 
 (provide 'opencode-session-control)
 ;;; opencode-session-control.el ends here

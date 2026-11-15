@@ -203,7 +203,7 @@ A request that's already queued is ignored."
                                   (variant . "info")))
           (opencode-api-session (session-id)
               session
-            (push session opencode-alerted-sessions)))))))
+            (opencode--alert-session session)))))))
 
 (defun opencode--permission-request (permission-id session-id action metadata
                                                    resources save &optional message)
@@ -216,8 +216,7 @@ A marker is saved so the response label can be appended to the same line.
 If the session buffer is active, the response prompt is shown immediately.
 Otherwise the session is opened so the request has somewhere to remain pending,
 which fetches and queues its pending requests once it's displayed."
-  (if-let* ((buffer (gethash session-id opencode-session-buffers))
-            ((buffer-live-p buffer)))
+  (if-let* ((buffer (opencode--session-buffer session-id)))
       (opencode--permission-queue-request buffer permission-id session-id
                                           action metadata resources save message)
     (opencode-api-session (session-id)

@@ -61,35 +61,31 @@ Buffer local so we can configure models and variants per agent per session.")
   `((id . ,(alist-get 'id model))
     (providerID . ,(alist-get 'providerID model))))
 
-(defvar opencode--models-by-ref nil
-  "Cons of `opencode-models' and a hash table indexing it by Model.Ref.
-The mode line looks up the current model on every update.")
-
-(defun opencode--models-by-ref ()
-  "Return a hash table of `opencode-models' by (providerID . id)."
-  (unless (and opencode--models-by-ref
-               (eq (car opencode--models-by-ref) opencode-models))
-    (let ((table (make-hash-table :test #'equal)))
-      (dolist (model opencode-models)
-        (let ((key (cons (alist-get 'providerID model) (alist-get 'id model))))
-          (unless (gethash key table)
-            (puthash key model table))))
-      (setq opencode--models-by-ref (cons opencode-models table))))
-  (cdr opencode--models-by-ref))
+(defun opencode--set-models (connection models)
+  "Set the enabled MODELS of CONNECTION's server, and index them by Model.Ref.
+The mode line looks up the current model on every update."
+  (let ((table (make-hash-table :test #'equal)))
+    (dolist (model models)
+      (let ((key (cons (alist-get 'providerID model) (alist-get 'id model))))
+        (unless (gethash key table)
+          (puthash key model table))))
+    (setf (opencode-connection-models connection) models
+          (opencode-connection-models-by-ref connection) table)))
 
 (defun opencode--find-model (ref)
   "Return the enabled Model.Info that the Model.Ref REF refers to, or nil."
-  (gethash (cons (alist-get 'providerID ref) (alist-get 'id ref))
-           (opencode--models-by-ref)))
+  (when-let* ((connection (opencode-current-connection))
+              (table (opencode-connection-models-by-ref connection)))
+    (gethash (cons (alist-get 'providerID ref) (alist-get 'id ref)) table)))
 
 (defun opencode--collect-all-models ()
-  "Collect all models from `opencode-models' as a list.
+  "Collect all of the server's enabled models as a list.
 Each element is (display-name model-ref provider-id)."
   (mapcar (lambda (model)
             (list (alist-get 'name model)
                   (opencode--model-ref model)
                   (alist-get 'providerID model)))
-          opencode-models))
+          (opencode--models)))
 
 (defun opencode--model-variant-p (model variant)
   "Return non-nil if MODEL, a Model.Info, has a variant with id VARIANT."
@@ -144,33 +140,53 @@ With no variant selected, start from the first or last variant."
   (interactive)
   (opencode--cycle-variant -1))
 
+(defconst opencode--directory-fetchers
+  `((slash-commands . ,(lambda (then) (opencode-api-commands commands (funcall then commands))))
+    (skills . ,(lambda (then) (opencode-api-skills skills (funcall then skills)))))
+  "Alist of connection slots cached per directory to functions fetching them.
+Each function calls its argument with the fetched value.")
+
+(defun opencode--directory-cache-entry (slot directory)
+  "Return the (DIRECTORY . VALUE) cached in SLOT of the current connection, or nil."
+  (when-let* ((connection (opencode-current-connection)))
+    (assoc (opencode--normalize-directory directory)
+           (cl-struct-slot-value 'opencode-connection slot connection))))
+
+(defun opencode--download-for-directory (slot directory &optional force)
+  "Download SLOT of `opencode--directory-fetchers' for DIRECTORY.
+Unless it already was downloaded, or FORCE."
+  (let ((directory (opencode--normalize-directory directory))
+        (connection (opencode--conn)))
+    (when (or force (not (opencode--directory-cache-entry slot directory)))
+      (let ((default-directory directory))
+        (funcall (alist-get slot opencode--directory-fetchers)
+                 (lambda (value)
+                   (setf (alist-get directory
+                                    (cl-struct-slot-value 'opencode-connection slot connection)
+                                    nil nil #'string=)
+                         value)))))))
+
 (defun opencode--download-slash-commands (directory &optional force)
   "Download slash commands for DIRECTORY, unless already downloaded or FORCE."
-  (setf directory (opencode--normalize-directory directory))
-  (when (or force (not (assoc directory opencode--slash-commands-by-directory)))
-    (let ((default-directory directory))
-      (opencode-api-commands commands
-        (setf (alist-get directory opencode--slash-commands-by-directory
-                         nil nil #'string=)
-              commands)))))
+  (opencode--download-for-directory 'slash-commands directory force))
 
 (defun opencode--download-skills (directory &optional force)
   "Download skills available in DIRECTORY, unless they already were or FORCE."
-  (setf directory (opencode--normalize-directory directory))
-  (when (or force (not (assoc directory opencode--skills-by-directory)))
-    (let ((default-directory directory))
-      (opencode-api-skills skills
-        (setf (alist-get directory opencode--skills-by-directory
-                         nil nil #'string=)
-              skills)))))
+  (opencode--download-for-directory 'skills directory force))
+
+(defun opencode--directory-slash-commands ()
+  "Return the slash commands of `default-directory' on the server."
+  (cdr (opencode--directory-cache-entry 'slash-commands default-directory)))
+
+(defun opencode--directory-skills ()
+  "Return the skills of `default-directory' on the server."
+  (cdr (opencode--directory-cache-entry 'skills default-directory)))
 
 (defun opencode-insert-slash-command ()
   "Insert an opencode slash command."
   (interactive)
   (if (= (point) (cdr comint-last-prompt))
-      (let* ((directory (opencode--normalize-directory default-directory))
-             (commands (alist-get directory opencode--slash-commands-by-directory
-                                  nil nil #'string=))
+      (let* ((commands (opencode--directory-slash-commands))
              (command (opencode--annotated-completion
                        "Slash command: "
                        (cl-loop for command in commands
@@ -436,15 +452,12 @@ line numbers."
   (when (comint-after-pmark-p)
     (let ((candidates
            (append
-            (cl-loop for skill in (alist-get (opencode--normalize-directory
-                                              default-directory)
-                                             opencode--skills-by-directory
-                                             nil nil #'string=)
+            (cl-loop for skill in (opencode--directory-skills)
                      collect (let-alist skill
                                (list .id
                                      (cons .id `(skills . ((id . ,.id))))
                                      (concat "skill     " (or .description "")))))
-            (cl-loop for agent in opencode-agents
+            (cl-loop for agent in (opencode--agents)
                      when (string= "subagent" (alist-get 'mode agent))
                      collect (let-alist agent
                                (list .name

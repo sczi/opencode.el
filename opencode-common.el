@@ -17,6 +17,7 @@
 (require 'json)
 (require 'map)
 (require 'notifications)
+(require 'opencode-connection)
 (require 'project)
 (require 'savehist)
 (require 'svg)
@@ -26,29 +27,17 @@
 When nil or not available, connecting sets it to the server's default model.")
 (add-to-list 'savehist-additional-variables 'opencode-last-model)
 
-(defvar opencode-agents nil
-  "List of available agents excluding hidden agents.")
-
-(defvar opencode--slash-commands-by-directory nil
-  "Alist mapping normalized project directories to available slash commands.")
-
-(defvar opencode--skills-by-directory nil
-  "Alist mapping normalized project directories to available skills.")
-
-(defvar opencode--location-by-directory nil
-  "Alist mapping normalized directories to their opencode location.")
-
 (defvar opencode-alerted-sessions nil
-  "List of unvisited idle sessions.")
+  "List of unvisited idle sessions.
+Each has the connection of its server added as `opencode-connection'.")
+
+(defun opencode--alert-session (session)
+  "Add SESSION of the current connection's server to `opencode-alerted-sessions'."
+  (push (cons (cons 'opencode-connection (opencode-current-connection)) session)
+        opencode-alerted-sessions))
 
 (defvar opencode-last-session-buffer nil
   "Last active opencode session buffer.")
-
-(defvar opencode-models nil
-  "List of enabled models.")
-
-(defvar opencode--event-subscription nil
-  "SSE event process for the global event stream.")
 
 (defun opencode--normalize-directory (directory)
   "Return DIRECTORY as a canonical directory name."
@@ -104,11 +93,6 @@ too large to do so quickly."
 It receives a single argument, PROPERTIES, which is an alist with string keys
 for title, message, variant (error/warning/info/success), and duration"
   :type 'function
-  :group 'opencode)
-
-(defcustom opencode-server-password nil
-  "Password to connect to opencode server."
-  :type 'string
   :group 'opencode)
 
 (defcustom opencode-open-session-same-window t
@@ -382,17 +366,19 @@ it again on redisplay, which is harmless."
 (defvar-local opencode-session-title nil
   "Title of the current opencode session.")
 
-(defvar opencode-session-buffers
-  (make-hash-table :test 'equal)
-  "A mapping of session ids to Emacs buffers.")
+(defun opencode--session-buffer (session-id)
+  "Return the live buffer of SESSION-ID on the current connection's server, or nil."
+  (when-let* ((connection (opencode-current-connection))
+              (buffer (gethash session-id
+                               (opencode-connection-session-buffers connection))))
+    (and (buffer-live-p buffer) buffer)))
 
 (defmacro opencode--with-session-buffer (session-id &rest body)
   "Run BODY in the live session buffer for SESSION-ID."
   (declare (indent 1))
-  `(when-let* ((buffer (gethash ,session-id opencode-session-buffers)))
-     (when (buffer-live-p buffer)
-       (with-current-buffer buffer
-         ,@body))))
+  `(when-let* ((buffer (opencode--session-buffer ,session-id)))
+     (with-current-buffer buffer
+       ,@body)))
 
 (defvar opencode-event-log-max-lines nil
   "Maximum number of lines to log in the opencode event log buffer.

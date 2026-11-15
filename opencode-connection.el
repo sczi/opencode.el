@@ -22,10 +22,14 @@ NAME is a symbol.  PLIST can have these keys, all optional:
              or one constructed from `opencode-command'.  %h and %p in it
              are replaced by the host and port.
   :password  password, by default `opencode-server-password'
+  :auto-start  whether to start it with :command when it isn't running, by
+             default t if its host is localhost, 127.0.0.1 or ::1, else nil.
+             Set it to nil for a port forwarded to a remote server.
 
 For example:
   ((local)
    (other :port 4097)
+   (tunnel :port 4099 :auto-start nil)
    (nix :port 4098
         :command \"nix run github:numtide/nix-ai-tools#opencode -- serve --port %p --hostname %h\"))
 
@@ -34,7 +38,8 @@ For example:
           :value-type (plist :options ((:host string)
                                        (:port integer)
                                        (:command string)
-                                       (:password string))))
+                                       (:password string)
+                                       (:auto-start boolean))))
   :group 'opencode)
 
 (defcustom opencode-default-server 'local

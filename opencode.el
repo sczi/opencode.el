@@ -48,8 +48,8 @@
   "Open opencode sessions control buffer for the current project directory.
 It's on the current connection's server, or with a prefix argument the
 SERVER in `opencode-servers' read from the minibuffer.  Connects to the
-server if needed, starting it if it isn't running and
-`opencode-auto-start-server' is non-nil."
+server if needed, starting it if it isn't running and its :auto-start
+allows it."
   (interactive (list (when current-prefix-arg (opencode--read-server))))
   (let ((directory (expand-file-name default-directory)))
     (opencode-autoconnect (lambda () (opencode-open-project directory))

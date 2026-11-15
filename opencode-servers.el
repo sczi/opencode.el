@@ -48,12 +48,6 @@ Set this to a custom command for special cases like nix:
           (string :tag "Custom command"))
   :group 'opencode)
 
-(defcustom opencode-auto-start-server t
-  "Whether to automatically start a server if none is running.
-When nil, `opencode' will only connect to an already running server."
-  :type 'boolean
-  :group 'opencode)
-
 (defun opencode--server-url (plist)
   "Return the URL of the server with PLIST from `opencode-servers'."
   (format "http://%s:%d"
@@ -106,6 +100,17 @@ If it needs a password that isn't known, ask for it."
                      (concat opencode-command " serve --port %p --hostname %h"))
                  `((?h . ,(or (plist-get plist :host) opencode-host))
                    (?p . ,(or (plist-get plist :port) opencode-port))))))
+
+(defun opencode--server-auto-start-p (connection)
+  "Return non-nil if CONNECTION's server should be started when not running.
+It's its :auto-start in `opencode-servers' if that's given, else whether its
+host is local.  It's nil if it isn't in `opencode-servers'."
+  (when-let* ((server (assq (opencode-connection-name connection) opencode-servers)))
+    (let ((plist (cdr server)))
+      (if (plist-member plist :auto-start)
+          (plist-get plist :auto-start)
+        (member (or (plist-get plist :host) opencode-host)
+                '("localhost" "127.0.0.1" "::1"))))))
 
 (defun opencode--server-buffer-name (connection)
   "Return the name of the output buffer of CONNECTION's server."
@@ -161,12 +166,13 @@ If it needs a password that isn't known, ask for it."
                       (string-trim-right event "\n"))
               :error))))))))
 
-(defun opencode-autoconnect (on-connect &optional connection)
+(defun opencode-autoconnect (on-connect &optional connection no-start)
   "Run ON-CONNECT once connected to CONNECTION's server.
 CONNECTION defaults to `opencode-current-connection', or the connection to
 `opencode-default-server' if there's none.  It connects if needed, starting
-the server first if it isn't running and `opencode-auto-start-server' is
-non-nil.  ON-CONNECT runs with CONNECTION as its current connection."
+the server first if it isn't running, NO-START is nil and its :auto-start in
+`opencode-servers' allows it.  ON-CONNECT runs with CONNECTION as its
+current connection."
   (let* ((connection (or connection
                          (opencode-current-connection)
                          (opencode--server-connection opencode-default-server)))
@@ -182,10 +188,10 @@ non-nil.  ON-CONNECT runs with CONNECTION as its current connection."
      ((process-live-p (opencode-connection-process connection))
       (user-error "OpenCode server %s is still starting"
                   (opencode-connection-name connection)))
-     (opencode-auto-start-server
+     ((and (not no-start) (opencode--server-auto-start-p connection))
       (opencode--start-server connection run))
      (t
-      (user-error "No opencode server running at %s"
+      (user-error "No opencode server running at %s, start it or set :auto-start in `opencode-servers'"
                   (opencode-connection-url connection))))))
 
 (defun opencode--read-server ()
@@ -211,10 +217,9 @@ The server isn't started if it isn't running."
                       nil 'opencode--host-history opencode-host)
          (read-number "Port: " opencode-port 'opencode--port-history)))
   (let ((connection (opencode--connection-for-url
-                     (format "http://%s:%d" host port) (format "%s:%d" host port)))
-        (opencode-auto-start-server nil))
+                     (format "http://%s:%d" host port) (format "%s:%d" host port))))
     (opencode-autoconnect (lambda () (opencode--set-default-connection connection))
-                          connection)))
+                          connection t)))
 
 (defun opencode--connect (connection on-connect)
   "Connect to CONNECTION's running server, then call ON-CONNECT.

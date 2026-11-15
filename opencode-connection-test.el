@@ -107,7 +107,7 @@
          (opencode-connections (list a b))
          (opencode-default-connection a)
          (opencode-default-server 'a)
-         opencode--session-control-buffers buffers)
+         buffers)
     (cl-letf (((symbol-function 'opencode-sessions-redisplay) #'ignore)
               ((symbol-function 'switch-to-buffer)
                (lambda (buffer &rest _) (push buffer buffers)))

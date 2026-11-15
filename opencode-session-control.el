@@ -22,9 +22,6 @@
 
 (defvar doom-real-buffer-p)
 
-(defvar opencode--session-control-buffers nil
-  "List of session control buffers.")
-
 (defun opencode--session-control-command (fun)
   "Return a command that calls FUN with the session at point."
   (lambda ()
@@ -216,7 +213,9 @@ An alias of a model family, such as opus, uses the family's newest model."
                       nil)))
              (kill-buffer buffer)
              (when opencode--claude-plan-tier
-               (opencode--redisplay-session-control-buffers)))))))))
+               (dolist (connection opencode-connections)
+                 (let ((opencode--dispatching-connection connection))
+                   (opencode--redisplay-session-control-buffers)))))))))))
 
 (defvar-local opencode--session-control-usage-overlay nil
   "Overlay at the end of the session control buffer showing Claude usage.")
@@ -227,22 +226,24 @@ An alias of a model family, such as opus, uses the family's newest model."
 Windows not in it are shown with their name's underscores replaced by spaces.")
 
 (defun opencode--update-claude-rate-limit (rate-limit &optional time)
-  "Record RATE-LIMIT, reported at TIME in seconds, or now if nil.
-It is ignored if older than the one already recorded."
-  (let ((time (or time (float-time))))
+  "Record RATE-LIMIT of the current connection, reported at TIME in seconds.
+TIME is now if nil.  It is ignored if older than the one already recorded."
+  (let ((time (or time (float-time)))
+        (current (opencode--claude-rate-limit)))
     (when (and rate-limit
-               (or (not (consp opencode--claude-rate-limit))
-                   (>= time (car opencode--claude-rate-limit))))
-      (setq opencode--claude-rate-limit (cons time rate-limit))
-      ;; For %u and %U in every session's mode line
+               (or (not current) (>= time (car current))))
+      (setf (opencode-connection-claude-rate-limit (opencode--conn))
+            (cons time rate-limit))
+      ;; For %u and %U in the mode line of the server's sessions
       (force-mode-line-update t)
       (opencode--map-session-control-buffers
        #'opencode--session-control-update-usage))))
 
 (defun opencode--fetch-claude-rate-limit (sessions)
   "Record the latest rate limit info stored in the newest of SESSIONS, once.
-Only claude-agent sessions are considered."
-  (when-let* (((eq opencode--claude-rate-limit 'unfetched))
+It's done once per connection.  Only claude-agent sessions are considered."
+  (when-let* ((connection (opencode-current-connection))
+              ((eq (opencode-connection-claude-rate-limit connection) 'unfetched))
               (session (car (seq-sort-by
                              (lambda (session)
                                (or (map-nested-elt session '(time updated)) 0))
@@ -252,7 +253,7 @@ Only claude-agent sessions are considered."
                                 (equal (map-nested-elt session '(model providerID))
                                        "claude-agent"))
                               sessions)))))
-    (setq opencode--claude-rate-limit nil)
+    (setf (opencode-connection-claude-rate-limit connection) nil)
     ;; Only steps that got a rate_limit_event have it
     (opencode--request-messages-with-rate-limit (alist-get 'id session))))
 
@@ -299,9 +300,10 @@ usage window on its own line instead."
 (defun opencode--session-control-update-usage ()
   "Show Claude usage at the end of the current session control buffer."
   (let* ((window (get-buffer-window (current-buffer)))
-         (usage (and (consp opencode--claude-rate-limit)
+         (rate-limit (opencode--claude-rate-limit))
+         (usage (and rate-limit
                      (opencode--format-claude-usage
-                      (cdr opencode--claude-rate-limit)
+                      (cdr rate-limit)
                       (and window (window-body-width window t))))))
     (unless (overlayp opencode--session-control-usage-overlay)
       ;; Advancing both ends keeps it after the table when vtable deletes
@@ -562,20 +564,20 @@ only shown if the table fits in the window."
                                       #'opencode--session-control-display)))
 
 (defun opencode--map-session-control-buffers (fn)
-  "Call FN with no arguments in each live session control buffer."
-  (setq opencode--session-control-buffers
-        (seq-filter #'buffer-live-p opencode--session-control-buffers))
-  (dolist (buffer opencode--session-control-buffers)
-    (with-current-buffer buffer
-      (funcall fn))))
+  "Call FN with no arguments in the current connection's session control buffers.
+Only live ones, with none if there's no current connection."
+  (when-let* ((connection (opencode-current-connection)))
+    (dolist (buffer (setf (opencode-connection-session-control-buffers connection)
+                          (seq-filter
+                           #'buffer-live-p
+                           (opencode-connection-session-control-buffers
+                            connection))))
+      (with-current-buffer buffer
+        (funcall fn)))))
 
 (defun opencode--redisplay-session-control-buffers ()
   "Refresh the live session control buffers of the current connection's server."
-  (let ((connection (opencode-current-connection)))
-    (opencode--map-session-control-buffers
-     (lambda ()
-       (when (eq opencode-buffer-connection connection)
-         (opencode-sessions-redisplay))))))
+  (opencode--map-session-control-buffers #'opencode-sessions-redisplay))
 
 (defun opencode-open-project (directory)
   "Open the session control buffer for the project of DIRECTORY.
@@ -600,7 +602,8 @@ opened for.  It's on the current connection's server."
            (unless (derived-mode-p 'opencode-session-control-mode)
              (opencode-session-control-mode)
              (setq opencode-buffer-connection connection)
-             (push (current-buffer) opencode--session-control-buffers))
+             (push (current-buffer)
+                   (opencode-connection-session-control-buffers connection)))
            (setq default-directory (file-name-as-directory .project.directory)
                  opencode-session-control-project-id .project.id)
            (opencode-sessions-redisplay)

@@ -14,8 +14,7 @@ Requests for active sessions return ACTIVE, and others a session."
          (opencode-alerted-sessions nil)
          (opencode-file-edited-functions nil)
          (opencode-files-finished-editing-functions nil)
-         (opencode-project-files-finished-editing-functions nil)
-         (opencode--session-control-buffers nil))
+         (opencode-project-files-finished-editing-functions nil))
      (cl-letf (((symbol-function 'opencode-api--request)
                 (lambda (_method path &rest args)
                   (funcall (plist-get args :then)
@@ -1143,7 +1142,7 @@ mode line."
   "A control buffer is named after the main checkout of its project."
   (let* ((opencode-default-connection (opencode--make-connection :name 'local))
          (opencode-default-server 'local)
-         opencode--session-control-buffers buffers)
+         buffers)
     (cl-letf* (((symbol-function 'opencode-sessions-redisplay) #'ignore)
                ((symbol-function 'switch-to-buffer)
                 (lambda (buffer &rest _) (push buffer buffers)))
@@ -1696,11 +1695,12 @@ Windows past their reset show as 0% without a reset time."
 
 (ert-deftest opencode-claude-usage-overlay ()
   "Recorded usage is shown after the end of session control buffers."
-  (let ((opencode--claude-rate-limit nil)
-        (opencode--session-control-buffers nil))
+  (let ((opencode-default-connection
+         (opencode--make-connection :name 'test :claude-rate-limit nil)))
     (with-temp-buffer
       (insert "table\n")
-      (push (current-buffer) opencode--session-control-buffers)
+      (push (current-buffer) (opencode-connection-session-control-buffers
+                              opencode-default-connection))
       (opencode--session-control-update-usage)
       (should-not (overlay-get opencode--session-control-usage-overlay
                                'after-string))
@@ -1728,31 +1728,34 @@ Windows past their reset show as 0% without a reset time."
       (cl-letf (((symbol-function 'opencode--current-model) #'ignore)
                 ((symbol-function 'opencode--usage-bar)
                  (lambda (&rest args) (setq bar-args args) "bar")))
-        (let ((opencode--claude-rate-limit 'unfetched))
-          (should (equal "[]" (opencode--mode-line-expand "[%u]")))
-          (should (equal "[]" (opencode--mode-line-expand "[%U]")))
-          (should (equal "[]" (opencode--mode-line-expand "[%r]")))
-          (should-not bar-args))
-        (let ((opencode--claude-rate-limit
-               (cons now (opencode-session-test--rate-limit now))))
-          ;; Escaped for the mode line
-          (should (equal "5h 9%%" (opencode--mode-line-expand "5h %u")))
-          (should (equal "bar" (opencode--mode-line-expand
-                                "%U" (opencode--format-specs 'header-line))))
-          (should (equal '(0.09 header-line) bar-args))
-          (should (equal (format " resets %s"
-                                 (format-time-string "%H:%M" (+ now 3600)))
-                         (opencode--mode-line-expand "%r")))
-          ;; Past its reset nothing has been used, and there's no reset time
-          (setq opencode--claude-rate-limit
-                (cons now (opencode-session-test--rate-limit (- now 7200))))
-          (should (equal "0%%" (opencode--mode-line-expand "%u")))
-          (should (equal "[]" (opencode--mode-line-expand "[%r]")))
-          (setq opencode--claude-rate-limit
-                (cons now (opencode-session-test--rate-limit now)))
-          (setq opencode-session-agent
-                '((name . "build") (model (id . "gpt") (providerID . "openai"))))
-          (should (equal "[]" (opencode--mode-line-expand "[%u%U%r]"))))))))
+        (should (eq 'unfetched (opencode-connection-claude-rate-limit (opencode--conn))))
+        (should (equal "[]" (opencode--mode-line-expand "[%u]")))
+        (should (equal "[]" (opencode--mode-line-expand "[%U]")))
+        (should (equal "[]" (opencode--mode-line-expand "[%r]")))
+        (should-not bar-args)
+        (setf (opencode-connection-claude-rate-limit (opencode--conn))
+              (cons now (opencode-session-test--rate-limit now)))
+        ;; Escaped for the mode line
+        (should (equal "5h 9%%" (opencode--mode-line-expand "5h %u")))
+        (should (equal "bar" (opencode--mode-line-expand
+                              "%U" (opencode--format-specs 'header-line))))
+        (should (equal '(0.09 header-line) bar-args))
+        (should (equal (format " resets %s"
+                               (format-time-string "%H:%M" (+ now 3600)))
+                       (opencode--mode-line-expand "%r")))
+        ;; Past its reset nothing has been used, and there's no reset time
+        (setf (opencode-connection-claude-rate-limit (opencode--conn))
+              (cons now (opencode-session-test--rate-limit (- now 7200))))
+        (should (equal "0%%" (opencode--mode-line-expand "%u")))
+        (should (equal "[]" (opencode--mode-line-expand "[%r]")))
+        (setf (opencode-connection-claude-rate-limit (opencode--conn))
+              (cons now (opencode-session-test--rate-limit now)))
+        ;; Another server's usage isn't shown
+        (let ((opencode-buffer-connection (opencode--make-connection :name 'other)))
+          (should (equal "[]" (opencode--mode-line-expand "[%u]"))))
+        (setq opencode-session-agent
+              '((name . "build") (model (id . "gpt") (providerID . "openai"))))
+        (should (equal "[]" (opencode--mode-line-expand "[%u%U%r]")))))))
 
 (defun opencode-session-test--tree-session (id parent created updated)
   "Return a session ID spawned by PARENT with CREATED and UPDATED times."
@@ -1826,8 +1829,10 @@ for the columns title and last-update."
 (ert-deftest opencode-session-control-usage-stays-at-end-when-sorting ()
   "The Claude usage overlay stays after the table when it's sorted."
   (with-temp-buffer
-    (let ((opencode--claude-rate-limit
-           '(0 (unifiedWindows (five_hour (utilization . 0.5))))))
+    (let ((opencode-default-connection
+           (opencode--make-connection
+            :name 'test
+            :claude-rate-limit '(0 (unifiedWindows (five_hour (utilization . 0.5)))))))
       (opencode--session-control-insert-table
        opencode-session-test--tree-sessions '(title last-update))
       (opencode--session-control-update-usage)

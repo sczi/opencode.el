@@ -68,7 +68,14 @@ Set with `opencode--set-models'.")
   (skills nil :documentation "Alist of normalized directories to skills.")
   (locations nil :documentation "Alist of normalized directories to their location.")
   (session-buffers (make-hash-table :test 'equal)
-                   :documentation "Hash table of session ids to their buffers."))
+                   :documentation "Hash table of session ids to their buffers.")
+  (session-control-buffers nil :documentation "Its session control buffers.
+Some may have been killed.")
+  (claude-rate-limit 'unfetched
+                     :documentation "The latest Claude subscription rate limit info.
+It's nil if there is none.  A cons of the time in seconds it was reported and
+the rateLimit alist that claude-agent puts in a step's native metadata.  The
+symbol `unfetched' before the latest stored one has been requested."))
 
 (cl-defmethod cl-print-object ((connection opencode-connection) stream)
   "Print CONNECTION to STREAM briefly, as its caches are large."

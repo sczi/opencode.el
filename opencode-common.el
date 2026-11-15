@@ -268,7 +268,7 @@ resolved for all output."
                     (* (any alnum "@%_./~+-")))
              (optional ":"
                        (group (+ digit))
-                       (optional (any "-" "–") (+ digit)))
+                       (optional (any "-" "–" ",") (+ digit)))
              "`")))
     (save-excursion
       (goto-char start)

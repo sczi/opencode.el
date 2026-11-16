@@ -11,22 +11,8 @@
 
 ;;; Code:
 
-(require 'opencode-edit-hooks)
-
-(declare-function flycheck-buffer "flycheck")
-(declare-function flycheck-mode "flycheck" (&optional arg))
-(declare-function flycheck-running-p "flycheck")
-(declare-function flycheck-stop "flycheck")
-(declare-function flycheck-error-checker "flycheck" (err))
-(declare-function flycheck-error-column "flycheck" (err))
-(declare-function flycheck-error-filename "flycheck" (err))
-(declare-function flycheck-error-format "flycheck" (err &optional with-file-name))
-(declare-function flycheck-error-level "flycheck" (err))
-(declare-function flycheck-error-line "flycheck" (err))
-
-(defvar flycheck-current-errors)
-(defvar flycheck-mode)
-(defvar flycheck-status-changed-functions)
+(require 'flycheck)
+(require 'opencode)
 
 (defun opencode--flycheck-report-diagnostics (file base-directory errors)
   "Return formatted Flycheck ERRORS for FILE relative to BASE-DIRECTORY."
@@ -47,11 +33,13 @@
                errors
                "\n")))
 
-(defun opencode--flycheck-fix-prompt (base-directory)
+(defun opencode--flycheck-fix-prompt (base-directory &optional errors)
   "Return a prompt to fix the current buffer's Flycheck errors, or nil.
+If ERRORS is non-nil, use it instead of all of the buffer's errors.
 File names are shown relative to BASE-DIRECTORY."
   (when-let* ((report (opencode--flycheck-report-diagnostics
-                       (buffer-file-name) base-directory flycheck-current-errors)))
+                       (buffer-file-name) base-directory
+                       (or errors flycheck-current-errors))))
     (concat "Fix the following:\n\n" report)))
 
 (defun opencode--flycheck-report-status (file base-directory status)
@@ -62,9 +50,27 @@ BASE-DIRECTORY is used to shorten FILE in the report."
             (file-relative-name file base-directory)
             status)))
 
+;;;###autoload
+(defun opencode-fix-flycheck (&optional at-point)
+  "Start a new opencode session to fix the current buffer's Flycheck errors.
+With a prefix argument AT-POINT, only fix the errors at point."
+  (interactive "P")
+  (unless flycheck-mode
+    (user-error "Flycheck is not enabled in this buffer"))
+  (let ((prompt
+         (if at-point
+             (opencode--flycheck-fix-prompt
+              default-directory
+              (or (flycheck-overlay-errors-at (point))
+                  (user-error "No Flycheck error at point")))
+           (or (opencode--flycheck-fix-prompt default-directory)
+               (user-error "No Flycheck errors in this buffer")))))
+    (opencode-new-session :initial-prompt prompt)))
+
+;;;###autoload
 (defun opencode-flycheck-edited-files (files done)
   "Run Flycheck on FILES, then call DONE with the diagnostics."
-  (if (not (and files (require 'flycheck nil t)))
+  (if (not files)
       (funcall done)
     (let ((base-directory default-directory)
           (remaining (length files))

@@ -21,7 +21,6 @@
 (require 'opencode-common)
 (require 'opencode-edit-hooks)
 (require 'opencode-events)
-(require 'opencode-flycheck)
 (require 'opencode-permission)
 (require 'opencode-forms)
 (require 'opencode-servers)
@@ -171,15 +170,6 @@ If INITIAL-PROMPT is given, it is sent after CALLBACK is called."
                         (goto-char (point-max))
                         (insert initial-prompt)
                         (comint-send-input)))))))))
-
-(defun opencode-fix-flycheck ()
-  "Start a new opencode session to fix the current buffer's Flycheck errors."
-  (interactive)
-  (unless (bound-and-true-p flycheck-mode)
-    (user-error "Flycheck is not enabled in this buffer"))
-  (let ((prompt (or (opencode--flycheck-fix-prompt default-directory)
-                    (user-error "No Flycheck errors in this buffer"))))
-    (opencode-new-session :initial-prompt prompt)))
 
 (defun opencode-toggle-mcp ()
   "Completing read to select an MCP to toggle."

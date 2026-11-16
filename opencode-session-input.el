@@ -600,6 +600,18 @@ records a message, so that's only done if it differs."
            (opencode--insert-skills
             (map-nested-elt inbox-item '(payload skills))))))))))
 
+(defun opencode-send-input ()
+  "Send input like `comint-send-input', unless it is empty.
+The input is the current input, or with point before it, the old input
+`comint-get-old-input' copies, like `comint-send-input' sends."
+  (interactive nil opencode-session-mode)
+  (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
+    (unless (string-empty-p
+             (if (>= (point) pmark)
+                 (buffer-substring-no-properties pmark (point-max))
+               (funcall comint-get-old-input)))
+      (comint-send-input))))
+
 (defun opencode-session--send-synthetic-input (string)
   "Send STRING to the current opencode session.
 Preserve any pending input context while sending STRING as a plain prompt."

@@ -224,6 +224,25 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (should (get-char-property start 'invisible))
       (should (opencode-session-test--margin-p start)))))
 
+(ert-deftest opencode-session-send-empty-input-test ()
+  "Don't send empty input, from the prompt or from an empty line above it."
+  (with-opencode-session-test-buffer
+    (let* ((sent nil)
+           (comint-input-sender (lambda (_proc string) (push string sent))))
+      (opencode--output "reply\n\n")
+      (opencode--show-prompt)
+      (let ((text (buffer-string)))
+        (opencode-send-input)
+        (goto-char (point-min))
+        (forward-line 1)
+        (opencode-send-input)
+        (should (equal (buffer-string) text))
+        (should-not sent))
+      (goto-char (point-max))
+      (insert "hi")
+      (opencode-send-input)
+      (should (equal sent '("hi"))))))
+
 (ert-deftest opencode-session-label-test ()
   "Show the label name, and send it as code along with the label's part."
   (dolist (case '(("AGENTS.md" . "`AGENTS.md`")
@@ -744,7 +763,7 @@ The first visible output line starts at that hidden fence."
       (should-not context-timers)
       (should-not markdown-ts-table-mode)
       (should-not markdown-ts-in-table-mode)
-      (should (eq (key-binding (kbd "RET")) 'comint-send-input)))))
+      (should (eq (key-binding (kbd "RET")) 'opencode-send-input)))))
 
 (ert-deftest opencode-session-history-table-alignment-test ()
   "Align replayed assistant tables, preserving user requests and code fences."

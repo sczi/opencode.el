@@ -40,6 +40,7 @@
     "C-c x" 'opencode-kill-session
     "<backtab>" 'backward-button
     "TAB" 'opencode--tab-dispatch
+    "RET" 'opencode-send-input
     "C-c r" 'opencode-rename-session
     "C-c n" 'opencode-new-session
     "C-c l" 'opencode-select-session
@@ -71,7 +72,7 @@
     "@" 'opencode-add-mention
     "/" 'opencode-insert-slash-command)
   (evil-define-key* 'normal opencode-session-mode-map
-    (kbd "RET") 'comint-send-input))
+    (kbd "RET") 'opencode-send-input))
 
 (defvar-local opencode-session-pending-permission nil
   "Pending permission requests for this session buffer, as a list of plists.

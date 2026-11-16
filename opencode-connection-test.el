@@ -20,6 +20,33 @@
     (let ((opencode-default-connection nil))
       (should-error (opencode--conn)))))
 
+(ert-deftest opencode-project-servers-test ()
+  "Directories in `opencode-project-servers' pick their server, most specific first."
+  (let ((opencode-project-servers '(("/src/" . outer)
+                                    ("/src/repo" . inner)
+                                    ("/ssh:box:/work/" . boxproj)))
+        (opencode-servers '((boxhost :tramp "/ssh:box:"))))
+    (should (eq 'outer (opencode--server-for-directory "/src/other/")))
+    (should (eq 'inner (opencode--server-for-directory "/src/repo/")))
+    (should (eq 'inner (opencode--server-for-directory "/src/repo/lib")))
+    (should (eq 'outer (opencode--server-for-directory "/src/repository/")))
+    (should-not (opencode--server-for-directory "/elsewhere/"))
+    (should (eq 'boxproj (opencode--server-for-directory "/ssh:box:/work/x/")))
+    (should (eq 'boxhost (opencode--server-for-directory "/ssh:box:/home/")))))
+
+(ert-deftest opencode-project-server-beats-default-test ()
+  "A project's server's connection is current over the default connection."
+  (let* ((a (opencode--make-connection :name 'a))
+         (b (opencode--make-connection :name 'b))
+         (opencode-connections (list a b))
+         (opencode-default-connection a)
+         (opencode-project-servers '(("/src/repo/" . b))))
+    (with-temp-buffer
+      (setq default-directory "/src/repo/sub/")
+      (should (eq b (opencode-current-connection)))
+      (setq default-directory "/elsewhere/")
+      (should (eq a (opencode-current-connection))))))
+
 (ert-deftest opencode-connection-prints-briefly-test ()
   "A connection's caches are left out when printed with `cl-prin1'."
   (let ((connection (opencode--make-connection

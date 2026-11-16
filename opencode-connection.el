@@ -51,8 +51,18 @@ For example:
   "Name of the server in `opencode-servers' that \\[opencode] connects to.
 That's when it isn't run from a buffer of a server that's already been
 connected to, and no server is connected.  Buffers of other servers have
-their name in their buffer names."
+their name in their buffer names.  `opencode-project-servers' overrides it
+for the directories in it."
   :type 'symbol
+  :group 'opencode)
+
+(defcustom opencode-project-servers nil
+  "Alist of directories to the name of the server in `opencode-servers' to use there.
+\\[opencode] run from a buffer whose `default-directory' is one of the
+directories, or below it, connects to that server instead of
+`opencode-default-server'.  When directories are nested, the most specific
+one wins.  Directories may be remote file names."
+  :type '(alist :key-type directory :value-type symbol)
   :group 'opencode)
 
 (defcustom opencode-server-password nil
@@ -112,8 +122,10 @@ Bound, never set, so the requests made while handling it go to its server.")
 (defun opencode-current-connection ()
   "Return the connection to use now, or nil if there's none.
 It's the one of the event or response being handled, else of the current
-buffer, else that to the server whose :tramp in `opencode-servers' is the
-host of `default-directory' if there is one, else the default connection."
+buffer, else that to the server for `default-directory' if there is one,
+else the default connection.  The server for a directory is the one in
+`opencode-project-servers', else the one whose :tramp in `opencode-servers'
+is the directory's host."
   (or opencode--dispatching-connection
       opencode-buffer-connection
       (opencode--directory-connection)
@@ -209,14 +221,28 @@ CONNECTION defaults to `opencode-current-connection'."
     path))
 
 (defun opencode--server-for-directory (directory)
-  "Return the name of the server in `opencode-servers' for remote DIRECTORY.
-It's the one whose :tramp is DIRECTORY's host, nil if none is or DIRECTORY
-is local."
-  (when-let* ((prefix (file-remote-p directory)))
-    (car (seq-find (lambda (server)
-                     (when-let* ((tramp (plist-get (cdr server) :tramp)))
-                       (equal prefix (file-remote-p tramp))))
-                   opencode-servers))))
+  "Return the name of the server in `opencode-servers' for DIRECTORY, or nil.
+It's that of the most specific directory in `opencode-project-servers'
+DIRECTORY is in, else for remote DIRECTORY the one whose :tramp is its host."
+  (or (opencode--project-server directory)
+      (when-let* ((prefix (file-remote-p directory)))
+        (car (seq-find (lambda (server)
+                         (when-let* ((tramp (plist-get (cdr server) :tramp)))
+                           (equal prefix (file-remote-p tramp))))
+                       opencode-servers)))))
+
+(defun opencode--project-server (directory)
+  "Return the server in `opencode-project-servers' for DIRECTORY, or nil.
+It's that of the longest directory that DIRECTORY is in or below."
+  (let ((directory (file-name-as-directory (expand-file-name directory)))
+        best best-length)
+    (pcase-dolist (`(,dir . ,server) opencode-project-servers)
+      (let ((dir (file-name-as-directory (expand-file-name dir))))
+        (when (and (string-prefix-p dir directory)
+                   (or (null best-length) (> (length dir) best-length)))
+          (setq best server
+                best-length (length dir)))))
+    best))
 
 (defun opencode--auth-header (connection)
   "Return the auth header for CONNECTION's server, or nil if it needs none."

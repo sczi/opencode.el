@@ -170,8 +170,8 @@ host is local.  It's nil if it isn't in `opencode-servers'."
   "Run ON-CONNECT once connected to CONNECTION's server.
 CONNECTION defaults to `opencode-current-connection', or the connection to
 `opencode-default-server' if there's none.  The connection to the server
-whose :tramp is `default-directory''s host is created first if it should
-be the current one.  It connects if needed, starting the server first if it
+for `default-directory', from `opencode-project-servers' or whose :tramp is
+its host, is created first if it should be the current one.  It connects if needed, starting the server first if it
 isn't running, NO-START is nil and its :auto-start in `opencode-servers'
 allows it.  ON-CONNECT runs with CONNECTION as its current connection."
   (unless (or connection opencode--dispatching-connection opencode-buffer-connection)

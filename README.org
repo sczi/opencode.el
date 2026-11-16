@@ -142,21 +142,24 @@ plans you may have.
 
 Shortcuts to act on the session at point:
 
-|   Key    | Description                                                                                 |
-|----------+---------------------------------------------------------------------------------------------|
-|   <c>    |                                                                                             |
-|    =x=     | kill session                                                                                |
-|    =R=     | rename session                                                                              |
-| =RET= or =o= | open the session                                                                            |
+|   Key    | Description       |
+|----------+-------------------|
+|   <c>    |                   |
+|    =x=     | kill session      |
+|    a     | archive session   |
+|    u     | unarchive session |
+|    =R=     | rename session    |
+| =RET= or =o= | open the session  |
 
 Buffer-wide shortcuts:
 
-| Key | Description                                        |
-|-----+----------------------------------------------------|
-| <c> |                                                    |
-|  =n=  | new session                                        |
-|  =M=  | toggle MCP - fuzzy completes on all available MCPs |
+| Key | Description                                                                      |
+|-----+----------------------------------------------------------------------------------|
+| <c> |                                                                                  |
+|  =n=  | new session                                                                      |
+|  =M=  | toggle MCP - fuzzy completes on all available MCPs                               |
 |  =v=  | toggle verbose - whether to show subagent sessions, as a tree under their parent |
+|  A  | toggle display of archived sessions                                              |
 
 * Chat Sessions
 [[file:screenshots/session.png]]

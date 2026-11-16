@@ -38,6 +38,9 @@
     "o" (opencode--session-control-command #'opencode-open-session)
     "R" (opencode--session-control-command #'opencode-rename-session)
     "x" (opencode--session-control-command #'opencode-kill-session)
+    "a" (opencode--session-control-command #'opencode-archive-session)
+    "u" (opencode--session-control-command #'opencode-unarchive-session)
+    "A" 'opencode-session-control-toggle-archived
     "r" 'opencode-sessions-redisplay
     "g" nil
     "SPC" nil
@@ -55,6 +58,9 @@
     "o" (opencode--session-control-command #'opencode-open-session)
     "R" (opencode--session-control-command #'opencode-rename-session)
     "x" (opencode--session-control-command #'opencode-kill-session)
+    "a" (opencode--session-control-command #'opencode-archive-session)
+    "u" (opencode--session-control-command #'opencode-unarchive-session)
+    "A" 'opencode-session-control-toggle-archived
     "r" 'opencode-sessions-redisplay
     "n" 'opencode-new-session
     "M" 'opencode-toggle-mcp
@@ -63,6 +69,9 @@
 
 (defvar-local opencode-session-control-verbose nil
   "Toggle whether to display subagents in session control buffer.")
+
+(defvar-local opencode-session-control-show-archived nil
+  "Toggle whether to display archived sessions in session control buffer.")
 
 (defvar-local opencode-session-control-project-id nil
   "Id of the project whose sessions the session control buffer displays.")
@@ -86,6 +95,15 @@
   (interactive)
   (setq opencode-session-control-verbose
         (not opencode-session-control-verbose))
+  (opencode-sessions-redisplay))
+
+(defun opencode-session-control-toggle-archived ()
+  "Toggle showing archived sessions in session control buffer."
+  (interactive)
+  (setq opencode-session-control-show-archived
+        (not opencode-session-control-show-archived))
+  (message "%s archived sessions"
+           (if opencode-session-control-show-archived "Showing" "Hiding"))
   (opencode-sessions-redisplay))
 
 (defun opencode--profile-session-loading (session)
@@ -340,6 +358,9 @@ if it charged for other models."
      ,(lambda (object)
         (let ((icon (opencode--session-status-icon object)))
           (concat (alist-get 'tree-prefix object)
+                  (unless (opencode--json-falsy
+                           (map-nested-elt object '(time archived)))
+                    "🗄 ")
                   (when icon (concat icon " "))
                   (opencode--session-title object)))))
     (branch
@@ -564,7 +585,8 @@ only shown if the table fits in the window."
   (when opencode-session-control-project-id
     (opencode-api--fetch-all-sessions opencode-session-control-project-id
                                       opencode-session-control-verbose
-                                      #'opencode--session-control-display)))
+                                      #'opencode--session-control-display
+                                      opencode-session-control-show-archived)))
 
 (defun opencode--map-session-control-buffers (fn)
   "Call FN with no arguments in the current connection's session control buffers.

@@ -858,6 +858,25 @@ Prompts are user messages and shell commands, in order."
         `((title . ,title))
         _res)))
 
+(defun opencode--set-session-archived (session archived)
+  "Archive SESSION if ARCHIVED is non-nil, otherwise unarchive it.
+If SESSION is nil use the current session buffer's session."
+  (opencode-api-archive-session ((or (alist-get 'id session)
+                                     opencode-session-id
+                                     (user-error "No session")))
+      `((archived . ,(if archived t :json-false)))
+      _res))
+
+(defun opencode-archive-session (&optional session)
+  "Archive SESSION.  If in a session buffer, archive that session."
+  (interactive)
+  (opencode--set-session-archived session t))
+
+(defun opencode-unarchive-session (&optional session)
+  "Unarchive SESSION.  If in a session buffer, unarchive that session."
+  (interactive)
+  (opencode--set-session-archived session nil))
+
 (defun opencode-abort-session ()
   "Abort a busy session and go back to prompt."
   (interactive)

@@ -1889,7 +1889,39 @@ for the columns title and last-update."
       (setq paths nil)
       (opencode-api--fetch-all-sessions "project" nil #'ignore)
       (should (equal "/api/session?project=project&archived=false&limit=200&parentID=null"
+                     (car (last paths))))
+      (setq paths nil)
+      (opencode-api--fetch-all-sessions "project" nil #'ignore t)
+      (should (equal "/api/session?project=project&limit=200&parentID=null"
                      (car (last paths)))))))
+
+(ert-deftest opencode-session-control-archived-title-test ()
+  "Archived sessions have an archive icon before their title."
+  (let ((getter (cadr (alist-get 'title opencode--session-control-columns))))
+    (cl-letf (((symbol-function 'opencode--session-status-icon) #'ignore))
+      (should (equal "🗄 Old"
+                     (funcall getter '((title . "Old")
+                                       (time (archived . 1000))))))
+      (should (equal "├─ 🗄 Old"
+                     (funcall getter '((tree-prefix . "├─ ")
+                                       (title . "Old")
+                                       (time (archived . 1000))))))
+      (should (equal "New" (funcall getter '((title . "New") (time)))))
+      (should (equal "New" (funcall getter '((title . "New")
+                                             (time (archived . :null)))))))))
+
+(ert-deftest opencode-archive-session-test ()
+  "Archiving and unarchiving patch the session's archived field."
+  (let (requests)
+    (cl-letf (((symbol-function 'opencode-api--request)
+               (cl-function
+                (lambda (method path &key body &allow-other-keys)
+                  (push (list method path body) requests)))))
+      (opencode-archive-session '((id . "s1")))
+      (opencode-unarchive-session '((id . "s1")))
+      (should (equal '((patch "/api/session/s1" ((archived . :json-false)))
+                       (patch "/api/session/s1" ((archived . t))))
+                     requests)))))
 
 (defmacro opencode-session-test--with-finished-editing (&rest body)
   "Run BODY in a session whose finished editing hook records its FILES.

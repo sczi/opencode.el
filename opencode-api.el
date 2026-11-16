@@ -129,12 +129,15 @@ Call ELSE with the error message if given and a request fails."
    (lambda (messages) (funcall then (reverse messages)))
    else))
 
-(defun opencode-api--fetch-all-sessions (project-id include-subagents then)
-  "Call THEN with all of PROJECT-ID's sessions that aren't archived.
-Subagent sessions are only included if INCLUDE-SUBAGENTS is non-nil."
+(defun opencode-api--fetch-all-sessions (project-id include-subagents then
+                                                    &optional include-archived)
+  "Call THEN with all of PROJECT-ID's sessions.
+Subagent sessions are only included if INCLUDE-SUBAGENTS is non-nil,
+and archived ones only if INCLUDE-ARCHIVED is non-nil."
   (opencode-api--fetch-all-pages
-   (format "/api/session?project=%s&archived=false&limit=200%s"
+   (format "/api/session?project=%s%s&limit=200%s"
            project-id
+           (if include-archived "" "&archived=false")
            (if include-subagents "" "&parentID=null"))
    then))
 
@@ -199,6 +202,7 @@ may start with :else HANDLER to handle errors."
  (sessions-active "/api/session/active")
  (post create-session "/api/session")
  (patch rename-session "/api/session/%s")
+ (patch archive-session "/api/session/%s")
  (delete delete-session "/api/session/%s")
  (post fork-session "/api/session/%s/fork")
  (post compact-session "/api/session/%s/compact")

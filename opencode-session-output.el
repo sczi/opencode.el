@@ -495,9 +495,10 @@ Return the plist of the call, from `opencode--tool-calls'."
 (defun opencode--replay-input (text)
   "Replay a prompt with input TEXT."
   (opencode--show-prompt)
-  (insert text "\n")
+  (insert text)
   (let ((comint-input-sender #'opencode--highlight-input))
-    (comint-send-input)))
+    (comint-send-input))
+  (opencode--output "\n"))
 
 (defun opencode--replay-user-request (message)
   "Replay a user request MESSAGE."

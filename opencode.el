@@ -75,6 +75,7 @@ first commit or adding a remote."
 (defvar opencode-worktree-directory (expand-file-name "~/opencode_worktrees/")
   "Directory to store worktrees created for opencode.")
 
+;;;###autoload
 (defun opencode-new-worktree ()
   "Create a new git branch, and worktree prompting for a name.
 Then open an opencode session in it."
@@ -85,12 +86,14 @@ Then open an opencode session in it."
       (let ((default-directory directory))
         (opencode-new-session)))))
 
+;;;###autoload
 (defun opencode-select-project (&optional connection)
   "Completing read to prompt which project to select.
 It's on CONNECTION's server, defaulting to the current connection."
   (interactive)
   (opencode-autoconnect #'opencode--read-project connection))
 
+;;;###autoload
 (defun opencode-select-session ()
   "Select and open a session from the current project using completion."
   (interactive)
@@ -130,6 +133,7 @@ deselected, so only act on the currently selected frame."
 ;; request arrived but Emacs did not have OS focus at the time.
 (add-function :after after-focus-change-function #'opencode--selection-change-hook)
 
+;;;###autoload
 (cl-defun opencode-new-session (&key title callback initial-prompt)
   "Create a new session. With a prefix argument it will ask for TITLE.
 Without it will use a default title and then automatically generate one.

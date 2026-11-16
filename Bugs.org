@@ -25,8 +25,6 @@ If FILE1 or FILE2 does not exist, the return value is unspecified."
 
 (advice-add 'file-equal-p :override 'my/file-equal-p)
 #+end_src
-** [[https://github.com/emacs-evil/evil/issues/2037][emacs-evil/evil#2037 evil-next-line can move up a line]]
-pressing j on prompt at the end of buffer makes it move up a line
 ** [[https://github.com/emacs-evil/evil/pull/1857][evil-paste-after removes text properties]]
 the labels we use to attach buffers, regions, and files to prompts depend on
 text properties, which evil removes when pasting. Use standard emacs yank
@@ -39,6 +37,9 @@ happens when the prompt you're typing wraps
 ** [[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=81979][handling line numbers in markdown links]]
 
 * other fixed bugs
+** [[https://github.com/emacs-evil/evil/issues/2037][emacs-evil/evil#2037 evil-next-line can move up a line]]
+pressing j on prompt at the end of buffer makes it move up a line
+fixed in master with [[https://github.com/emacs-evil/evil/pull/2038][#2038]]
 ** [[https://github.com/iqbalansari/emacs-emojify/issues/119][Recovering from confusing calls to ‘before/after-change-functions’!]]
 if you regularly get that warning message, the cause is probably a bug in
 emojify-mode. emojify-mode is no longer needed since emacs 29, so the fix

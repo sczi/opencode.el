@@ -502,9 +502,6 @@ ended, like the OpenCode app's inbox."
               markdown-ts-enable-table-mode nil)
   ;; Set up Markdown's parser and font-lock without replacing comint as the
   ;; major mode (and losing its process, prompt, and input handling).
-  (unless (and (treesit-language-available-p 'markdown)
-               (treesit-language-available-p 'markdown-inline))
-    (error "OpenCode sessions require the markdown and markdown-inline Tree-sitter grammars"))
   (markdown-ts-mode--initialize)
   ;; Markdown's conventional-mode helper uses an indirect buffer sharing all
   ;; session properties.  Mode initialization/cleanup there can interfere with

@@ -558,8 +558,9 @@ ended, like the OpenCode app's inbox."
   "Yank the code inside the markdown code block under point."
   (interactive)
   (let* ((node (treesit-parent-until (treesit-node-at (point) 'markdown)
-                                     "fenced_code_block" t))
-         (content (and node (treesit-search-subtree node "code_fence_content"))))
+                                     "\\`fenced_code_block\\'" t))
+         (content (and node (treesit-search-subtree
+                             node "\\`code_fence_content\\'"))))
     (unless node
       (user-error "Not in a fenced code block"))
     (if content

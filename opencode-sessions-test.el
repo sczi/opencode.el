@@ -1911,7 +1911,8 @@ for the columns title and last-update."
                                              (time (archived . :null)))))))))
 
 (ert-deftest opencode-archive-session-test ()
-  "Archiving and unarchiving patch the session's archived field."
+  "Archiving and unarchiving patch the session's archived field.
+They also fetch the session's children, to do the same to them."
   (let (requests)
     (cl-letf (((symbol-function 'opencode-api--request)
                (cl-function
@@ -1919,7 +1920,9 @@ for the columns title and last-update."
                   (push (list method path body) requests)))))
       (opencode-archive-session '((id . "s1")))
       (opencode-unarchive-session '((id . "s1")))
-      (should (equal '((patch "/api/session/s1" ((archived . :json-false)))
+      (should (equal '((get "/api/session?parentID=s1" nil)
+                       (patch "/api/session/s1" ((archived . :json-false)))
+                       (get "/api/session?parentID=s1" nil)
                        (patch "/api/session/s1" ((archived . t))))
                      requests)))))
 

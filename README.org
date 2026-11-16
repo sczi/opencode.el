@@ -224,7 +224,7 @@ If a session buffer and frame is not active, emacs will show a notification when
                           opencode-select-idle opencode-visit-last-idle
                           opencode-add-file-dwim opencode-add-region opencode-add-defun
                           opencode-add-buffer-dwim opencode-fix-flycheck opencode-reload-locations
-                          opencode-unrevert-all opencode-fix-ert)
+                          opencode-unrevert-all opencode-fix-ert opencode-list-connections)
          collect (list command
                        (string-join (string-lines (documentation command)) " ")))
 #+end_src
@@ -271,6 +271,26 @@ submit.
 Other requests for input from the server, like web search consent and MCP server
 elicitations, are prompted the same way. Text and numbers are read in the
 minibuffer. Elicitations aren't tied to a session so they're prompted right away.
+
+* Multiple OpenCode connections and TRAMP
+You can configure =opencode-servers= with a list of different opencode servers.
+=opencode-default-server= is the one we connect to by default, or you can set
+project specific defaults with =opencode-project-servers=. If you are visiting a
+remote TRAMP buffer, it will also try and default to the entry in
+=opencode-servers= that matches the tramp connection.
+
+=opencode= with a prefix argument will prompt for which server you want to connect
+to, and =opencode-disconnect= with a prefix argument will disconnect from all
+servers as opposed to just the current one.
+
+In any session or session management buffer, =C-c C-x n= and =C-c C-x p= will set
+the default connection to the next or previous option among the currently
+connected servers, and =C-c C-x c= or =opencode-list-connections= will open a
+connection management buffer. There =d= will set a server as the current default,
+=x= will disconnect from a server, =R= will restart a server process if it was
+started by emacs, and =RET= will prompt for a project to open from that server. =c=,
+or =opencode-connect= will prompt for a host, port, and password to connect to a
+server that is not already configured in =opencode-servers=.
 
 * Security
 Opencode's permission system, especially for bash, is not nearly as fine-grained
@@ -325,6 +345,8 @@ Known bugs in other packages that affect users of opencode.el are documented in
 - =opencode-mode-line-process=, =opencode-header-line-format=,
   =opencode-overflow-format= and =opencode-mode-line-format= configure the session information shown in the
   mode line and header line
+- =opencode-servers=, =opencode-default-server=, and =opencode-project-servers= for
+  when you need to connect to multiple opencode servers
 
 # Local Variables:
 # flycheck-org-lint-disabled-checkers: (invalid-id-link wrong-header-value)

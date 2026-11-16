@@ -151,6 +151,8 @@ Shortcuts to act on the session at point:
 |    =R=     | rename session    |
 | =RET= or =o= | open the session  |
 
+When a region is selected, =x=, =a=, and =u= will operate on every selected session.
+
 Buffer-wide shortcuts:
 
 | Key | Description                                                                      |

@@ -22,13 +22,71 @@
 
 (defvar doom-real-buffer-p)
 
-(defun opencode--session-control-command (fun)
-  "Return a command that calls FUN with the session at point."
+(defvar-local opencode--session-control-sessions nil
+  "Sessions last displayed in the session control buffer.")
+
+(defun opencode--session-control-selected-sessions ()
+  "Return the sessions on the lines of the active region, or the one at point.
+A session is left out if one of its ancestors is also selected, as acting
+on a session acts on its subagents too."
+  (let ((sessions
+         (if (use-region-p)
+             (save-excursion
+               (let ((end (region-end))
+                     sessions)
+                 (goto-char (region-beginning))
+                 (while (progn
+                          (when-let* ((object (vtable-current-object)))
+                            (push object sessions))
+                          (and (zerop (forward-line 1))
+                               (< (point) end))))
+                 (delete-dups (nreverse sessions))))
+           (when-let* ((object (vtable-current-object)))
+             (list object)))))
+    (unless sessions
+      (user-error "No session at point"))
+    (let ((selected (make-hash-table :test #'equal))
+          (parents (make-hash-table :test #'equal)))
+      (dolist (session (append opencode--session-control-sessions sessions))
+        (puthash (alist-get 'id session) (alist-get 'parentID session) parents))
+      (dolist (session sessions)
+        (puthash (alist-get 'id session) t selected))
+      (seq-remove (lambda (session)
+                    (let ((parent (alist-get 'parentID session))
+                          (seen nil)
+                          found)
+                      (while (and parent (not found) (not (member parent seen)))
+                        (push parent seen)
+                        (setq found (gethash parent selected)
+                              parent (gethash parent parents)))
+                      found))
+                  sessions))))
+
+(defun opencode--session-control-command (fun &optional verb confirm)
+  "Return a command that calls FUN with the session at point.
+If VERB, a past tense verb such as \"Archived\", FUN is instead called
+with each session in the region when it's active, and VERB is used to
+report how many there were.  If CONFIRM, a present tense verb, ask
+before acting on more than one session."
   (lambda ()
-    (:documentation (format "Call `%s' on the session at point." fun))
+    (:documentation
+     (format (if verb
+                 "Call `%s' on the sessions in the region, or the one at point."
+               "Call `%s' on the session at point.")
+             fun))
     (interactive)
-    (funcall fun (or (vtable-current-object)
-                     (user-error "No session at point")))))
+    (if (not verb)
+        (funcall fun (or (vtable-current-object)
+                         (user-error "No session at point")))
+      (let* ((sessions (opencode--session-control-selected-sessions))
+             (count (length sessions)))
+        (when (and confirm (> count 1)
+                   (not (y-or-n-p (format "%s %d sessions? " confirm count))))
+          (user-error "Cancelled"))
+        (deactivate-mark)
+        (mapc fun sessions)
+        (when (> count 1)
+          (message "%s %d sessions" verb count))))))
 
 (defvar opencode-session-control-mode-map
   (define-keymap
@@ -37,9 +95,12 @@
     "RET" (opencode--session-control-command #'opencode-open-session)
     "o" (opencode--session-control-command #'opencode-open-session)
     "R" (opencode--session-control-command #'opencode-rename-session)
-    "x" (opencode--session-control-command #'opencode-kill-session)
-    "a" (opencode--session-control-command #'opencode-archive-session)
-    "u" (opencode--session-control-command #'opencode-unarchive-session)
+    "x" (opencode--session-control-command #'opencode-kill-session
+                                           "Deleted" "Delete")
+    "a" (opencode--session-control-command #'opencode-archive-session
+                                           "Archived")
+    "u" (opencode--session-control-command #'opencode-unarchive-session
+                                           "Unarchived")
     "A" 'opencode-session-control-toggle-archived
     "r" 'opencode-sessions-redisplay
     "g" nil
@@ -53,19 +114,17 @@
 
 (with-eval-after-load 'evil
   (declare-function evil-define-key* "evil-core")
+  (declare-function evil-make-overriding-map "evil-core")
+  (evil-make-overriding-map opencode-session-control-mode-map 'normal)
   (evil-define-key* 'normal opencode-session-control-mode-map
-    (kbd "RET") (opencode--session-control-command #'opencode-open-session)
-    "o" (opencode--session-control-command #'opencode-open-session)
-    "R" (opencode--session-control-command #'opencode-rename-session)
-    "x" (opencode--session-control-command #'opencode-kill-session)
-    "a" (opencode--session-control-command #'opencode-archive-session)
-    "u" (opencode--session-control-command #'opencode-unarchive-session)
-    "A" 'opencode-session-control-toggle-archived
-    "r" 'opencode-sessions-redisplay
-    "n" 'opencode-new-session
-    "M" 'opencode-toggle-mcp
-    "v" 'opencode-session-control-toggle-verbose
-    "gv" 'opencode-session-control-toggle-verbose))
+    "gv" 'opencode-session-control-toggle-verbose)
+  (evil-define-key* 'visual opencode-session-control-mode-map
+    "x" (opencode--session-control-command #'opencode-kill-session
+                                           "Deleted" "Delete")
+    "a" (opencode--session-control-command #'opencode-archive-session
+                                           "Archived")
+    "u" (opencode--session-control-command #'opencode-unarchive-session
+                                           "Unarchived")))
 
 (defvar-local opencode-session-control-verbose nil
   "Toggle whether to display subagents in session control buffer.")
@@ -75,9 +134,6 @@
 
 (defvar-local opencode-session-control-project-id nil
   "Id of the project whose sessions the session control buffer displays.")
-
-(defvar-local opencode--session-control-sessions nil
-  "Sessions last displayed in the session control buffer.")
 
 (defvar-local opencode--session-control-width nil
   "Window body width in pixels the session control table was rendered for.")

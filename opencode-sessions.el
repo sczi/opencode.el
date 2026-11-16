@@ -41,7 +41,7 @@
     "<backtab>" 'backward-button
     "TAB" 'opencode--tab-dispatch
     "RET" 'opencode-send-input
-    "C-c r" 'opencode-rename-session
+    "C-c R" 'opencode-rename-session
     "C-c n" 'opencode-new-session
     "C-c l" 'opencode-select-session
     "C-c c" 'opencode-select-child-session
@@ -59,7 +59,7 @@
     "ESC <backtab>" 'opencode-cycle-variant-backwards
     "C-c M" 'opencode-toggle-mcp
     "C-c F" 'opencode-fork-session
-    "C-c R" 'opencode-revert-message
+    "C-c r" 'opencode-revert-message
     "C-c C-x n" 'opencode-next-connection
     "C-c C-x p" 'opencode-prev-connection
     "C-c C-x c" 'opencode-list-connections

@@ -705,6 +705,21 @@ server's and AGENT is the first selectable one.  Agents without a model get
               (seq-find #'opencode--selectable-agent-p agents))
           agents)))
 
+(defun opencode--session-project-root (session)
+  "Return the root directory of SESSION's project, as a file name on its host.
+It's the session's directory without its subpath in the project, or the
+directory itself when it's outside the project, such as a worktree."
+  (let-alist session
+    (let ((directory (directory-file-name .location.directory)))
+      (opencode--from-server-path
+       (file-name-as-directory
+        (if (and .subpath
+                 (not (member .subpath '("" ".")))
+                 (not (string-prefix-p ".." .subpath))
+                 (string-suffix-p (concat "/" .subpath) directory))
+            (string-remove-suffix (concat "/" .subpath) directory)
+          directory))))))
+
 (cl-defun opencode-open-session (session &key callback)
   "Open comint based shell for SESSION.
 Returns the buffer.  SESSION is on the current connection's server, or on
@@ -724,11 +739,15 @@ If CALLBACK is given, it will be called with the session after it is initialized
               (setq opencode-buffer-connection connection
                     opencode-session-id .id
                     opencode-last-session-buffer buffer
-                    default-directory (file-name-as-directory .location.directory)
+                    default-directory (file-name-as-directory
+                                       (opencode--from-server-path .location.directory))
+                    opencode--project-root (opencode--session-project-root session)
                     opencode-session-agent (car inherited)
                     opencode-session-agents (cdr inherited)
                     opencode-session-title (opencode--session-title session))
-              (hack-dir-local-variables-non-file-buffer)
+              ;; Not over Tramp, as it's slow and can be run from a process filter
+              (unless (file-remote-p default-directory)
+                (hack-dir-local-variables-non-file-buffer))
               (opencode--download-slash-commands default-directory)
               (opencode--download-skills default-directory)
               (puthash .id buffer (opencode-connection-session-buffers connection))

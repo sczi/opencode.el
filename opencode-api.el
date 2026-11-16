@@ -53,8 +53,10 @@ Call ELSE with the error message if given, in that buffer if it's still live,
 otherwise signal it.
 The request goes to the server of `opencode-current-connection', which THEN
 and ELSE run with as their current connection too."
-  (let ((buffer (current-buffer))
-        (connection (opencode--conn)))
+  (let* ((buffer (current-buffer))
+         (connection (opencode--conn))
+         ;; Without it the server uses its default location
+         (directory (opencode--to-server-path default-directory connection)))
     (opencode-api--log "REQUEST" path)
     (when body-p
       (opencode-api--log "REQUEST BODY" body))
@@ -65,10 +67,10 @@ and ELSE run with as their current connection too."
                                          :object-type 'alist)))
      :headers (delq nil
                     (list '("Content-Type" . "application/json")
-                          (cons "x-opencode-directory"
-                                (url-hexify-string
-                                 (directory-file-name
-                                  (expand-file-name default-directory))))
+                          (when directory
+                            (cons "x-opencode-directory"
+                                  (url-hexify-string
+                                   (directory-file-name directory))))
                           (opencode--auth-header connection)))
      :then (lambda (result)
              (opencode-api--log "RESPONSE" (or result "<empty>"))

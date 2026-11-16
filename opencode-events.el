@@ -182,7 +182,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           ((command.updated skill.updated)
            (opencode--directory-cache-updated
             (if (eq type 'command.updated) 'slash-commands 'skills)
-            (map-nested-elt event '(location directory))))
+            (opencode--from-server-path (map-nested-elt event '(location directory)))))
           (form.created (opencode--form-request .form))
           ((form.replied form.cancelled)
            (opencode--form-settled .id))
@@ -196,7 +196,8 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
                                   :object-type 'alist))
          (directory (map-nested-elt data '(location directory)))
          (directory-for-event (if (stringp directory)
-                                  (opencode--normalize-directory directory)
+                                  (opencode--normalize-directory
+                                   (opencode--from-server-path directory))
                                 default-directory)))
     ;; Responses to requests made here run in the buffer that made them, so
     ;; use one that outlives the stream.  An error here shouldn't take the

@@ -27,13 +27,19 @@
 (defun opencode--permission-normalize-path (path)
   "Return PATH normalized for display.
 Relative to `default-directory' when inside it; otherwise use ~/
-abbreviation for home directory paths, or the absolute path."
+abbreviation for home directory paths, or the absolute path.
+PATH is from the server, so it's compared on the server's host."
   (when (and path (not (string-empty-p path)))
-    (let* ((expanded (expand-file-name path))
-           (rel (file-relative-name expanded default-directory)))
+    (let* ((remote (opencode--tramp-prefix))
+           ;; On the server's host, so `file-relative-name' needs no connection
+           (directory (opencode--to-server-path default-directory))
+           (expanded (expand-file-name path directory))
+           (rel (if directory
+                    (file-relative-name expanded directory)
+                  "..")))
       (if (string-prefix-p ".." rel)
           (let ((home (expand-file-name "~")))
-            (if (string-prefix-p home expanded)
+            (if (and (not remote) (string-prefix-p home expanded))
                 (concat "~" (substring expanded (length home)))
               expanded))
         (if (string= rel "") "." rel)))))

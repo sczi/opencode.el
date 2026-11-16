@@ -25,11 +25,15 @@ NAME is a symbol.  PLIST can have these keys, all optional:
   :auto-start  whether to start it with :command when it isn't running, by
              default t if its host is localhost, 127.0.0.1 or ::1, else nil.
              Set it to nil for a port forwarded to a remote server.
+  :tramp     Tramp prefix of the host the server's files are on, such as
+             \"/ssh:user@host:\", for a server on another host.  Its paths
+             are visited with it prepended, and \\[opencode] in a buffer with
+             a `default-directory' on that host uses this server.
 
 For example:
   ((local)
    (other :port 4097)
-   (tunnel :port 4099 :auto-start nil)
+   (tunnel :port 4099 :auto-start nil :tramp \"/ssh:user@host:\")
    (nix :port 4098
         :command \"nix run github:numtide/nix-ai-tools#opencode -- serve --port %p --hostname %h\"))
 
@@ -39,7 +43,8 @@ For example:
                                        (:port integer)
                                        (:command string)
                                        (:password string)
-                                       (:auto-start boolean))))
+                                       (:auto-start boolean)
+                                       (:tramp string))))
   :group 'opencode)
 
 (defcustom opencode-default-server 'local
@@ -105,10 +110,21 @@ symbol `unfetched' before the latest stored one has been requested."))
 Bound, never set, so the requests made while handling it go to its server.")
 
 (defun opencode-current-connection ()
-  "Return the connection to use now, or nil if there's none."
+  "Return the connection to use now, or nil if there's none.
+It's the one of the event or response being handled, else of the current
+buffer, else that to the server whose :tramp in `opencode-servers' is the
+host of `default-directory' if there is one, else the default connection."
   (or opencode--dispatching-connection
       opencode-buffer-connection
+      (opencode--directory-connection)
       opencode-default-connection))
+
+(defun opencode--directory-connection ()
+  "Return the connection to the server for remote `default-directory', or nil.
+That's the server whose :tramp is its host, if a connection to it exists."
+  (when-let* ((server (opencode--server-for-directory default-directory)))
+    (seq-find (lambda (connection) (eq server (opencode-connection-name connection)))
+              opencode-connections)))
 
 (defun opencode--conn ()
   "Return the connection to use now, or signal an error if there's none."
@@ -162,6 +178,45 @@ It's the one generated or entered for it, else its :password in
       (plist-get (alist-get (opencode-connection-name connection) opencode-servers)
                  :password)
       opencode-server-password))
+
+(defun opencode--tramp-prefix (&optional connection)
+  "Return the Tramp prefix of CONNECTION's server's host, or nil if it's local.
+It's its :tramp in `opencode-servers'.  CONNECTION defaults to
+`opencode-current-connection'."
+  (when-let* ((connection (or connection (opencode-current-connection)))
+              (prefix (plist-get (alist-get (opencode-connection-name connection)
+                                            opencode-servers)
+                                 :tramp)))
+    (file-remote-p prefix)))
+
+(defun opencode--to-server-path (path &optional connection)
+  "Return PATH as CONNECTION's server sees it, or nil if it's not on its host.
+CONNECTION defaults to `opencode-current-connection'."
+  (let ((prefix (opencode--tramp-prefix connection))
+        (path (expand-file-name path)))
+    (if prefix
+        (when (equal prefix (file-remote-p path))
+          (file-remote-p path 'localname))
+      (unless (file-remote-p path)
+        path))))
+
+(defun opencode--from-server-path (path &optional connection)
+  "Return PATH from CONNECTION's server as a file name on its host.
+CONNECTION defaults to `opencode-current-connection'."
+  (if-let* ((prefix (opencode--tramp-prefix connection))
+            ((not (file-remote-p path))))
+      (concat prefix path)
+    path))
+
+(defun opencode--server-for-directory (directory)
+  "Return the name of the server in `opencode-servers' for remote DIRECTORY.
+It's the one whose :tramp is DIRECTORY's host, nil if none is or DIRECTORY
+is local."
+  (when-let* ((prefix (file-remote-p directory)))
+    (car (seq-find (lambda (server)
+                     (when-let* ((tramp (plist-get (cdr server) :tramp)))
+                       (equal prefix (file-remote-p tramp))))
+                   opencode-servers))))
 
 (defun opencode--auth-header (connection)
   "Return the auth header for CONNECTION's server, or nil if it needs none."

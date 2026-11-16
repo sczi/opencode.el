@@ -49,10 +49,14 @@
 It's on the current connection's server, or with a prefix argument the
 SERVER in `opencode-servers' read from the minibuffer.  Connects to the
 server if needed, starting it if it isn't running and its :auto-start
-allows it."
+allows it.  If the directory isn't on the server's host, a project of the
+server is read from the minibuffer instead."
   (interactive (list (when current-prefix-arg (opencode--read-server))))
   (let ((directory (expand-file-name default-directory)))
-    (opencode-autoconnect (lambda () (opencode-open-project directory))
+    (opencode-autoconnect (lambda ()
+                            (if (opencode--to-server-path directory)
+                                (opencode-open-project directory)
+                              (opencode--read-project)))
                           (when server (opencode--server-connection server)))))
 
 (defun opencode-reload-locations ()
@@ -140,10 +144,13 @@ If INITIAL-PROMPT is given, it is sent after CALLBACK is called."
      ;; as a session without an agent gets the reminders some agents add only
      ;; during its first turn, which then causes an extra turn.
      (let* ((agent (car (opencode--inherited-agents)))
-            (model (alist-get 'model agent)))
+            (model (alist-get 'model agent))
+            (directory (or (opencode--to-server-path default-directory)
+                           (user-error "%s isn't on the host of opencode server %s"
+                                       default-directory
+                                       (opencode-connection-name (opencode--conn))))))
        (opencode-api-create-session
-           `((location . ((directory . ,(directory-file-name
-                                         (expand-file-name default-directory)))))
+           `((location . ((directory . ,(directory-file-name directory))))
              ,@(when title
                  `((title . ,title)))
              ,@(when-let* ((id (alist-get 'id agent)))

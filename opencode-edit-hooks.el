@@ -74,8 +74,21 @@ INPUT is the input of the call, and METADATA its result metadata."
                                        (alist-get 'patch file)))))
                       (alist-get 'files metadata)))))
     (when-let* ((file (opencode--resolve-file-reference (car file-ranges))))
-      (run-hook-with-args 'opencode-file-edited-functions
-                          file (cdr file-ranges)))))
+      (opencode--outside-process-filter-if-remote
+       file #'run-hook-with-args 'opencode-file-edited-functions
+       file (cdr file-ranges)))))
+
+(defun opencode--outside-process-filter-if-remote (file function &rest args)
+  "Call FUNCTION with ARGS, from a timer if FILE is remote.
+Hooks are run from the event stream's process filter, where Tramp can't
+be used if another Tramp operation is waiting for its output."
+  (if (file-remote-p file)
+      (let ((buffer (current-buffer)))
+        (run-at-time 0 nil (lambda ()
+                             (when (buffer-live-p buffer)
+                               (with-current-buffer buffer
+                                 (apply function args))))))
+    (apply function args)))
 
 (defvar-local opencode--files-finished-editing-run nil
   "Token identifying the session's live finished-editing hook run.")
@@ -122,7 +135,7 @@ session supersedes this one."
                    (opencode-session--send-synthetic-input
                     (opencode--files-finished-editing-diagnostic-message
                      (nreverse diagnostics)))))))))
-      (next))))
+      (opencode--outside-process-filter-if-remote default-directory #'next))))
 
 (defvar-local opencode--files-finished-editing-request nil
   "Token identifying the session's live request for its turn's diff.
@@ -196,6 +209,8 @@ after `opencode-command-diagnostic-timeout' seconds."
                 :name command-name
                 :buffer buffer
                 :command command
+                ;; In a remote session it's run on the remote host
+                :file-handler t
                 :connection-type 'pipe
                 :noquery t
                 :sentinel
@@ -262,14 +277,19 @@ after `opencode-command-diagnostic-timeout' seconds."
    done))
 
 (defun opencode-emacs-ert (_files done)
-  "Run ERT, then call DONE with any diagnostics."
-  (opencode-run-command-diagnostic
-   (opencode--emacs-ert-command)
-   done))
+  "Run ERT, then call DONE with any diagnostics.
+It isn't run in remote sessions, as it runs this Emacs."
+  (if (file-remote-p default-directory)
+      (funcall done)
+    (opencode-run-command-diagnostic
+     (opencode--emacs-ert-command)
+     done)))
 
 (defun opencode--reload-elisp-file (file &optional _ranges)
-  "Reload elisp FILE after LLM edits."
-  (when (string-suffix-p ".el" file)
+  "Reload elisp FILE after LLM edits.
+Remote files aren't, as they're for Emacs on their host."
+  (when (and (string-suffix-p ".el" file)
+             (not (file-remote-p file)))
     (condition-case err
         (load-file file)
       (error

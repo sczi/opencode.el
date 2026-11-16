@@ -40,8 +40,12 @@ Each has the connection of its server added as `opencode-connection'.")
   "Last active opencode session buffer.")
 
 (defun opencode--normalize-directory (directory)
-  "Return DIRECTORY as a canonical directory name."
-  (file-name-as-directory (file-truename directory)))
+  "Return DIRECTORY as a canonical directory name.
+Symlinks aren't resolved in remote ones, as that needs a connection, which
+can't be made from the event stream's process filter."
+  (file-name-as-directory (if (file-remote-p directory)
+                              (expand-file-name directory)
+                            (file-truename directory))))
 
 (defun opencode--longest-backtick-run (text)
   "Return the length of the longest run of backticks in TEXT."
@@ -212,48 +216,55 @@ the optional fourth element is a number to sort by."
             collect (concat "❓ " question-text "\n"))))
 
 (defvar-local opencode--project-root nil
-  "Cons of `default-directory' and the project root found from it.")
+  "Root directory of the project of the buffer's session or sessions.
+It's the one the server found, with the server's Tramp prefix if it's remote.")
 
 (defun opencode--project-root ()
-  "Return the expanded root of the current project, or nil if none.
-It's cached, as finding the project is costly and file references are
-resolved for all output."
-  (unless (equal (car opencode--project-root) default-directory)
-    (setq opencode--project-root
-          (cons default-directory
-                (when-let* ((project (project-current)))
-                  (file-name-as-directory
-                   (expand-file-name (project-root project)))))))
-  (cdr opencode--project-root))
+  "Return the root of the current buffer's project, or `default-directory'."
+  (file-name-as-directory (expand-file-name (or opencode--project-root default-directory))))
 
 (defun opencode--relative-path-for-display (file)
-  "Return FILE relative to project root when possible."
+  "Return FILE from the server relative to project root when possible.
+It's done on the strings, as `file-relative-name' of remote files can need
+a connection, and this is done for output from a process filter."
   (when file
-    (let ((root (or (opencode--project-root)
-                    (expand-file-name default-directory))))
+    (let ((root (opencode--project-root)))
+      ;; ~ isn't expanded as for a remote server that needs a connection
       (if (and (file-name-absolute-p file)
-               (string-prefix-p root (expand-file-name file)))
-          (file-relative-name file root)
+               (not (string-prefix-p "~" file)))
+          (let ((expanded (expand-file-name (opencode--from-server-path file))))
+            (if (string-prefix-p root expanded)
+                (substring expanded (length root))
+              file))
         file))))
 
 (defun opencode--resolve-file-reference (file)
-  "Return absolute path for FILE, or nil if no file exists."
-  (let ((root (opencode--project-root)))
+  "Return absolute path for FILE from the server, or nil if no file exists.
+For a remote server it's resolved without checking it exists, as that's
+done for all output, from a process filter.  Then it must have a directory
+or extension, to not be any word, and not start with ~, which would need a
+connection to expand."
+  (if (opencode--tramp-prefix)
+      (when (and (not (string-prefix-p "~" file))
+                 (string-match-p "[/.]" file))
+        (if (file-name-absolute-p file)
+            (opencode--from-server-path file)
+          (expand-file-name file (opencode--project-root))))
     (seq-find (lambda (candidate)
-                (and candidate
-                     (file-exists-p candidate)
+                (and (file-exists-p candidate)
                      (not (file-directory-p candidate))))
               (delete-dups
-               (delq nil
-                     (list (and (file-name-absolute-p file) file)
-                           (when root
-                             (expand-file-name file root))
-                           (expand-file-name file default-directory)))))))
+               (if (file-name-absolute-p file)
+                   (list file)
+                 (list (expand-file-name file (opencode--project-root))
+                       (expand-file-name file default-directory)))))))
 
 (defun opencode--visit-file-location (location)
   "Open LOCATION in another window."
   (let ((file (car location))
         (line (cdr location)))
+    (unless (file-exists-p file)
+      (user-error "No file %s" file))
     (find-file-other-window file)
     (goto-char (point-min))
     (forward-line (1- line))

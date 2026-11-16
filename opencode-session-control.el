@@ -346,7 +346,10 @@ if it charged for other models."
      (:name "Branch" :min-width 6)
      ,(lambda (object)
         (let-alist object
+          ;; It's not shown for remote servers, as it's run for each session
+          ;; each time the table is drawn, which can be from a process filter
           (if (and .location.directory
+                   (not (opencode--tramp-prefix))
                    (file-exists-p .location.directory))
               (let ((default-directory .location.directory))
                 (with-memoization (gethash .location.directory
@@ -604,7 +607,9 @@ opened for.  It's on the current connection's server."
              (setq opencode-buffer-connection connection)
              (push (current-buffer)
                    (opencode-connection-session-control-buffers connection)))
-           (setq default-directory (file-name-as-directory .project.directory)
+           (setq default-directory (file-name-as-directory
+                                    (opencode--from-server-path .project.directory))
+                 opencode--project-root default-directory
                  opencode-session-control-project-id .project.id)
            (opencode-sessions-redisplay)
            (opencode--switch-to-buffer (current-buffer))))))))
@@ -613,17 +618,18 @@ opened for.  It's on the current connection's server."
   "Read a project of the current connection's server and open it."
   (opencode-api-projects projects
     (opencode-open-project
-     (opencode--annotated-completion
-      "Project: "
-      (cl-loop for project in projects
-               for canonical = (alist-get 'canonical project)
-               when canonical
-               collect (list (string-remove-prefix (expand-file-name "~/")
-                                                   canonical)
-                             canonical
-                             (opencode--format-time-ago
-                              (opencode--time-ago project 'active))
-                             (opencode--time-ago project 'active)))))))
+     (opencode--from-server-path
+      (opencode--annotated-completion
+       "Project: "
+       (cl-loop for project in projects
+                for canonical = (alist-get 'canonical project)
+                when canonical
+                collect (list (string-remove-prefix (expand-file-name "~/")
+                                                    canonical)
+                              canonical
+                              (opencode--format-time-ago
+                               (opencode--time-ago project 'active))
+                              (opencode--time-ago project 'active))))))))
 
 (provide 'opencode-session-control)
 ;;; opencode-session-control.el ends here

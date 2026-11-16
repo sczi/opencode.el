@@ -247,10 +247,22 @@ PARTS are those of the labels in the input, which TEXT shows as code."
           (delete-dups (nreverse parts)))))
 
 (defun opencode--file-attachment (file name)
-  "Return a label part attaching FILE as NAME."
-  `(files . ((uri . ,(concat "file://"
-                             (url-hexify-string (expand-file-name file)
-                                                url-path-allowed-chars)))
+  "Return a label part attaching FILE as NAME.
+If FILE isn't on the current connection's server's host, its contents are
+sent instead, which can't be done for a directory."
+  `(files . ((uri . ,(if-let* ((path (opencode--to-server-path file)))
+                         (concat "file://"
+                                 (url-hexify-string path url-path-allowed-chars))
+                       (when (file-directory-p file)
+                         (user-error "Can't attach %s, it's not on the host of opencode server %s"
+                                     file (opencode-connection-name (opencode--conn))))
+                       ;; The server detects the type from the contents
+                       (concat "data:application/octet-stream;base64,"
+                               (with-temp-buffer
+                                 (set-buffer-multibyte nil)
+                                 (insert-file-contents-literally file)
+                                 (base64-encode-region (point-min) (point-max) t)
+                                 (buffer-string)))))
              (name . ,name))))
 
 (defun opencode--text-attachment (text name)
@@ -376,13 +388,13 @@ A column is nil when its side of the region is on a line boundary."
             (line-number-at-pos nil t)
             (unless (eolp) (- (point) (line-beginning-position)))))))
 
-(defun opencode--region-with-line-numbers (beg end file)
-  "Return (LABEL . TEXT) for the region BEG to END of FILE.
-TEXT is formatted like the output of the read tool."
+(defun opencode--region-with-line-numbers (beg end file path)
+  "Return (LABEL . TEXT) for the region BEG to END of FILE, shown as PATH.
+FILE is the path on the server.  TEXT is formatted like the output of the
+read tool."
   (pcase-let* ((`(,end ,sl ,sc ,el ,ec) (opencode--region-location beg end))
                (lines (split-string (buffer-substring-no-properties beg end)
                                     "\n"))
-               (path (opencode--relative-path-for-display file))
                (`(,range . ,location)
                 (cond ((not (or sc ec))
                        (cons (format "lines %d-%d" sl el)
@@ -406,7 +418,7 @@ TEXT is formatted like the output of the read tool."
                (label (concat path ":" location)))
     (cons label
           (mapconcat #'identity
-                     (cons (format "Read file %s, %s" (expand-file-name file) range)
+                     (cons (format "Read file %s, %s" file range)
                            (seq-map-indexed
                             (lambda (line i) (format "%d: %s" (+ sl i) line))
                             lines))
@@ -415,15 +427,21 @@ TEXT is formatted like the output of the read tool."
 (defun opencode--add-region-text (beg end)
   "Add the text from BEG to END of the current buffer to context.
 If the buffer visits a file, the text is sent with its file name and
-line numbers."
-  (pcase-let ((`(,name . ,text)
-               (if buffer-file-name
-                   (opencode--region-with-line-numbers beg end buffer-file-name)
-                 (let ((region (buffer-substring-no-properties beg end)))
-                   (cons (format "region: %s"
-                                 (truncate-string-to-width
-                                  region 24 0 nil (truncate-string-ellipsis)))
-                         region)))))
+line numbers, if it's on the host of the last session's server."
+  (pcase-let* ((file buffer-file-name)
+               (`(,server-file . ,path)
+                (when (and file (buffer-live-p opencode-last-session-buffer))
+                  (with-current-buffer opencode-last-session-buffer
+                    (when-let* ((server-file (opencode--to-server-path file)))
+                      (cons server-file (opencode--relative-path-for-display file))))))
+               (`(,name . ,text)
+                (if server-file
+                    (opencode--region-with-line-numbers beg end server-file path)
+                  (let ((region (buffer-substring-no-properties beg end)))
+                    (cons (format "region: %s"
+                                  (truncate-string-to-width
+                                   region 24 0 nil (truncate-string-ellipsis)))
+                          region)))))
     (with-last-opencode-session
      (opencode--insert-label name (opencode--text-attachment text name)))))
 

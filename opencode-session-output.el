@@ -311,15 +311,16 @@ Retain one line of context for headers whose delimiter has yet to arrive."
   "Render logo LINE using FACE, expanding the TUI's shadow markers.
 `_' is a shadow-background space, `^' is `▀' on a shadow background,
 `~' is a shadow `▀' and `,' is a shadow `▄'.  The shadow color is
-FACE's foreground blended 25% into the default background."
+FACE's foreground blended 25% into the default background.  It's
+unspecified when the colors aren't known, like in batch mode."
   (let* ((fg (or (face-foreground face nil t)
                  (face-foreground 'default nil t)))
          (bg (face-background 'default nil t))
-         (shadow (apply #'color-rgb-to-hex
-                        (append (color-blend (color-name-to-rgb fg)
-                                             (color-name-to-rgb bg)
-                                             0.25)
-                                '(2))))
+         (fg-rgb (and fg (color-name-to-rgb fg)))
+         (bg-rgb (and bg (color-name-to-rgb bg)))
+         (shadow (and fg-rgb bg-rgb
+                      (apply #'color-rgb-to-hex
+                             (append (color-blend fg-rgb bg-rgb 0.25) '(2)))))
          (weight (and (eq face 'bold) '(:weight bold))))
     (mapconcat
      (lambda (ch)

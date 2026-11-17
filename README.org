@@ -180,6 +180,9 @@ leaving their first line visible. Click the ellipsis or use =hs-toggle-hiding=
 (=C-c @ C-c=) on the first line to expand them, and =hs-show-all= (=C-c @ C-M-s=)
 to expand everything.
 
+Imenu contains all user messages for the session, so you can use =consult-imenu=
+to quickly search through and jump to past messages.
+
 |   Key   | Description                                                                                                                                                                                                                |
 |---------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |   <c>   |                                                                                                                                                                                                                            |
@@ -201,10 +204,10 @@ to expand everything.
 |  =C-c b=  | /btw — ask a side question about the conversation without adding to it, the answer opens in a new buffer                                                                                                                   |
 |  =C-c B=  | select a buffer to add to context                                                                                                                                                                                          |
 |  =C-c m=  | select model                                                                                                                                                                                                               |
-|  =M-TAB=  | cycle to the next reasoning level                                                                                                                                                                             |
-| =M-S-TAB= | cycle to the previous reasoning level                                                                                                                                                                         |
+|  =M-TAB=  | cycle to the next reasoning level                                                                                                                                                                                          |
+| =M-S-TAB= | cycle to the previous reasoning level                                                                                                                                                                                      |
 |  =C-c M=  | select an MCP to toggle                                                                                                                                                                                                    |
-|  =C-c F=  | fork session from message at point - use this when a model responds badly to avoid polluting context with the bad response                                                                                                 |
+|  =C-c F=  | fork session from message at point                                                                                                                                                                                         |
 |  =C-c r=  | revert all edits done by this session after the message at point                                                                                                                                                           |
 |    =/=    | when at the start of a user prompt, select a slash command to run                                                                                                                                                          |
 |    =@=    | reference a sub-agent                                                                                                                                                                                                      |

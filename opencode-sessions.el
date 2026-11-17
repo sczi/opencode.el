@@ -14,6 +14,7 @@
 (require 'cl-lib)
 (require 'comint)
 (require 'hideshow)
+(require 'imenu)
 (require 'markdown-ts-mode)
 (require 'opencode-api)
 (require 'opencode-common)
@@ -516,6 +517,12 @@ ended, like the OpenCode app's inbox."
   ;; Set up Markdown's parser and font-lock without replacing comint as the
   ;; major mode (and losing its process, prompt, and input handling).
   (markdown-ts-mode--initialize)
+  ;; Index user messages instead of Markdown headings.  The index is a
+  ;; cheap text property walk, so rescan it as the session grows,
+  ;; whatever its size.
+  (setq-local imenu-create-index-function #'opencode--imenu-create-index
+              imenu-auto-rescan t
+              imenu-auto-rescan-maxout most-positive-fixnum)
   ;; Markdown's conventional-mode helper uses an indirect buffer sharing all
   ;; session properties.  Mode initialization/cleanup there can interfere with
   ;; already-fontified Markdown.  Collect code faces in an isolated buffer.
@@ -813,6 +820,29 @@ It keeps its properties, which hold the parts of its labels."
        0 (length input) '(read-only help-echo mouse-face) input)
       ;; replayed input ends with a newline
       (string-trim-right input "\n+"))))
+
+(defun opencode--imenu-create-index ()
+  "Return an imenu index of the sent user messages in the session buffer.
+Comint leaves sent input without a `field', unlike output, and older
+Emacs gives it the field `input'.  Input at the prompt isn't sent yet."
+  (let ((end (opencode--session-process-position))
+        (pos (point-min))
+        (n 0)
+        index)
+    (while (< pos end)
+      (let ((next (min end (next-single-char-property-change pos 'field))))
+        (when (memq (get-char-property pos 'field) '(nil input))
+          (let* ((text (car (opencode--input-text-and-parts pos next)))
+                 (line (seq-find (lambda (l) (not (string-blank-p l)))
+                                 (split-string text "\n"))))
+            (when line
+              (push (cons (format "%d: %s" (cl-incf n)
+                                  (truncate-string-to-width
+                                   (string-clean-whitespace line) 60 nil nil "…"))
+                          (if imenu-use-markers (copy-marker pos) pos))
+                    index))))
+        (setq pos next)))
+    (nreverse index)))
 
 (defun opencode--truncate-to-prompt (start text)
   "Delete from START to the end of the buffer, then prompt with TEXT as input."

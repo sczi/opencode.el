@@ -315,6 +315,22 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
         (search-backward text)
         (should (equal "line one\nline two" (opencode--prompt-input)))))))
 
+(ert-deftest opencode-session-imenu-test ()
+  "Imenu indexes sent user messages by their first line, not unsent input."
+  (with-opencode-session-test-buffer
+    (opencode--output "# Heading\n\n")
+    (opencode--replay-input "first")
+    (opencode--output "## Reply heading\n\n")
+    (opencode--replay-input "\nsecond line one\nline two")
+    (opencode--output "Reply\n\n")
+    (opencode--show-prompt)
+    (insert "unsent")
+    (let ((imenu-use-markers nil)
+          (index (funcall imenu-create-index-function)))
+      (should (equal '("1: first" "2: second line one") (mapcar #'car index)))
+      (goto-char (cdr (nth 1 index)))
+      (should (looking-at-p "\nsecond line one")))))
+
 (ert-deftest opencode-session-diff-refinement-test ()
   "Refine entire synthetic hunks without touching input or earlier output."
   (with-opencode-session-test-buffer

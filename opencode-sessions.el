@@ -492,6 +492,7 @@ ended, like the OpenCode app's inbox."
   "Set STATUS for the session with SESSION-ID and update modeline."
   (opencode--with-session-buffer session-id
     (setq opencode-session-status status)
+    (opencode--update-pending-input)
     (force-mode-line-update)))
 
 (defvar evil-buffer-regexps)
@@ -529,6 +530,8 @@ ended, like the OpenCode app's inbox."
               (cl-set-difference font-lock-extra-managed-props
                                  '(button category action help-echo display)))
   (opencode--setup-mode-line)
+  ;; typing while busy starts or ends pending input
+  (add-hook 'after-change-functions #'opencode--update-pending-input nil t)
   (visual-line-mode)
   (yank-media-handler "\\`image/" #'opencode--yank-image)
   ;; A foldable block starts with a line whose first char has an

@@ -77,6 +77,12 @@ TYPE is text, reasoning, tool or compaction.  KEY identifies the block.")
   "Ids of the messages still being generated when they were replayed.
 Their blocks had output in the replay, without this client seeing any delta.")
 
+(defvar-local opencode--prompt nil
+  "(START . END) markers of the last prompt `opencode--show-prompt' showed.")
+
+(defvar-local opencode--pending-input-overlay nil
+  "Overlay separating input typed while busy from the output before it.")
+
 (defvar-local opencode-last-response-start nil
   "Position of the start of the latest assistant text block.")
 
@@ -177,15 +183,15 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
                         comint-last-input-end
                         'opencode-request-margin-highlight))
 
+(defun opencode--block-spacing (pos)
+  "Return the newlines needed before POS for a blank line before a block."
+  (cond ((not (eq (char-before pos) ?\n)) "\n\n")
+        ((not (eq (char-before (1- pos)) ?\n)) "\n")
+        (t "")))
+
 (defun opencode--maybe-insert-block-spacing ()
   "Ensure \n\n before block."
-  (let ((pos (opencode--session-process-position)))
-    (opencode--output
-     (cond
-      ((not (eq ?\n (char-before pos))) "\n\n")
-      ((eq ?\n (char-before pos))
-       (if (eq ?\n (char-before (1- pos))) "" "\n"))
-      (t "")))))
+  (opencode--output (opencode--block-spacing (opencode--session-process-position))))
 
 (defun opencode--output (string)
   "Output STRING as comint output."
@@ -195,7 +201,8 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
                    (line-beginning-position)))))
     (comint-output-filter (get-buffer-process (current-buffer)) string)
     (opencode--buttonize-file-references
-     start (opencode--session-process-position))))
+     start (opencode--session-process-position))
+    (opencode--update-pending-input)))
 
 (defun opencode--align-output-table (beg end)
   "Align the completed Markdown table between BEG and END.
@@ -346,10 +353,57 @@ input, which commands acting on the input line, like evil's `dd', expect."
   (let ((start (opencode--session-process-position)))
     (opencode--output "❯ ")
     (overlay-put (make-overlay start (opencode--session-process-position))
-                 'invisible t))
+                 'invisible t)
+    (setq opencode--prompt (cons (copy-marker start)
+                                 (copy-marker (opencode--session-process-position)))))
   (opencode--add-margin (car comint-last-prompt)
                         (cdr comint-last-prompt)
                         'opencode-request-margin-highlight))
+
+(defun opencode--prompt-showing-p ()
+  "Return non-nil if the last prompt is showing, with no input sent since."
+  (and opencode--prompt
+       (marker-position (cdr opencode--prompt))
+       (= (cdr opencode--prompt) (opencode--session-process-position))))
+
+(defun opencode--retract-prompt ()
+  "Delete the showing prompt, so output goes where it was.
+Pending input after it stays, and a later prompt goes before it."
+  (when (opencode--prompt-showing-p)
+    (pcase-let ((`(,start . ,end) opencode--prompt)
+                (inhibit-read-only t))
+      (dolist (ov (overlays-in start end))
+        (when (and (>= (overlay-start ov) start)
+                   (<= (overlay-end ov) end))
+          (delete-overlay ov)))
+      (delete-region start end)
+      (set-marker (process-mark (get-buffer-process (current-buffer))) start)
+      (set-marker start nil)
+      (set-marker end nil)
+      (setq opencode--prompt nil
+            comint-last-prompt nil)
+      (opencode--update-pending-input))))
+
+(defun opencode--update-pending-input (&rest _)
+  "Separate input typed while busy from the output before it.
+Display a blank line and the request margin before the pending input."
+  (let* ((proc (get-buffer-process (current-buffer)))
+         (pmark (and proc (marker-position (process-mark proc)))))
+    (if (and pmark
+             (equal opencode-session-status "busy")
+             (< pmark (point-max)))
+        (progn
+          (if opencode--pending-input-overlay
+              (move-overlay opencode--pending-input-overlay pmark (point-max))
+            (setq opencode--pending-input-overlay
+                  (make-overlay pmark (point-max) nil t t)))
+          (overlay-put opencode--pending-input-overlay 'before-string
+                       (concat (opencode--block-spacing pmark)
+                               (opencode--margin-string
+                                'opencode-request-margin-highlight))))
+      (when opencode--pending-input-overlay
+        (delete-overlay opencode--pending-input-overlay)
+        (setq opencode--pending-input-overlay nil)))))
 
 (defun opencode-session--start-block (type key)
   "Start the block of TYPE identified by KEY, finishing the last one."
@@ -482,13 +536,16 @@ Return the plist of the call, from `opencode--tool-calls'."
         (opencode--output "\n\n")
         (opencode--fold start)))))
 
+(defun opencode--margin-string (face)
+  "Return a string displaying the margin bar with FACE in the left margin."
+  (propertize " " 'display `((margin left-margin) ,(propertize "▎" 'face face))))
+
 (defun opencode--add-margin (start end face)
   "Display margin from START (inclusive) to END (exclusive) with FACE."
   ;; a reversed range would highlight the lines before START
   (when (> end start)
     (let ((ov (make-overlay start (1- end)))
-          (margin (propertize ">" 'display
-                              `((margin left-margin) ,(propertize "▎" 'face face)))))
+          (margin (opencode--margin-string face)))
       (overlay-put ov 'line-prefix margin)
       (overlay-put ov 'wrap-prefix margin))))
 

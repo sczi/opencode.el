@@ -47,12 +47,15 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
   "Handle the end of SESSION-ID's execution.
 INTERRUPTED means it was interrupted rather than finishing on its own."
   (opencode-session--set-status session-id "idle")
+  ;; show it with the status change, so pending input is never left
+  ;; without its separator or a prompt
+  (opencode--with-session-buffer session-id
+    (opencode--show-prompt))
   (opencode--redisplay-session-control-buffers)
   (opencode--maybe-run-files-finished-editing-hook session-id interrupted)
   (opencode-api-session (session-id)
       session
     (opencode--with-session-buffer session-id
-      (opencode--show-prompt)
       (unless (or
                (opencode--buffer-active-p (current-buffer))
                ;; don't show alert for subagent sessions
@@ -78,6 +81,10 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           (tui.toast.show (opencode--toast-show data))
           (session.execution.started
            (opencode-session--set-status .sessionID "busy")
+           ;; a session can be woken after showing its prompt, like by
+           ;; a background subagent finishing, so output goes before it
+           (opencode--with-session-buffer .sessionID
+             (opencode--retract-prompt))
            (opencode--redisplay-session-control-buffers))
           (session.execution.succeeded (opencode--session-finished .sessionID))
           (session.execution.interrupted

@@ -93,13 +93,25 @@ Accepts (\"name\" . buffer) to work as a read-buffer predicate."
   (switch-to-buffer
    (read-buffer "Switch to: " nil t 'opencode--session-buffer-p)))
 
-(defun opencode-consult-sessions ()
-  "Run `consult-line-multi' across all open opencode sessions."
-  (interactive)
-  (if (require 'consult nil t)
-      (progn
-        (declare-function consult-line-multi "consult")
-        (consult-line-multi '(:predicate opencode--session-buffer-p)))
+(defun opencode-consult-sessions (all)
+  "Run `consult-line-multi' across open opencode sessions of the current project.
+With prefix arg ALL, search all open opencode sessions."
+  (interactive "P")
+  (if (fboundp 'consult-line-multi)
+      (let ((root (unless all
+                    (file-name-as-directory
+                     (expand-file-name
+                      (or opencode--project-root
+                          (when-let* ((project (project-current)))
+                            (project-root project))
+                          default-directory))))))
+        (consult-line-multi
+         (list :predicate
+               (lambda (buf)
+                 (and (opencode--session-buffer-p buf)
+                      (or all
+                          (with-current-buffer buf
+                            (equal (opencode--project-root) root))))))))
     (user-error "This requires consult")))
 
 (defun opencode-visit-last-idle ()

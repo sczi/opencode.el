@@ -114,8 +114,11 @@ Those to generate a session title aren't included.")
       ("GIT_AUTHOR_EMAIL" . "opencode-test@example.com")
       ("GIT_COMMITTER_NAME" . "opencode-test")
       ("GIT_COMMITTER_EMAIL" . "opencode-test@example.com")))
-   ;; Our own settings for opencode mustn't reach the test server
-   (seq-remove (lambda (variable) (string-prefix-p "OPENCODE_" variable))
+   ;; Our own settings for opencode mustn't reach the test server, nor
+   ;; git's, eg. GIT_LITERAL_PATHSPECS in a hook run by magit breaks the
+   ;; server's snapshots
+   (seq-remove (lambda (variable)
+                 (string-match-p "\\`\\(OPENCODE\\|GIT\\)_" variable))
                process-environment)))
 
 (defun opencode-test--write-config ()

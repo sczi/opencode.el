@@ -849,6 +849,7 @@ Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
 
 (defun opencode--insert-error (message)
   "Insert error MESSAGE in the current session buffer."
+  (opencode--maybe-insert-block-spacing)
   (let ((start (opencode--session-process-position)))
     (opencode--output message)
     (opencode--add-error-face start (opencode--session-process-position)))

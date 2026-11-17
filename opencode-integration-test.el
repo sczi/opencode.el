@@ -126,7 +126,16 @@
       (opencode-abort-session)
       (opencode-test-wait-finished since))
     (should (opencode-test-error-p "Interrupted"))
-    (should (string-suffix-p "Interrupted\n\n❯ " (opencode-test-output)))))
+    (should (string-suffix-p "Partial answer\n\nInterrupted\n\n❯ " (opencode-test-output)))))
+
+(ert-deftest opencode-integration-continued-step-test ()
+  "Text of a step the server continues is spaced from the next step's."
+  (opencode-test-with-session nil
+    (opencode-test-llm-reply '("Cut off" (:finish "length"))
+                             "Next text")
+    (opencode-test-send "Go on")
+    (should (string-suffix-p "❯ Go on\n\nCut off\n\nNext text\n\n❯ "
+                             (opencode-test-output)))))
 
 (ert-deftest opencode-integration-provider-error-test ()
   "An error from the LLM provider is shown, then a prompt."

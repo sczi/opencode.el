@@ -411,19 +411,28 @@ with the request's body that returns one."
 (defconst opencode-test--kept-settings '(opencode-tool-formatters)
   "Options opencode.el sets itself when it's loaded, so their value is kept.")
 
+(defun opencode-test--options (&optional group)
+  "Return the options in customization GROUP and its subgroups.
+GROUP defaults to `opencode'.  `opencode-test--kept-settings' are left out."
+  (let (options)
+    (pcase-dolist (`(,member ,type) (get (or group 'opencode) 'custom-group))
+      (pcase type
+        ('custom-variable
+         (unless (memq member opencode-test--kept-settings)
+           (push member options)))
+        ('custom-group
+         (setq options (nconc (opencode-test--options member) options)))))
+    options))
+
 (defun opencode-test--standard-settings ()
   "Return the opencode options and their standard values.
 Those whose standard value can't be computed are left out, as are
 `opencode-test--kept-settings'."
   (let (settings)
-    (mapatoms
-     (lambda (symbol)
-       (when-let* (((string-prefix-p "opencode-" (symbol-name symbol)))
-                   ((not (memq symbol opencode-test--kept-settings)))
-                   (standard (get symbol 'standard-value)))
-         (condition-case nil
-             (push (cons symbol (eval (car standard) t)) settings)
-           (error nil)))))
+    (dolist (symbol (opencode-test--options))
+      (condition-case nil
+          (push (cons symbol (eval (car (get symbol 'standard-value)) t)) settings)
+        (error nil)))
     settings))
 
 (defun opencode-test--cleanup ()

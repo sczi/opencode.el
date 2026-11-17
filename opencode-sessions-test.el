@@ -835,22 +835,6 @@ The first visible output line starts at that hidden fence."
       (should (equal "request\n\nthinking\n\nanswer" (opencode-session-test--output)))
       (should opencode-last-response-start))))
 
-(ert-deftest opencode-session-event-parallel-tools-test ()
-  "Parallel tools finishing out of order put their output after their own call.
-Call ids are only unique within a step, so they're keyed with the message too."
-  (with-opencode-session-test-buffer
-    (let ((opencode-shown-outputs '(grep)))
-      (opencode--output "request\n\n")
-      (opencode-session-test--tool "grep" "running" '((pattern . "one")) nil "a")
-      (opencode-session-test--tool "grep" "running" '((pattern . "two")) nil "b")
-      (opencode-session-test--tool "grep" "completed" '((pattern . "two")) "out-b" "b")
-      (opencode-session-test--tool "grep" "completed" '((pattern . "one")) "out-a" "a")
-      (should (string-suffix-p
-               (concat "grep \"one\"\n```text\nout-a\n```\n\n"
-                       "🔍 grep \"two\"\n```text\nout-b\n```\n\n")
-               (opencode-session-test--output)))
-      (should (zerop (hash-table-count opencode--tool-calls))))))
-
 (ert-deftest opencode-session-event-tool-failed-without-called-test ()
   "A tool call that fails with malformed input is never called, but still shown."
   (with-opencode-session-test-buffer
@@ -864,28 +848,6 @@ Call ids are only unique within a step, so they're keyed with the message too."
       (should (string-match-p "\\`request\n\nedit\n```text\nMalformed input\n```"
                               (opencode-session-test--output)))
       (should (opencode-session-test--error-styled-p "Malformed input")))))
-
-(ert-deftest opencode-session-event-question-tool-test ()
-  "A question tool call is a block, its answers shown from its metadata."
-  (with-opencode-session-test-buffer
-    (let ((opencode-shown-outputs '(question)))
-      (opencode--output "request\n\n")
-      (opencode-session-test--tool
-       "question" "running" opencode-session-test--questions nil "call")
-      (opencode--handle-message
-       '((type . "session.tool.success")
-         (data . ((sessionID . "session") (assistantMessageID . "message") (id . "call")
-                  (content . (((type . "text") (text . "User has answered"))))
-                  (metadata . ((answers . [["A"] ["B" "C"] []])))
-                  (executed . :false)))))
-      (let ((text (opencode-session-test--output)))
-        (should (string-search (concat "❓ One?\n❓ Two?\n❓ Three?\n"
-                                       "```text\n→ A\n→ B, C\n→ Unanswered\n```")
-                               text))
-        (should-not (string-search "User has answered" text)))
-      (should-not (invisible-p (save-excursion
-                                 (goto-char (point-min))
-                                 (search-forward "→ A")))))))
 
 (ert-deftest opencode-session-event-question-tool-dismissed-test ()
   "A dismissed question tool call shows its error."
@@ -912,26 +874,19 @@ Call ids are only unique within a step, so they're keyed with the message too."
                                  (goto-char (point-min))
                                  (search-forward "❓ One?")))))))
 
-(ert-deftest opencode-session-event-execution-test ()
-  "Ending an execution goes back to a prompt, unless it'll resume after a shutdown.
-A failure or user interrupt shows an error."
-  (dolist (case '(("session.execution.succeeded" nil t)
-                  ("session.execution.interrupted" ((reason . "user")) t "Interrupted")
-                  ("session.execution.interrupted" ((reason . "shutdown")) t)
-                  ("session.execution.failed"
-                   ((error . ((type . "unknown") (message . "It broke")))) t "It broke")))
-    (with-opencode-session-test-buffer
-      (opencode-session-test--with-stubbed-api nil
-        (opencode--output "request\n\n")
-        (setq opencode-session-status "busy")
-        (opencode--handle-message
-         `((type . ,(car case))
-           (data . ((sessionID . "session") ,@(cadr case)))))
-        (should (equal opencode-session-status "idle"))
-        (should (eq (opencode-session-test--at-prompt-p) (caddr case)))
-        (if-let* ((error (cadddr case)))
-            (should (opencode-session-test--error-face-p error))
-          (should-not (string-search "Interrupted" (buffer-string)))))))
+(ert-deftest opencode-session-event-shutdown-test ()
+  "A shutdown goes back to a prompt without an error, unless it'll resume.
+It resumes after the restart if the session's still active."
+  (with-opencode-session-test-buffer
+    (opencode-session-test--with-stubbed-api nil
+      (opencode--output "request\n\n")
+      (setq opencode-session-status "busy")
+      (opencode--handle-message
+       '((type . "session.execution.interrupted")
+         (data . ((sessionID . "session") (reason . "shutdown")))))
+      (should (equal opencode-session-status "idle"))
+      (should (opencode-session-test--at-prompt-p))
+      (should-not (string-search "Interrupted" (buffer-string)))))
   ;; A real shutdown leaves the drain running, to resume after the restart.
   (with-opencode-session-test-buffer
     (opencode-session-test--with-stubbed-api '((session . ((type . "running"))))
@@ -942,18 +897,6 @@ A failure or user interrupt shows an error."
          (data . ((sessionID . "session") (reason . "shutdown")))))
       (should (equal opencode-session-status "busy"))
       (should-not (opencode-session-test--at-prompt-p)))))
-
-(ert-deftest opencode-session-event-shell-test ()
-  "A user's shell command isn't an execution, so it goes back to a prompt itself."
-  (with-opencode-session-test-buffer
-    (opencode--output "request\n\n")
-    (opencode--handle-message
-     '((type . "session.shell.ended")
-       (data . ((sessionID . "session")
-                (shell . ((status . "exited") (exit . 2)))
-                (output . ((output . "bad output\n")))))))
-    (should (opencode-session-test--at-prompt-p))
-    (should (opencode-session-test--error-styled-p "bad output"))))
 
 (ert-deftest opencode-session-event-selection-test ()
   "Selections made elsewhere are followed, and ours don't disturb local state."

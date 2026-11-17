@@ -31,6 +31,26 @@ This codebase uses macro-generated async API calls:
   (do-something-with result-var))
 ```
 
+### Tests against a real server
+
+Prefer testing against a real opencode server over mocking the API or
+hand-writing events.  `opencode-integration-test-helpers.el` starts one shared
+server per test run, isolated in a temp directory, in opencode's simulation
+mode, where the test scripts the LLM's responses:
+
+```elisp
+(opencode-test-with-session '(("a.txt" . "alpha\n"))   ; files of a new project
+  (opencode-test-llm-reply
+   '((:reasoning "Let me look") (:tool "read" ((path . "a.txt"))))
+   "It says alpha.")
+  (opencode-test-send "What's in a.txt?")  ; waits until back at a prompt
+  (should (string-search "It says alpha." (opencode-test-output))))
+```
+
+See `opencode-test-llm-respond` for the response parts, including `(:hold)` to
+finish a response yourself.  Never use `sit-for` to wait, use
+`opencode-test-wait-until`.
+
 ### Logging
 
 - Log warnings to dedicated buffer: `*opencode-event-log*`

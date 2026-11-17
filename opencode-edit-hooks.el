@@ -270,6 +270,18 @@ after `opencode-command-diagnostic-timeout' seconds."
    (list "--eval" "(setq inhibit-interaction t)"
          "-f" "ert-run-tests-batch-and-exit")))
 
+(defun opencode--emacs-ert-script ()
+  "Write a script running the tests of `default-directory' with ERT.
+Return its file name.  It's overwritten on each call, and left in place
+so it can be inspected when tests fail."
+  (let ((script (expand-file-name (locate-user-emacs-file "opencode-ert-runner.sh"))))
+    (with-temp-file script
+      (insert "#!/bin/sh\nexec "
+              (mapconcat #'shell-quote-argument (opencode--emacs-ert-command) " ")
+              "\n"))
+    (set-file-modes script #o700)
+    script))
+
 (defun opencode-uv-pytest (_files done)
   "Run pytest with uv, then call DONE with any diagnostics."
   (opencode-run-command-diagnostic
@@ -282,7 +294,7 @@ It isn't run in remote sessions, as it runs this Emacs."
   (if (file-remote-p default-directory)
       (funcall done)
     (opencode-run-command-diagnostic
-     (opencode--emacs-ert-command)
+     (list (opencode--emacs-ert-script))
      done)))
 
 (defun opencode--reload-elisp-file (file &optional _ranges)

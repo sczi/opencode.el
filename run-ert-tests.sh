@@ -1,43 +1,17 @@
 #!/usr/bin/env bash
+# Run the ERT tests in a batch Emacs, using the running Emacs's load-path
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+escaped="${repo_root//\\/\\\\}"
+escaped="${escaped//\"/\\\"}"
 
-mapfile -d '' test_files < <(
-    find "$repo_root" -type f \
-        \( -name '*-test.el' -o -name '*-tests.el' \) \
-        -not -path "$repo_root/.git/*" \
-        -print0
-)
+script="$(emacsclient --eval "
+(let ((default-directory (file-name-as-directory \"$escaped\")))
+  (require 'opencode-edit-hooks)
+  (opencode--emacs-ert-script))")"
+# emacsclient prints a Lisp string
+script="${script#\"}"
+script="${script%\"}"
 
-if ((${#test_files[@]} == 0)); then
-    printf 'No ERT test files found.\n' >&2
-    exit 1
-fi
-
-elisp="(progn
-  (add-to-list 'load-path \"${repo_root//\\/\\\\}\")"
-
-for test_file in "${test_files[@]}"; do
-    escaped="${test_file//\\/\\\\}"
-    escaped="${escaped//\"/\\\"}"
-    elisp+="
-  (load \"$escaped\" nil nil t)"
-done
-
-elisp+="
-  (let ((stats (unwind-protect (ert-run-tests-batch t)
-                 ;; Started by the first test against an opencode server
-                 (opencode-test-stop-server))))
-    (if (zerop (ert-stats-completed-unexpected stats))
-        \"PASS\"
-      \"FAIL\")))"
-
-result="$(emacsclient --eval "$elisp")"
-
-if [[ "$result" == '"PASS"' ]]; then
-    exit 0
-else
-    echo "Tests failed" >&2
-    exit 1
-fi
+exec "$script"

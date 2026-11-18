@@ -59,9 +59,11 @@ BODY is evaluated inside `(let-alist tool-args ...)'."
 
 (opencode-define-tool-formatter "grep"
   (concat
-   (format "🔍 grep \"%s\"" .pattern)
+   "🔍 grep " (opencode--code-span .pattern)
    (when (or .include .path)
-     (format " in %s" (or .include .path)))))
+     (concat " in "
+             (opencode--code-span
+              (or .include (opencode--relative-path-for-display .path)))))))
 
 (opencode-define-tool-formatter "shell"
   ;; `opencode--insert-tool-block' displays the `$ ' prompt, so it's not
@@ -69,18 +71,19 @@ BODY is evaluated inside `(let-alist tool-args ...)'."
   (opencode--fenced-block .command "bash"))
 
 (opencode-define-tool-formatter "execute"
-    (concat "⚡ Code Mode:\n"
-            (opencode--fenced-block .code "js")))
+  (concat "⚡ Code Mode:\n"
+          (opencode--fenced-block .code "js")))
 
 (opencode-define-tool-formatter "websearch"
   (format "🌐 websearch \"%s\"" .query))
 
 (opencode-define-tool-formatter "glob"
-  (if .path
-      (format "🔍 glob \"%s\" in %s"
-              .pattern
-              (opencode--relative-path-for-display .path))
-    (format "🔍 glob \"%s\"" .pattern)))
+  (concat
+   "🔍 glob " (opencode--code-span .pattern)
+   (when .path
+     (concat " in "
+             (opencode--code-span
+              (opencode--relative-path-for-display .path))))))
 
 (opencode-define-tool-formatter "todowrite"
   (opencode--format-todos .todos))

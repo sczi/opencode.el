@@ -62,8 +62,8 @@
      "Found both.")
     (opencode-test-send "Find them")
     (should (string-match-p
-             (concat "🔍 grep \"alpha\"\n```text\nFound 1 matches\n.*/a\\.txt:\n  Line 1: alpha\n```\n\n"
-                     "🔍 grep \"gamma\"\n```text\nFound 1 matches\n.*/b\\.txt:\n  Line 1: gamma\n```\n\n"
+             (concat "🔍 grep `alpha`\n```text\nFound 1 matches\n.*/a\\.txt:\n  Line 1: alpha\n```\n\n"
+                     "🔍 grep `gamma`\n```text\nFound 1 matches\n.*/b\\.txt:\n  Line 1: gamma\n```\n\n"
                      "Found both\\.")
              (opencode-test-output)))
     (should (zerop (hash-table-count opencode--tool-calls)))))

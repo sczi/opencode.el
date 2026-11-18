@@ -161,6 +161,27 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
                                                file-directory)
                              440)))))))
 
+(ert-deftest opencode-search-tool-code-span-test ()
+  "Show search patterns and targets as code, not Markdown emphasis."
+  (should (equal (opencode--format-tool-call
+                  "grep" '((pattern . "a*b|c*d") (include . "*test*.el")))
+                 "🔍 grep `a*b|c*d` in `*test*.el`"))
+  (should (equal (opencode--format-tool-call "grep" '((pattern . "x`y")))
+                 "🔍 grep ``x`y``"))
+  (should (equal (opencode--format-tool-call "glob" '((pattern . "**/*.el")))
+                 "🔍 glob `**/*.el`"))
+  (with-opencode-session-test-buffer
+    (font-lock-mode 1)
+    (opencode--insert-tool-block
+     "grep" '((pattern . "a*b|c*d") (include . "*test*.el")))
+    (opencode--show-prompt)
+    (opencode-session-test--refontify)
+    (goto-char (point-min))
+    (dolist (text '("a*b|c*d" "*test*.el"))
+      (search-forward text)
+      (let ((face (get-text-property (+ (match-beginning 0) 2) 'face)))
+        (should-not (memq 'markdown-ts-emphasis (ensure-list face)))))))
+
 (ert-deftest opencode-session-markdown-fontification-test ()
   "Stream Markdown without replacing text or losing session decorations."
   (with-opencode-session-test-buffer
@@ -522,13 +543,13 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (opencode-session-test--tool "shell" "completed" agent-shell "agent-file"
                                    "agent-shell")
       (opencode-session-test--tool "eval" "completed" eval "result")
-      (should (opencode-session-test--folded-p "grep \"foo\""))
+      (should (opencode-session-test--folded-p "grep `foo`"))
       (should (opencode-session-test--folded-p "\nls"))
       (should (opencode-session-test--folded-p "\nuname"))
       (should (opencode-session-test--folded-p "  nil)"))
       (should-not (opencode-session-test--folded-p "eval\n"))
       (should (string-suffix-p
-               (concat "grep \"foo\"\n```text\na.el:1\nb.el:2\n```\n\n"
+               (concat "grep `foo`\n```text\na.el:1\nb.el:2\n```\n\n"
                        "```bash\nls\n```\n```text\nls-file\n```\n\n"
                        "```bash\nuname\n```\n```text\nagent-file\n```\n\n"
                        "eval\n(progn\n  nil)\n```text\nresult\n```\n\n")
@@ -589,7 +610,7 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (opencode-session-test--tool "shell" "completed" shell "ls-file")
       (opencode-session-test--tool "eval" "completed" eval "result")
       (dolist (fold '(("Thinking" . "1 line")
-                      ("grep \"foo\"" . "2 lines")
+                      ("grep `foo`" . "2 lines")
                       ("\nls" . "1 line")
                       ("  nil)" . "1 line")))
         (let ((label (opencode-session-test--fold-label (car fold))))
@@ -615,10 +636,10 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (should-not (opencode-session-test--folded-p "Thinking"))
       (should-not (opencode-session-test--folded-p "edit opencode-sessions.el:"))
       (should (opencode-session-test--folded-p "patch:"))
-      (should-not (opencode-session-test--folded-p "grep \"foo\""))
-      (should (opencode-session-test--folded-p "glob \"*.el\""))
+      (should-not (opencode-session-test--folded-p "grep `foo`"))
+      (should (opencode-session-test--folded-p "glob `*.el`"))
       ;; Shown blocks can still be folded, and unfolded again.
-      (dolist (header '("Thinking" "edit opencode-sessions.el:" "grep \"foo\""))
+      (dolist (header '("Thinking" "edit opencode-sessions.el:" "grep `foo`"))
         (goto-char (point-min))
         (search-forward header)
         (hs-toggle-hiding)
@@ -1271,13 +1292,13 @@ mode line."
        '((type . "session.tool.success")
          (data . ((sessionID . "session") (assistantMessageID . "msg_5") (id . "call")
                   (content . (((type . "text") (text . "matched")))) (executed . t)))))
-      (should (string-search "grep \"foo\"\n```text\nmatched" (buffer-string)))
+      (should (string-search "grep `foo`\n```text\nmatched" (buffer-string)))
       ;; The call replayed while streaming keeps its name once called.
       (opencode--handle-message
        '((type . "session.tool.called")
          (data . ((sessionID . "session") (assistantMessageID . "msg_5") (id . "later")
                   (input . ((pattern . "bar")))))))
-      (should (string-search "grep \"bar\"" (buffer-string)))
+      (should (string-search "grep `bar`" (buffer-string)))
       ;; The partly replayed block isn't repeated when it ends.
       (opencode--handle-message
        '((type . "session.text.ended")

@@ -31,12 +31,25 @@ This codebase uses macro-generated async API calls:
   (do-something-with result-var))
 ```
 
+### Choosing a test
+
+Integration tests are slow, so use the cheapest test that covers the change:
+
+- **No server involved**: use a unit test in a fake session buffer
+(`with-opencode-session-test-buffer` in `opencode-test-helpers.el`).  This
+covers buffer rendering, prompt and input handling, parsing, and code paths that
+finish or error before any API call.
+- **Anything that needs to talk to the server**: use an integration test against
+a real server (below).  Don't mock the API, or hand-write events or responses to
+fake a server; those test against our guess of the protocol, not the real one.
+
+If a unit test needs a fake server to work, make it an integration test.
+
 ### Tests against a real server
 
-Prefer testing against a real opencode server over mocking the API or
-hand-writing events.  `opencode-integration-test-helpers.el` starts one shared
-server per test run, isolated in a temp directory, in opencode's simulation
-mode, where the test scripts the LLM's responses:
+`opencode-integration-test-helpers.el` starts one shared server per test run,
+isolated in a temp directory, in opencode's simulation mode, where the test
+scripts the LLM's responses:
 
 ```elisp
 (opencode-test-with-session '(("a.txt" . "alpha\n"))   ; files of a new project

@@ -19,6 +19,7 @@
 
 (require 'opencode-api)
 (require 'opencode-common)
+(require 'opencode-menu)
 (require 'opencode-session-control)
 (require 'opencode-sessions)
 (require 'transient)
@@ -93,86 +94,21 @@ MESSAGE is the server's description of the request, preferred if given."
         (_
          (format "Call tool %s" action))))))
 
-;;; State
+;;; Menu
 
-(defvar opencode-permission--callback nil
-  "Function to call with the user's choice string.
-Called with one of \"once\", \"always\", or \"reject\".")
-
-(defvar opencode-permission--type nil
-  "The permission kind (e.g. \"bash\") for display in the transient header.")
-
-(defvar opencode-permission--title nil
-  "The permission title/description for display in the transient header.")
-
-(defvar opencode-permission--always-patterns nil
-  "The glob patterns approved by accepting always, for display in the transient.")
-
-(defvar opencode-permission--handled nil
-  "Non-nil when a response has been sent for the current transient.
-Prevents double-handling if the transient exit hook fires after a suffix.")
-
-;;; Suffix commands
-
-(transient-define-suffix opencode-permission--do-accept ()
-  "Accept the permission request (once)."
-  :transient nil
-  (interactive)
-  (setq opencode-permission--handled t)
-  (funcall opencode-permission--callback "once"))
-
-(transient-define-suffix opencode-permission--do-accept-always ()
-  "Accept the permission request permanently."
-  :transient nil
-  (interactive)
-  (setq opencode-permission--handled t)
-  (funcall opencode-permission--callback "always"))
-
-(transient-define-suffix opencode-permission--do-deny ()
-  "Deny the permission request."
-  :transient nil
-  (interactive)
-  (setq opencode-permission--handled t)
-  (funcall opencode-permission--callback "reject"))
-
-;;; Transient exit hook
-
-(defun opencode-permission--on-exit ()
-  "Clean up the exit hook when the transient is dismissed.
-Dismissing without responding leaves the permission pending so the
-user can re-open it later with \\[opencode-respond-permission]."
-  (remove-hook 'transient-exit-hook #'opencode-permission--on-exit))
-
-;;; Transient prefix
-
-(transient-define-prefix opencode-permission--transient ()
-  "Respond to a permission request from the opencode server."
-  [:description
-   (lambda ()
-     (or opencode-permission--title
-         opencode-permission--type
-         "permission"))
-   ("o" "Ok"            opencode-permission--do-accept)
-   ("a" opencode-permission--do-accept-always
-    :description (lambda () (format "Accept always (%s)"
-                                    (or opencode-permission--always-patterns
-                                        opencode-permission--title ""))))
-   ("n" "No"            opencode-permission--do-deny)])
-
-;;; Entry point
-
-(defun opencode-permission--prompt (type title always-patterns callback)
-  "Display a transient popup to respond to a permission request.
-TYPE is the permission kind, TITLE is the description,
-ALWAYS-PATTERNS are the glob patterns for permanent approval.
-CALLBACK is called with one of \"once\", \"always\", or \"reject\"."
-  (setq opencode-permission--type type
-        opencode-permission--title title
-        opencode-permission--always-patterns always-patterns
-        opencode-permission--callback callback
-        opencode-permission--handled nil)
-  (add-hook 'transient-exit-hook #'opencode-permission--on-exit)
-  (transient-setup 'opencode-permission--transient))
+(defun opencode-permission--prompt (type title always-patterns)
+  "Show a menu to respond to the next pending permission request.
+TYPE is the permission kind, TITLE is the description, and ALWAYS-PATTERNS
+are the glob patterns for permanent approval.  Dismissing the menu leaves
+the request pending, to answer later with \\[opencode-respond-permission]."
+  (opencode-menu-show
+   (or title type "Permission")
+   (mapcar (pcase-lambda (`(,key ,label ,choice))
+             (list key label (opencode-menu-action
+                              #'opencode--send-permission-response choice)))
+           `(("o" "Ok" "once")
+             ("a" ,(format "Accept always (%s)" (or always-patterns title "")) "always")
+             ("n" "No" "reject")))))
 
 ;;; Permission request handling
 
@@ -294,9 +230,8 @@ the popup isn't shown twice when this is scheduled more than once."
            (type (plist-get perm :type))
            (title (plist-get perm :title))
            (always (plist-get perm :always))
-           (always-display (when always (mapconcat #'identity always ", "))))
-      (opencode-permission--prompt
-       type title always-display #'opencode--send-permission-response))))
+           (always-display (when always (string-join always ", "))))
+      (opencode-permission--prompt type title always-display))))
 
 (provide 'opencode-permission)
 ;;; opencode-permission.el ends here

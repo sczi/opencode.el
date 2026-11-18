@@ -1631,8 +1631,7 @@ MENUS collects their selections.  Timers run immediately."
                                    (metadata . ((kind . "question")))))
         (opencode-forms--fields '(((key . "k") (type . "string") (description . "Why?")
                                    (options . (((value . "a") (label . "A")
-                                                (description . "Because")))))))
-        (opencode-forms--after-menu nil))
+                                                (description . "Because"))))))))
     (cl-letf (((default-value 'truncate-lines) t))
       (unwind-protect
           (progn
@@ -1644,8 +1643,7 @@ MENUS collects their selections.  Timers run immediately."
               (search-forward "Because")
               (should (equal "   " (get-text-property (match-beginning 0)
                                                       'wrap-prefix)))))
-        (remove-hook 'transient-exit-hook #'opencode-forms--menu-exited)
-        (transient--emergency-exit)))))
+        (opencode-menu-close)))))
 
 (ert-deftest opencode-json-falsy-test ()
   "All of JSON's false values are recognized, as `:false' is truthy in Lisp."

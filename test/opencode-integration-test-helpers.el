@@ -460,7 +460,6 @@ Those whose standard value can't be computed are left out, as are
             (opencode-forms--current nil)
             (opencode-forms--fields nil)
             (opencode-forms--answers nil)
-            (opencode-forms--after-menu nil)
             (opencode-test-session-buffer nil)
             (inhibit-message t))
         (advice-add 'opencode--handle-message :around #'opencode-test--record-event)

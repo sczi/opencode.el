@@ -22,6 +22,7 @@
 (require 'transient)
 (require 'opencode-api)
 (require 'opencode-common)
+(require 'opencode-menu)
 (require 'opencode-session-control)
 (require 'opencode-sessions)
 
@@ -38,9 +39,6 @@ added, and the `error' from replying if it's being asked again.")
 
 (defvar opencode-forms--answers nil
   "Alist of field key to answer for the current form, latest first.")
-
-(defvar opencode-forms--after-menu nil
-  "Function to call once the menu has exited, or nil to cancel the form.")
 
 (defconst opencode-forms--supported-types
   '("string" "number" "integer" "boolean" "multiselect" "external")
@@ -236,12 +234,6 @@ Leaving it empty skips the field."
 
 ;;; Menu
 
-(defun opencode-forms--suffix (function &rest args)
-  "Return a menu command calling FUNCTION with ARGS once the menu has exited."
-  (lambda ()
-    (interactive)
-    (setq opencode-forms--after-menu (lambda () (apply function args)))))
-
 (defun opencode-forms--selection (field args)
   "Return the vector of values selected for multiselect FIELD by menu ARGS."
   (vconcat
@@ -263,16 +255,16 @@ Leaving it empty skips the field."
 (defun opencode-forms--confirm ()
   "Answer the current multiselect field with the selected options."
   (interactive)
-  (let* ((args (transient-args 'opencode-forms--menu))
+  (let* ((args (transient-args 'opencode-menu))
          (field (opencode-forms--field))
          (selection (opencode-forms--selection field args))
          (problem (opencode-forms--selection-problem field (length selection))))
-    (setq opencode-forms--after-menu
-          (cond (problem (lambda ()
-                           (opencode-forms--show-menu args)
-                           (message "%s" problem)))
-                ((length= selection 0) (apply-partially #'opencode-forms--answer nil))
-                (t (apply-partially #'opencode-forms--answer selection))))))
+    (opencode-menu-after
+     (cond (problem (lambda ()
+                      (opencode-forms--show-menu args)
+                      (message "%s" problem)))
+           ((length= selection 0) (apply-partially #'opencode-forms--answer nil))
+           (t (apply-partially #'opencode-forms--answer selection))))))
 
 (defun opencode-forms--option-key (index)
   "Return the menu key of the option at INDEX."
@@ -285,7 +277,7 @@ Leaving it empty skips the field."
   "Return the menu spec for OPTION of FIELD, at INDEX."
   (let-alist option
     (let* ((key (opencode-forms--option-key index))
-           ;; Lines wrapped by `opencode-forms--wrap-lines' continue under the label.
+           ;; Lines wrapped in the menu continue under the label.
            (indent (make-string (+ (length key) 2) ?\s))
            (note (and .description
                       (propertize .description 'face 'shadow 'wrap-prefix indent))))
@@ -297,11 +289,10 @@ Leaving it empty skips the field."
                                     (and (equal .value (opencode-forms--default field))
                                          " (default)"))
                             'wrap-prefix indent)
-          ,(opencode-forms--suffix #'opencode-forms--answer .value))))))
+          ,(opencode-menu-action #'opencode-forms--answer .value))))))
 
-(defun opencode-forms--menu-children (_children)
-  "Return the menu suffixes for the current field.
-_CHILDREN is the statically-defined children, of which there are none."
+(defun opencode-forms--menu-suffixes ()
+  "Return the menu suffix specs for the current field."
   (let* ((field (opencode-forms--field))
          (type (alist-get 'type field))
          (custom (opencode-forms--flag-p field 'custom))
@@ -309,58 +300,37 @@ _CHILDREN is the statically-defined children, of which there are none."
                       '(((value . t) (label . "Yes"))
                         ((value . :json-false) (label . "No")))
                     (alist-get 'options field))))
-    (transient-parse-suffixes
-     'opencode-forms--menu
-     (append
-      (seq-map-indexed (lambda (option index)
-                         (opencode-forms--option-spec field option index))
-                       options)
-      (pcase type
-        ("external"
-         (let ((url (alist-get 'url field)))
-           `(("o" ,(format "Open %s" url)
-              ,(lambda () (interactive) (browse-url url))
-              :transient t)
-             ("C-c C-c" "Done" ,(opencode-forms--suffix #'opencode-forms--answer t)))))
-        ("multiselect"
-         `(,@(when custom
-               '(("!" "Type your own answer" "custom=" :prompt "Custom answer: ")))
-           ("C-c C-c" "Confirm" opencode-forms--confirm)))
-        (_ (when custom
-             `(("!" "Type your own answer"
-                ,(opencode-forms--suffix #'opencode-forms--answer-from-minibuffer))))))
-      (unless (or (equal type "external")
-                  (opencode-forms--flag-p field 'required))
-        `(("s" "Skip" ,(opencode-forms--suffix #'opencode-forms--answer nil))))
-      '(("q" "Cancel" transient-quit-one))))))
-
-(transient-define-prefix opencode-forms--menu ()
-  "Answer a field of a form from the opencode server."
-  [:class transient-column
-   :description (lambda ()
-                  (opencode-forms--heading opencode-forms--current
-                                           (opencode-forms--field)))
-   :setup-children opencode-forms--menu-children])
-
-(defun opencode-forms--wrap-lines ()
-  "Wrap long lines in the form menu, as questions and options can be any length."
-  (when (eq (oref transient--prefix command) 'opencode-forms--menu)
-    (setq truncate-lines nil
-          word-wrap t)))
-
-(add-hook 'transient-setup-buffer-hook #'opencode-forms--wrap-lines)
-
-(defun opencode-forms--menu-exited ()
-  "Do what was chosen in the menu, or cancel the form if nothing was."
-  (remove-hook 'transient-exit-hook #'opencode-forms--menu-exited)
-  (when opencode-forms--current
-    (run-at-time 0 nil (or opencode-forms--after-menu #'opencode-forms--cancel))))
+    (append
+     (seq-map-indexed (lambda (option index)
+                        (opencode-forms--option-spec field option index))
+                      options)
+     (pcase type
+       ("external"
+        (let ((url (alist-get 'url field)))
+          `(("o" ,(format "Open %s" url)
+             ,(lambda () (interactive) (browse-url url))
+             :transient t)
+            ("C-c C-c" "Done" ,(opencode-menu-action #'opencode-forms--answer t)))))
+       ("multiselect"
+        `(,@(when custom
+              '(("!" "Type your own answer" "custom=" :prompt "Custom answer: ")))
+          ("C-c C-c" "Confirm" opencode-forms--confirm)))
+       (_ (when custom
+            `(("!" "Type your own answer"
+               ,(opencode-menu-action #'opencode-forms--answer-from-minibuffer))))))
+     (unless (or (equal type "external")
+                 (opencode-forms--flag-p field 'required))
+       `(("s" "Skip" ,(opencode-menu-action #'opencode-forms--answer nil))))
+     '(("q" "Cancel" transient-quit-one)))))
 
 (defun opencode-forms--show-menu (selection)
-  "Show the menu for the current field with the arguments SELECTION enabled."
-  (setq opencode-forms--after-menu nil)
-  (add-hook 'transient-exit-hook #'opencode-forms--menu-exited)
-  (transient-setup 'opencode-forms--menu nil nil :value selection))
+  "Show the menu for the current field with the arguments SELECTION enabled.
+Dismissing it cancels the form."
+  (opencode-menu-show (opencode-forms--heading opencode-forms--current
+                                               (opencode-forms--field))
+                      (opencode-forms--menu-suffixes)
+                      #'opencode-forms--cancel
+                      selection))
 
 ;;; Queue
 
@@ -453,10 +423,10 @@ server ignores the answer."
         (seq-remove (lambda (form) (equal form-id (alist-get 'id form)))
                     opencode-forms--queue))
   (when (and (equal form-id (alist-get 'id opencode-forms--current))
-             (transient-active-prefix 'opencode-forms--menu)
+             (opencode-menu-active-p)
              (not (active-minibuffer-window)))
     (setq opencode-forms--current nil)
-    (transient--emergency-exit)
+    (opencode-menu-close)
     (opencode-forms--prompt-next)))
 
 (provide 'opencode-forms)

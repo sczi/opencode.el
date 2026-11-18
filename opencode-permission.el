@@ -19,6 +19,7 @@
 
 (require 'opencode-api)
 (require 'opencode-common)
+(require 'opencode-session-control)
 (require 'opencode-sessions)
 (require 'transient)
 
@@ -284,17 +285,20 @@ label to the original output line via its saved marker."
         _response)))
 
 (defun opencode-respond-permission ()
-  "Respond to the next pending permission request using a transient popup."
+  "Respond to the next pending permission request using a transient popup.
+Do nothing if a transient is already active, so it's not replaced, and so
+the popup isn't shown twice when this is scheduled more than once."
   (interactive)
   (unless opencode-session-pending-permission
     (user-error "No pending permission request"))
-  (let* ((perm (car opencode-session-pending-permission))
-         (type (plist-get perm :type))
-         (title (plist-get perm :title))
-         (always (plist-get perm :always))
-         (always-display (when always (mapconcat #'identity always ", "))))
-    (opencode-permission--prompt
-     type title always-display #'opencode--send-permission-response)))
+  (unless (transient-active-prefix)
+    (let* ((perm (car opencode-session-pending-permission))
+           (type (plist-get perm :type))
+           (title (plist-get perm :title))
+           (always (plist-get perm :always))
+           (always-display (when always (mapconcat #'identity always ", "))))
+      (opencode-permission--prompt
+       type title always-display #'opencode--send-permission-response))))
 
 (provide 'opencode-permission)
 ;;; opencode-permission.el ends here

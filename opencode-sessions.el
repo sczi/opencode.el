@@ -119,7 +119,7 @@ With prefix arg ALL, search all open opencode sessions."
   "Open the most recent session to notify as idle."
   (interactive)
   (if opencode-alerted-sessions
-      (opencode-open-session (pop opencode-alerted-sessions))
+      (opencode-open-session (car opencode-alerted-sessions))
     (message "No idle sessions")))
 
 (defun opencode--select-sessions (prompt sessions no-sessions-message)
@@ -483,11 +483,16 @@ For `window-buffer-change-functions'."
 (defun opencode--session-status-icon (session)
   "Return an icon for SESSION's execution state, or nil if nothing to show.
 A session is busy when its last execution started after the last one
-ended, like the OpenCode app's inbox."
+ended, like the OpenCode app's inbox.  Sessions in
+`opencode-alerted-sessions', which finished but haven't been visited,
+are marked with ✦."
   (let-alist session
     (cond ((and .time.busy (or (null .time.idle) (> .time.busy .time.idle)))
            "⏳")
-          ((equal .outcome "failed") "❌"))))
+          ((equal .outcome "failed") "❌")
+          ((seq-find (lambda (alerted) (equal .id (alist-get 'id alerted)))
+                     opencode-alerted-sessions)
+           "✦"))))
 
 (defun opencode-session--set-status (session-id status)
   "Set STATUS for the session with SESSION-ID and update modeline."

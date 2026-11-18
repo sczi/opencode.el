@@ -31,11 +31,6 @@ When nil or not available, connecting sets it to the server's default model.")
   "List of unvisited idle sessions.
 Each has the connection of its server added as `opencode-connection'.")
 
-(defun opencode--alert-session (session)
-  "Add SESSION of the current connection's server to `opencode-alerted-sessions'."
-  (push (cons (cons 'opencode-connection (opencode-current-connection)) session)
-        opencode-alerted-sessions))
-
 (defvar opencode-last-session-buffer nil
   "Last active opencode session buffer.")
 

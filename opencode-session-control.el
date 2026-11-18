@@ -289,7 +289,7 @@ An alias of a model family, such as opus, uses the family's newest model."
              (when opencode--claude-plan-tier
                (dolist (connection opencode-connections)
                  (let ((opencode--dispatching-connection connection))
-                   (opencode--redisplay-session-control-buffers)))))))))))
+                   (opencode--redraw-session-control-buffers)))))))))))
 
 (defvar-local opencode--session-control-usage-overlay nil
   "Overlay at the end of the session control buffer showing Claude usage.")
@@ -659,6 +659,22 @@ Only live ones, with none if there's no current connection."
 (defun opencode--redisplay-session-control-buffers ()
   "Refresh the live session control buffers of the current connection's server."
   (opencode--map-session-control-buffers #'opencode-sessions-redisplay))
+
+(defun opencode--redraw-session-control-buffers ()
+  "Redraw the current connection's session control buffers from their cached sessions.
+Unlike `opencode--redisplay-session-control-buffers' it doesn't refetch
+them, for when only local state shown in the table changed."
+  (opencode--map-session-control-buffers
+   (lambda ()
+     (when opencode--session-control-sessions
+       (opencode--session-control-display opencode--session-control-sessions)))))
+
+(defun opencode--alert-session (session)
+  "Add SESSION of the current connection's server to `opencode-alerted-sessions'.
+Redraw the session control buffers to show its ✦ marker."
+  (push (cons (cons 'opencode-connection (opencode-current-connection)) session)
+        opencode-alerted-sessions)
+  (opencode--redraw-session-control-buffers))
 
 (defun opencode-open-project (directory)
   "Open the session control buffer for the project of DIRECTORY.

@@ -114,12 +114,15 @@ deselected, so only act on the currently selected frame."
   (when (or (null frame) (eq frame (selected-frame)))
     (with-current-buffer (window-buffer (selected-window))
       (when opencode-session-id
-        (setf opencode-alerted-sessions
-              (cl-delete-if (lambda (session)
-                              (string= opencode-session-id
-                                       (alist-get 'id session)))
-                            opencode-alerted-sessions)
-              opencode-last-session-buffer (current-buffer))
+        (setq opencode-last-session-buffer (current-buffer))
+        (let ((key (lambda (session) (alist-get 'id session))))
+          (when (cl-member opencode-session-id opencode-alerted-sessions
+                           :key key :test #'string=)
+            (setq opencode-alerted-sessions
+                  (cl-delete opencode-session-id opencode-alerted-sessions
+                             :key key :test #'string=))
+            ;; Redraw from the cached sessions to clear its ✦ marker
+            (opencode--redraw-session-control-buffers)))
         ;; Show pending forms when buffer becomes active
         (opencode-forms--prompt-next)
         ;; Handle pending permissions when buffer becomes active
@@ -127,6 +130,8 @@ deselected, so only act on the currently selected frame."
           (run-at-time 0 nil #'opencode-respond-permission))))))
 
 (add-hook 'window-selection-change-functions 'opencode--selection-change-hook)
+;; Opening a session in the selected window changes only its buffer
+(add-hook 'window-buffer-change-functions 'opencode--selection-change-hook)
 
 ;; Handles the case where the session buffer was already selected when the
 ;; request arrived but Emacs did not have OS focus at the time.

@@ -22,6 +22,7 @@
 (require 'transient)
 (require 'opencode-api)
 (require 'opencode-common)
+(require 'opencode-session-control)
 (require 'opencode-sessions)
 
 (defvar opencode-forms--queue nil

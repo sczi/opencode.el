@@ -195,7 +195,6 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
      (concat "emacs_eval_elisp:\n"
              (opencode--fenced-block "(+ 1 2)" "elisp"))
      'opencode-tool-margin-highlight)
-    (opencode--maybe-insert-block-spacing)
     (opencode--show-prompt)
     (insert "pending input")
     (opencode-session-test--refontify)
@@ -317,7 +316,12 @@ References in reasoning aren't buttons."
       (should-not (text-property-not-all start (point-max) 'invisible nil))
       (opencode--replay-input "")
       (font-lock-ensure)
-      (should (get-char-property start 'invisible))
+      ;; replaying it showed another prompt before it
+      (setq start (save-excursion
+                    (goto-char (point-min))
+                    (search-forward "> **bold**")
+                    (match-beginning 0)))
+      (should (get-char-property (+ start 2) 'invisible))
       (should (opencode-session-test--margin-p start)))))
 
 (ert-deftest opencode-session-before-first-prompt-test ()
@@ -627,7 +631,7 @@ References in reasoning aren't buttons."
                (concat "grep `foo`\n```text\na.el:1\nb.el:2\n```\n\n"
                        "```bash\nls\n```\n```text\nls-file\n```\n\n"
                        "```bash\nuname\n```\n```text\nagent-file\n```\n\n"
-                       "eval\n(progn\n  nil)\n```text\nresult\n```\n\n")
+                       "eval\n(progn\n  nil)\n```text\nresult\n```\n")
                (opencode-session-test--output)))
       (should (eq (get-text-property (point-min) 'field) 'output))
       (goto-char (point-min))
@@ -920,7 +924,7 @@ The first visible output line starts at that hidden fence."
       (let ((output (buffer-substring-no-properties (point-min) (point-max))))
         (should (string-prefix-p (concat table "\n\n") output))
         (should (string-match-p "|x +| +y|" output))
-        (should (string-suffix-p (concat fenced "\n\n") output)))
+        (should (string-suffix-p (concat "\n\n" fenced "\n") output)))
       (should-not opencode--table-scan-marker)
       (should (= (process-mark process) (point-max))))))
 

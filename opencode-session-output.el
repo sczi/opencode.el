@@ -72,7 +72,8 @@ Global so that file edit hooks also run for sessions with no buffer.")
 
 (defvar-local opencode--current-block nil
   "(TYPE . KEY) of the block last output in this step, or nil.
-TYPE is text, reasoning, tool or compaction.  KEY identifies the block.")
+TYPE is a symbol like text, reasoning or tool.  KEY identifies the block,
+or is nil for blocks that no deltas continue.")
 
 (defvar-local opencode--blocks-with-output nil
   "KEYs of the text and reasoning blocks of this step that have output.")
@@ -195,7 +196,7 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
         (t "")))
 
 (defun opencode--maybe-insert-block-spacing ()
-  "Ensure \n\n before block."
+  "Output the newlines needed for a blank line before a block."
   (opencode--output (opencode--block-spacing (opencode--session-process-position))))
 
 (defun opencode--output (string)
@@ -379,6 +380,7 @@ unspecified when the colors aren't known, like in batch mode."
 The prompt isn't Markdown markup.  It gives the margin's `line-prefix'
 a character on an empty prompt line, and a field boundary before the
 input, which commands acting on the input line, like evil's `dd', expect."
+  (opencode--maybe-insert-block-spacing)
   (let ((start (opencode--session-process-position)))
     (opencode--output "❯ ")
     (overlay-put (make-overlay start (opencode--session-process-position))
@@ -434,21 +436,29 @@ Display a blank line and the request margin before the pending input."
         (delete-overlay opencode--pending-input-overlay)
         (setq opencode--pending-input-overlay nil)))))
 
-(defun opencode-session--start-block (type key)
-  "Start the block of TYPE identified by KEY, finishing the last one."
+(defun opencode-session--finish-block ()
+  "Finish the last block: process its last text lines and fold its reasoning.
+Every block ends with a newline, as comint makes an unfinished last
+line a prompt."
+  (opencode--finish-text-lines t)
+  (unless (eq (char-before (opencode--session-process-position)) ?\n)
+    (opencode--output "\n"))
+  (when opencode--reasoning-start
+    (opencode--fold opencode--reasoning-start nil
+                    (memq 'reasoning opencode-shown-outputs))
+    (setq opencode--reasoning-start nil)))
+
+(defun opencode-session--start-block (type &optional key)
+  "Start the block of TYPE identified by KEY, finishing the last one.
+Every block is preceded by a blank line.  KEY is only needed for blocks
+that later deltas continue."
   (let ((last-type (car opencode--current-block)))
-    (opencode--finish-text-lines t)
+    (opencode-session--finish-block)
+    (opencode--maybe-insert-block-spacing)
     (when (and (eq type 'text)
                (not (eq last-type 'text)))
       (setf opencode-last-response-start
             (opencode--session-process-position)))
-    (when last-type
-      (opencode--maybe-insert-block-spacing))
-    ;; fold reasoning once the next block starts
-    (when opencode--reasoning-start
-      (opencode--fold opencode--reasoning-start nil
-                      (memq 'reasoning opencode-shown-outputs))
-      (setq opencode--reasoning-start nil))
     (when (eq type 'reasoning)
       (setq opencode--reasoning-start
             (opencode--session-process-position)))
@@ -528,6 +538,7 @@ Return the plist of the call, from `opencode--tool-calls'."
 (defun opencode--insert-shell-output (output failed)
   "Insert OUTPUT of a user's shell command, styled as an error if FAILED."
   (unless (string-empty-p output)
+    (opencode-session--start-block 'shell)
     (let ((start (opencode--session-process-position)))
       (opencode--insert-block-with-margin
        (opencode--fenced-block output "text")
@@ -538,19 +549,18 @@ Return the plist of the call, from `opencode--tool-calls'."
                                     (forward-line 1)
                                     (point))
                                   (opencode--output-content-end)))
-      (opencode--maybe-insert-block-spacing))))
+      (opencode--output "\n"))))
 
 (defun opencode--insert-compaction-started ()
   "Insert the status line for a compaction starting."
-  (opencode-session--start-block 'compaction (float-time))
-  (opencode--maybe-insert-block-spacing)
-  (opencode--output (propertize "🗜 Compacting session...\n\n" 'font-lock-face 'shadow)))
+  (opencode-session--start-block 'compaction)
+  (opencode--output (propertize "🗜 Compacting session...\n" 'font-lock-face 'shadow)))
 
 (defun opencode--insert-compaction-summary (summary)
   "Insert the SUMMARY of a finished compaction, folded."
+  (opencode-session--start-block 'compaction-summary)
   (let ((start (opencode--session-process-position)))
-    (opencode--output (concat "🗜 Compaction summary\n" (string-trim summary)))
-    (opencode--output "\n\n")
+    (opencode--output (concat "🗜 Compaction summary\n" (string-trim summary) "\n"))
     (opencode--fold start))
   (setq opencode-session-tokens 0)
   (force-mode-line-update))
@@ -559,9 +569,9 @@ Return the plist of the call, from `opencode--tool-calls'."
   "Insert the SKILLS loaded with a prompt, each with its text folded."
   (dolist (skill skills)
     (let-alist skill
+      (opencode-session--start-block 'skill .name)
       (let ((start (opencode--session-process-position)))
-        (opencode--output (format "→ Skill \"%s\"\n%s" .name (string-trim .text)))
-        (opencode--output "\n\n")
+        (opencode--output (format "→ Skill \"%s\"\n%s\n" .name (string-trim .text)))
         (opencode--fold start)))))
 
 (defun opencode--margin-string (face)
@@ -661,9 +671,11 @@ extra margin line, and the line after a fold would join its first line."
 (defun opencode--insert-tool-block (tool input)
   "Insert TOOL call with INPUT as margin-highlighted block.
 Return a marker at the end of the call, where its output goes."
-  (let ((start (opencode--session-process-position)))
+  (let ((start (opencode--session-process-position))
+        (call (opencode--format-tool-call tool input)))
+    ;; The call ends with a newline, so its end is before the process mark.
     (opencode--insert-block-with-margin
-     (opencode--format-tool-call tool input)
+     (if (string-suffix-p "\n" call) call (concat call "\n"))
      'opencode-tool-margin-highlight)
     (opencode--buttonize-file-references
      start (opencode--session-process-position))
@@ -671,7 +683,6 @@ Return a marker at the end of the call, where its output goes."
              (goto-char (opencode--session-process-position))
              (skip-chars-backward "\n")
              (point-marker))
-      (opencode--maybe-insert-block-spacing)
       (when (and (equal tool "shell") (alist-get 'command input))
         (opencode--add-shell-prompt start))
       (when (member tool '("edit" "patch"))
@@ -823,37 +834,31 @@ Calls not yet finished are recorded so that later events finish them."
         ("running"
          (puthash key (list :name name :input input) opencode--tool-calls)
          (opencode-session--display-tool-call key))
-        (_ (opencode--maybe-insert-tool-output
+        (_ (opencode-session--start-block 'tool key)
+           (opencode--maybe-insert-tool-output
             name .state (opencode--insert-tool-block name input)))))))
 
 (defun opencode--replay-assistant-message (message)
-  "Display the assistant MESSAGE."
+  "Display the assistant MESSAGE, as its blocks are when streamed."
   (let-alist message
     (unless .time.completed
       (push .id opencode--replayed-unfinished-messages))
-    (let (last-type)
-      (dolist (item .content)
-        (let ((type (alist-get 'type item))
-              (text (string-trim (or (alist-get 'text item) ""))))
-          (if (string= type "tool")
-              (opencode--replay-tool .id item)
-            (unless (string-empty-p text)
-              (let ((start (opencode--session-process-position)))
-                (pcase type
-                  ("text"
-                   (unless (equal last-type "text")
-                     (setf opencode-last-response-start start))
-                   (opencode--start-text-lines)
-                   (opencode--output text)
-                   (opencode--finish-text-lines t))
-                  ("reasoning"
-                   (opencode--insert-reasoning-block text)))
-                (opencode--output "\n\n")
-                (when (equal type "reasoning")
-                  (opencode--fold
-                   start nil
-                   (memq 'reasoning opencode-shown-outputs))))
-              (setq last-type type))))))
+    ;; like a new step, it starts a new response
+    (setq opencode--current-block nil)
+    (seq-do-indexed
+     (lambda (item index)
+       (let ((type (alist-get 'type item))
+             (text (string-trim (or (alist-get 'text item) ""))))
+         (cond
+          ((string= type "tool") (opencode--replay-tool .id item))
+          ((and (member type '("text" "reasoning"))
+                (not (string-empty-p text)))
+           (let ((type (intern type)))
+             (opencode-session--start-block type (list type .id index))
+             (if (eq type 'reasoning)
+                 (opencode--insert-reasoning-block text)
+               (opencode--output text)))))))
+     .content)
     (when .tokens
       (setq opencode-session-tokens (opencode--tokens-total .tokens)))))
 
@@ -897,16 +902,17 @@ Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
         (dolist (message messages)
           (unless (and revert-message-id
                        (not (string< (alist-get 'id message) revert-message-id)))
-            (opencode--replay-message message)))))
+            (opencode--replay-message message)))
+        (opencode-session--finish-block)))
     (setq opencode--current-block nil)))
 
 (defun opencode--insert-error (message)
   "Insert error MESSAGE in the current session buffer."
-  (opencode--maybe-insert-block-spacing)
+  (opencode-session--start-block 'error)
   (let ((start (opencode--session-process-position)))
     (opencode--output message)
     (opencode--add-error-face start (opencode--session-process-position)))
-  (opencode--output "\n\n"))
+  (opencode--output "\n"))
 
 (defun opencode-session--display-error (session-id message)
   "Display error MESSAGE in SESSION-ID."

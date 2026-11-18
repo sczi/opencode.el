@@ -188,13 +188,11 @@ A request that's already queued is ignored."
       (let* ((title (opencode--permission-format-title action metadata resources message))
              (marker (make-marker)))
         (when (get-buffer-process buffer)
-          (opencode--maybe-insert-block-spacing)
-          (opencode--output
-           (concat (propertize title 'face 'warning)
-                   "\n\n"))
-          ;; Marker points just before the trailing newlines so the
-          ;; response label is appended inline on the same output line.
-          (set-marker marker (- (opencode--session-process-position) 2)))
+          (opencode-session--start-block 'permission permission-id)
+          (opencode--output (concat (propertize title 'face 'warning) "\n"))
+          ;; The response label is appended at the end of the title, before
+          ;; the process mark, so it's never in the input or later output.
+          (set-marker marker (1- (opencode--session-process-position))))
         (setq opencode-session-pending-permission
               (append opencode-session-pending-permission
                       (list (list :id permission-id

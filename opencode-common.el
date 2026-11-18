@@ -132,7 +132,7 @@ show all columns."
   :group 'opencode)
 
 (defcustom opencode-claude-five-hour-budgets
-  '(("pro" . 12) ("max_5x" . 125) ("max_20x" . 294))
+  '(("pro" . 13) ("max_5x" . 125) ("max_20x" . 294))
   "Estimated usage in a 5 hour window of each Claude plan, in API priced dollars.
 An alist from the planTier reported by `claude auth status' to dollars.  The
 cost column of the session control table shows sessions on these plans as a

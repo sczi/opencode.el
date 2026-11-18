@@ -107,10 +107,8 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            (opencode--session-finished .sessionID))
           (session.step.started
            (opencode--with-session-buffer .sessionID
-             ;; Keys are only unique within a step, so forget the last
-             ;; block's key, but keep its type to space the next block.
-             (setq opencode--current-block (and opencode--current-block
-                                                (list (car opencode--current-block)))
+             ;; Keys are only unique within a step, so forget the last block.
+             (setq opencode--current-block nil
                    opencode--blocks-with-output nil)))
           (session.step.ended
            (opencode--update-claude-rate-limit .native.rateLimit)
@@ -118,9 +116,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
              (opencode--finish-text-lines t)
              (setq opencode-session-tokens (opencode--tokens-total .tokens))
              (setq opencode-session-cost (+ opencode-session-cost (or .cost 0)))
-             (force-mode-line-update)
-             (when (equal "stop" .finish)
-               (opencode--maybe-insert-block-spacing))))
+             (force-mode-line-update)))
           (session.step.failed
            (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID

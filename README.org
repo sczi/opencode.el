@@ -203,7 +203,7 @@ pacman -Sy texlive-latex texlive-latexrecommended texlive-fontsrecommended dvisv
 |  =C-c y=  | yank-media, adds an image from clipboard to context                                                                                                                                                                        |
 |  =C-c Y=  | Copy the full conversation as a Markdown transcript, including reasoning and tool outputs. @@html:<br>@@ Useful to gather context in OpenCode, and then iterate on a plan in webchat if webchat has separate usage limits. |
 | =C-c C-c= | cancel the current request, with a prefix argument also cancels background subagents                                                                                                                                       |
-| =C-c C-p= | respond to a permission request                                                                                                                                                                                            |
+| =C-c C-p= | respond to a permission request or question                                                                                                                                                                                |
 |  =C-c x=  | delete this session                                                                                                                                                                                                        |
 |   =TAB=   | cycle through available primary agents                                                                                                                                                                                     |
 |  =C-c R=  | rename this session                                                                                                                                                                                                        |
@@ -287,9 +287,13 @@ questions, selecting an option will immediately submit that response. For
 multiple choice questions, select the options you want and then press =C-c C-c= to
 submit.
 
+To look at other buffers before answering, press =q= to put the question aside.
+It's prompted again when you return to its session buffer, or with =C-c C-p=.
+
 Other requests for input from the server, like web search consent and MCP server
 elicitations, are prompted the same way. Text and numbers are read in the
-minibuffer. Elicitations aren't tied to a session so they're prompted right away.
+minibuffer. MCP elicitations aren't tied to a session so they're prompted right
+away.
 
 * Multiple OpenCode connections and TRAMP
 You can configure =opencode-servers= with a list of different opencode servers.

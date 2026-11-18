@@ -113,6 +113,8 @@ When switching frames this hook is also run for the frame that was
 deselected, so only act on the currently selected frame."
   (when (or (null frame) (eq frame (selected-frame)))
     (with-current-buffer (window-buffer (selected-window))
+      ;; Show a form put aside on returning to its session
+      (opencode-forms--window-selected (current-buffer))
       (when opencode-session-id
         (setq opencode-last-session-buffer (current-buffer))
         (let ((key (lambda (session) (alist-get 'id session))))
@@ -127,7 +129,7 @@ deselected, so only act on the currently selected frame."
         (opencode-forms--prompt-next)
         ;; Handle pending permissions when buffer becomes active
         (when opencode-session-pending-permission
-          (run-at-time 0 nil #'opencode-respond-permission))))))
+          (run-at-time 0 nil #'opencode--respond-permission))))))
 
 (add-hook 'window-selection-change-functions 'opencode--selection-change-hook)
 ;; Opening a session in the selected window changes only its buffer

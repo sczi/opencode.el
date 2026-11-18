@@ -1460,6 +1460,8 @@ MENUS collects their selections.  Timers run immediately."
   (declare (indent 0))
   `(let (opencode-forms--queue opencode-forms--current
                                opencode-forms--fields opencode-forms--answers
+                               opencode-forms--left opencode-forms--reading
+                               opencode-forms--kept-selection
                                requests else-handlers toasts menus)
      (cl-letf (((symbol-function 'opencode-api--request)
                 (lambda (method path &rest args)
@@ -1591,15 +1593,160 @@ MENUS collects their selections.  Timers run immediately."
         (should (string-search "(required)" (nth 4 prompts)))))))
 
 (ert-deftest opencode-forms-minibuffer-quit-test ()
-  "Quitting the minibuffer cancels the form."
+  "Quitting the minibuffer leaves the form for later, and its cancel key cancels it."
   (opencode-forms-test--with-server
-    (cl-letf (((symbol-function 'read-string) (lambda (&rest _) (signal 'quit nil))))
-      (opencode--form-request
-       '((id . "frm_1") (sessionID . "global") (title . "T")
-         (fields . (((key . "note") (type . "string"))))))
-      (should (equal '(delete "/api/session/global/form/frm_1")
-                     (seq-take (car requests) 2)))
-      (should-not opencode-forms--current))))
+    (let ((quit t))
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (&rest _)
+                   (should opencode-forms--reading)
+                   (if quit
+                       (signal 'quit nil)
+                     (opencode-forms-cancel-from-minibuffer)))))
+        (opencode--form-request
+         '((id . "frm_1") (sessionID . "global") (title . "T")
+           (fields . (((key . "note") (type . "string"))))))
+        (should-not requests)
+        (should opencode-forms--current)
+        (should-not opencode-forms--reading)
+        (setq quit nil)
+        (opencode-respond)
+        (should (equal '(delete "/api/session/global/form/frm_1")
+                       (seq-take (car requests) 2)))
+        (should-not opencode-forms--current)))))
+
+(ert-deftest opencode-forms-minibuffer-cancel-key-test ()
+  "The cancel key is bound in the minibuffer while answering a form."
+  (opencode-forms-test--with-server
+    (let (binding)
+      (cl-letf (((symbol-function 'read-string)
+                 (lambda (&rest _)
+                   (run-hooks 'minibuffer-setup-hook)
+                   (setq binding (keymap-lookup (current-local-map) "C-c C-k"))
+                   "")))
+        (with-temp-buffer
+          (opencode--form-request
+           '((id . "frm_1") (sessionID . "global") (title . "T")
+             (fields . (((key . "note") (type . "string"))))))))
+      (should (eq 'opencode-forms-cancel-from-minibuffer binding)))))
+
+(ert-deftest opencode-forms-later-test ()
+  "A form left for later isn't cancelled, holds back later forms, and is shown again."
+  (opencode-forms-test--with-server
+    (opencode--form-request opencode-forms-test--websearch)
+    (should (length= menus 1))
+    (opencode--form-request (cons '(id . "frm_2") (cdr opencode-forms-test--websearch)))
+    (should (length= menus 1))
+    (should (length= opencode-forms--queue 1))
+    (should-not requests)
+    (opencode-respond)
+    (should (length= menus 2))
+    (opencode-forms--answer "allow")
+    (should (equal "/api/session/global/form/frm_1/reply" (nth 1 (car requests))))
+    (should (equal "frm_2" (alist-get 'id opencode-forms--current)))
+    (should (length= menus 3))))
+
+(ert-deftest opencode-forms-later-return-test ()
+  "A form left for later is shown again on returning to its session from elsewhere."
+  (opencode-forms-test--with-server
+    (let ((opencode-default-connection (opencode--make-connection :name 'test))
+          (buffer (generate-new-buffer " *form-test*"))
+          (other (generate-new-buffer " *other*")))
+      (unwind-protect
+          (progn
+            (puthash "ses_1" buffer
+                     (opencode-connection-session-buffers opencode-default-connection))
+            (opencode-forms--set-current
+             `((id . "frm_1") (sessionID . "ses_1")
+               (opencode-connection . ,opencode-default-connection)
+               ,@(cddr opencode-forms-test--websearch)))
+            (opencode-forms--next)
+            (should (length= menus 1))
+            (opencode-forms--window-selected buffer)
+            (with-current-buffer (get-buffer-create " *Minibuf-1*")
+              (opencode-forms--window-selected (current-buffer)))
+            (should (length= menus 1))
+            (opencode-forms--window-selected other)
+            (should opencode-forms--left)
+            (opencode-forms--window-selected buffer)
+            (should (length= menus 2))
+            (should-not opencode-forms--left))
+        (kill-buffer buffer)
+        (kill-buffer other)))))
+
+(ert-deftest opencode-forms-later-settled-test ()
+  "A form left for later is forgotten once it's answered elsewhere."
+  (opencode-forms-test--with-server
+    (opencode--form-request opencode-forms-test--websearch)
+    (opencode--form-settled "frm_1")
+    (should-not opencode-forms--current)))
+
+(defmacro opencode-forms-test--with-menu (&rest body)
+  "Run BODY like `opencode-forms-test--with-server', but really showing menus."
+  (declare (indent 0))
+  `(let ((show (symbol-function 'opencode-forms--show-menu)))
+     (opencode-forms-test--with-server
+       (cl-letf (((symbol-function 'opencode-forms--show-menu) show))
+         (unwind-protect
+             (progn ,@body)
+           (opencode-menu-close))))))
+
+(ert-deftest opencode-forms-suspend-test ()
+  "A suspended menu can be resumed to answer, or shown again by `opencode-respond'."
+  (opencode-forms-test--with-menu
+    (opencode--form-request opencode-forms-test--websearch)
+    (should (opencode-menu-active-p "frm_1"))
+    (execute-kbd-macro (kbd "C-z"))
+    (should-not (opencode-menu-active-p))
+    (should-not requests)
+    (opencode-respond)
+    (execute-kbd-macro (kbd "C-z"))
+    (transient-resume)
+    (should (opencode-menu-active-p "frm_1"))
+    (execute-kbd-macro (kbd "1"))
+    (should (equal '((post "/api/session/global/form/frm_1/reply" "/project/"
+                      "{\"answer\":{\"choice\":\"allow\"}}"))
+                   requests))
+    (should-not opencode-forms--current)))
+
+(ert-deftest opencode-forms-suspended-settled-test ()
+  "Resuming the menu of a form answered elsewhere does nothing."
+  (opencode-forms-test--with-menu
+    (opencode--form-request opencode-forms-test--websearch)
+    (execute-kbd-macro (kbd "C-z"))
+    (opencode--form-settled "frm_1")
+    (transient-resume)
+    (execute-kbd-macro (kbd "1"))
+    (should-not requests)))
+
+(ert-deftest opencode-forms-later-keeps-selection-test ()
+  "Leaving a multiselect for later with q keeps what's selected."
+  (opencode-forms-test--with-menu
+    (opencode--form-request
+     '((id . "frm_1") (sessionID . "global") (title . "T")
+       (fields . (((key . "tags") (type . "multiselect")
+                   (options . (((value . "a") (label . "A"))
+                               ((value . "b") (label . "B")))))))))
+    (execute-kbd-macro (kbd "2 q"))
+    (should-not (opencode-menu-active-p))
+    (opencode-respond)
+    (execute-kbd-macro (kbd "C-c C-c"))
+    (should (equal "{\"answer\":{\"tags\":[\"b\"]}}" (nth 3 (car requests))))))
+
+(ert-deftest opencode-permission-response-by-id-test ()
+  "A permission menu answers the request it was shown for, if it's still pending."
+  (with-temp-buffer
+    (let (paths)
+      (cl-letf (((symbol-function 'opencode-api--request)
+                 (lambda (_method path &rest _) (push path paths)))
+                ((symbol-function 'run-at-time) #'ignore))
+        (setq-local opencode-session-pending-permission
+                    '((:id "per_1" :session-id "ses_1") (:id "per_2" :session-id "ses_1")))
+        (opencode--send-permission-response "once" "per_2")
+        (should (equal '("/api/session/ses_1/permission/per_2/reply") paths))
+        (should (equal '("per_1") (mapcar (lambda (perm) (plist-get perm :id))
+                                          opencode-session-pending-permission)))
+        (opencode--send-permission-response "once" "per_2")
+        (should (length= paths 1))))))
 
 (ert-deftest opencode-forms-invalid-reply-test ()
   "An invalid answer asks again showing why, and a settled form is left alone."

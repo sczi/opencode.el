@@ -37,7 +37,7 @@
     "C-c y" 'yank-media
     "C-c Y" 'opencode-copy-conversation
     "C-c C-c" 'opencode-abort-session
-    "C-c C-p" 'opencode-respond-permission
+    "C-c C-p" 'opencode-respond
     "C-c x" 'opencode-kill-session
     "<backtab>" 'backward-button
     "TAB" 'opencode--tab-dispatch

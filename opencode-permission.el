@@ -13,7 +13,7 @@
 ;; or n to deny.
 ;;
 ;; Dismissing the transient without responding (e.g. q or C-g) leaves
-;; the request pending.  Re-open it later with `opencode-respond-permission'.
+;; the request pending.  Re-open it later with `opencode-respond' (C-c C-p).
 
 ;;; Code:
 
@@ -96,19 +96,20 @@ MESSAGE is the server's description of the request, preferred if given."
 
 ;;; Menu
 
-(defun opencode-permission--prompt (type title always-patterns)
-  "Show a menu to respond to the next pending permission request.
+(defun opencode-permission--prompt (type title always-patterns &optional id)
+  "Show a menu to respond to the pending permission request ID.
 TYPE is the permission kind, TITLE is the description, and ALWAYS-PATTERNS
 are the glob patterns for permanent approval.  Dismissing the menu leaves
-the request pending, to answer later with \\[opencode-respond-permission]."
+the request pending, to answer later with \\<opencode-session-mode-map>\\[opencode-respond]."
   (opencode-menu-show
    (or title type "Permission")
    (mapcar (pcase-lambda (`(,key ,label ,choice))
              (list key label (opencode-menu-action
-                              #'opencode--send-permission-response choice)))
+                              #'opencode--send-permission-response choice id)))
            `(("o" "Ok" "once")
              ("a" ,(format "Accept always (%s)" (or always-patterns title "")) "always")
-             ("n" "No" "reject")))))
+             ("n" "No" "reject")))
+   nil id))
 
 ;;; Permission request handling
 
@@ -138,7 +139,7 @@ A request that's already queued is ignored."
                                   :always save
                                   :marker marker))))
         (if (opencode--buffer-active-p buffer)
-            (run-at-time 0 nil #'opencode-respond-permission)
+            (run-at-time 0 nil #'opencode--respond-permission)
           (opencode--toast-show `((title . "OpenCode Permission Request")
                                   (message . ,title)
                                   (variant . "info")))
@@ -199,39 +200,44 @@ Events are lost when not connected, so this is the only way to see them."
             (delq perm opencode-session-pending-permission))
       (opencode--permission-label perm reply))))
 
-(defun opencode--send-permission-response (choice)
-  "Send CHOICE as the response to the next pending permission request.
-CHOICE is one of \"once\", \"always\", or \"reject\".
-Pops the first request from the queue and appends an accepted/denied
+(defun opencode--send-permission-response (choice &optional id)
+  "Send CHOICE as the response to the pending permission request ID.
+CHOICE is one of \"once\", \"always\", or \"reject\".  ID defaults to the
+next request.  If it's no longer pending, as it was answered elsewhere while
+its menu was suspended, nothing is sent.
+Removes the request from the queue and appends an accepted/denied
 label to the original output line via its saved marker."
-  (unless opencode-session-pending-permission
+  (unless (or id opencode-session-pending-permission)
     (user-error "No pending permission request"))
-  (let* ((perm (car opencode-session-pending-permission))
-         (permission-id (plist-get perm :id))
-         (session-id (plist-get perm :session-id)))
-    (setq opencode-session-pending-permission
-          (cdr opencode-session-pending-permission))
-    (opencode--permission-label perm choice)
-    (when opencode-session-pending-permission
-      (run-at-time 0 nil #'opencode-respond-permission))
-    (opencode-api-respond-permission-request (session-id permission-id)
-        `((decision . ,choice))
-        _response)))
+  (if-let* ((perm (if id
+                      (seq-find (lambda (perm) (equal id (plist-get perm :id)))
+                                opencode-session-pending-permission)
+                    (car opencode-session-pending-permission))))
+      (let ((permission-id (plist-get perm :id))
+            (session-id (plist-get perm :session-id)))
+        (setq opencode-session-pending-permission
+              (delq perm opencode-session-pending-permission))
+        (opencode--permission-label perm choice)
+        (when opencode-session-pending-permission
+          (run-at-time 0 nil #'opencode--respond-permission))
+        (opencode-api-respond-permission-request (session-id permission-id)
+            `((decision . ,choice))
+            _response))
+    (message "This was already answered")))
 
-(defun opencode-respond-permission ()
+(defun opencode--respond-permission ()
   "Respond to the next pending permission request using a transient popup.
-Do nothing if a transient is already active, so it's not replaced, and so
-the popup isn't shown twice when this is scheduled more than once."
-  (interactive)
-  (unless opencode-session-pending-permission
-    (user-error "No pending permission request"))
-  (unless (transient-active-prefix)
+Do nothing if there's none, or if a transient is already active, so it's not
+replaced, and so the popup isn't shown twice when this is scheduled more than
+once."
+  (when (and opencode-session-pending-permission
+             (not (transient-active-prefix)))
     (let* ((perm (car opencode-session-pending-permission))
            (type (plist-get perm :type))
            (title (plist-get perm :title))
            (always (plist-get perm :always))
            (always-display (when always (string-join always ", "))))
-      (opencode-permission--prompt type title always-display))))
+      (opencode-permission--prompt type title always-display (plist-get perm :id)))))
 
 (provide 'opencode-permission)
 ;;; opencode-permission.el ends here

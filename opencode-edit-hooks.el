@@ -309,12 +309,18 @@ It isn't run in remote sessions, as it runs this Emacs."
 
 (defun opencode--reload-elisp-file (file &optional _ranges)
   "Reload elisp FILE after LLM edits.
-Remote files aren't, as they're for Emacs on their host."
+Remote files aren't, as they're for Emacs on their host.  FILE's
+directory is on `load-path' while loading, so it can require libraries
+beside it, like test helpers in a test directory that isn't on it."
   (when (and (string-suffix-p ".el" file)
              (not (file-remote-p file)))
     (condition-case err
-        (load-file file)
+        (let ((load-path (cons (file-name-directory (expand-file-name file))
+                               load-path)))
+          (load-file file))
       (error
+       (opencode--log-event "WARNING RELOAD ELISP"
+                            (format "Error reloading %s: %S" file err))
        (message "Error reloading %s after LLM edit: %s" file err)))))
 
 (defvar flycheck-checkers)

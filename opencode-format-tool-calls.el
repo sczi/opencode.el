@@ -94,7 +94,11 @@ BODY is evaluated inside `(let-alist tool-args ...)'."
 (opencode-define-tool-formatter "subagent"
   (if (string= "explore" .agent)
       (format "🔍 Explore: %s" .description)
-    (format "🤖 Subagent Task: %s" .description)))
+    (format "🤖 %s: %s"
+            (if (and (stringp .agent) (not (string-empty-p .agent)))
+                .agent
+              "Subagent")
+            .description)))
 
 (defun opencode--format-tool-call (tool input)
   "Format TOOL call with INPUT arguments for display.

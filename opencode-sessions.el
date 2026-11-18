@@ -942,13 +942,25 @@ If SESSION is nil use the current session buffer's session."
   (interactive)
   (opencode--set-session-archived session nil))
 
-(defun opencode-abort-session ()
-  "Abort a busy session and go back to prompt."
-  (interactive)
-  (opencode-api-interrupt-session (opencode-session-id)
-      result
-    (when (opencode--json-falsy (alist-get 'interrupted result))
-      (message "Failed to abort session."))))
+(defun opencode--interrupt-session-tree (id)
+  "Interrupt session ID and, recursively, all the subagents it spawned."
+  (opencode-api-session-children (id)
+      children
+    (dolist (child children)
+      (opencode--interrupt-session-tree (alist-get 'id child))))
+  (opencode-api-interrupt-session (id)
+      _result))
+
+(defun opencode-abort-session (&optional arg)
+  "Abort a busy session and go back to prompt.
+With prefix ARG, also abort all subagents it spawned, recursively."
+  (interactive "P")
+  (if arg
+      (opencode--interrupt-session-tree opencode-session-id)
+    (opencode-api-interrupt-session (opencode-session-id)
+        result
+      (when (opencode--json-falsy (alist-get 'interrupted result))
+        (message "Failed to abort session.")))))
 
 (defun opencode-compact-session ()
   "Compact the current session."

@@ -128,6 +128,39 @@
     (should (opencode-test-error-p "Interrupted"))
     (should (string-suffix-p "Partial answer\n\nInterrupted\n\n❯ " (opencode-test-output)))))
 
+(ert-deftest opencode-integration-abort-subagents-test ()
+  "Aborting with a prefix argument also aborts the session's subagents."
+  (opencode-test-with-session nil
+    (let ((reply (lambda (body)
+                   (if (string-search "You are a subagent"
+                                      (opencode-test-llm-user-text body))
+                       '("Child working" (:hold))
+                     "Started"))))
+      (opencode-test-llm-reply
+       '((:tool "subagent" ((agent . "general") (description . "Long task")
+                            (prompt . "Work slowly"))))
+       reply reply))
+    (opencode-test-send "Spawn a subagent")
+    (opencode-test-llm-wait-held)
+    (let ((child (opencode-test-wait-until
+                  (seq-some (lambda (event)
+                              (let ((id (map-nested-elt event '(data sessionID))))
+                                (and (equal "session.execution.started" (alist-get 'type event))
+                                     (not (equal id opencode-session-id))
+                                     id)))
+                            opencode-test-events))))
+      (should-not (opencode-test-event-p "session.execution.interrupted" child))
+      ;; The parent is told its subagent was cancelled
+      (opencode-test-llm-reply "Subagent cancelled")
+      (let ((since (length opencode-test-events)))
+        (opencode-abort-session '(4))
+        (opencode-test-wait-until
+         (opencode-test-event-p "session.execution.interrupted" child))
+        (opencode-test-wait-finished since))
+      (should (string-search "state=\"cancelled\""
+                             (opencode-test-llm-user-text
+                              (car (last opencode-test-llm-requests))))))))
+
 (ert-deftest opencode-integration-continued-step-test ()
   "Text of a step the server continues is spaced from the next step's."
   (opencode-test-with-session nil

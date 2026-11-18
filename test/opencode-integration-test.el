@@ -12,10 +12,12 @@
 (require 'opencode-integration-test-helpers)
 
 (defun opencode-integration-test--file (file)
-  "Return the contents of FILE in the session's directory."
+  "Return the contents of FILE in the session's directory, or nil if missing.
+The server may briefly remove a file while restoring it, as on revert."
   (with-temp-buffer
-    (insert-file-contents (expand-file-name file))
-    (buffer-string)))
+    (when (ignore-error file-missing
+            (insert-file-contents (expand-file-name file)))
+      (buffer-string))))
 
 (ert-deftest opencode-integration-text-response-test ()
   "A prompt is sent to the LLM, and its streamed answer shown before a prompt."

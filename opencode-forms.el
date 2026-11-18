@@ -284,14 +284,19 @@ Leaving it empty skips the field."
 (defun opencode-forms--option-spec (field option index)
   "Return the menu spec for OPTION of FIELD, at INDEX."
   (let-alist option
-    (let ((key (opencode-forms--option-key index))
-          (note (and .description (propertize .description 'face 'shadow))))
+    (let* ((key (opencode-forms--option-key index))
+           ;; Lines wrapped by `opencode-forms--wrap-lines' continue under the label.
+           (indent (make-string (+ (length key) 2) ?\s))
+           (note (and .description
+                      (propertize .description 'face 'shadow 'wrap-prefix indent))))
       (if (equal (alist-get 'type field) "multiselect")
-          `(,key ,(or note "") ,.label :class transient-switch :format " %k %v  %d")
-        `(,key ,(concat .label
-                        (and note (concat "  " note))
-                        (and (equal .value (opencode-forms--default field))
-                             " (default)"))
+          `(,key ,(or note "") ,(propertize .label 'wrap-prefix indent)
+            :class transient-switch :format " %k %v  %d")
+        `(,key ,(propertize (concat .label
+                                    (and note (concat "  " note))
+                                    (and (equal .value (opencode-forms--default field))
+                                         " (default)"))
+                            'wrap-prefix indent)
           ,(opencode-forms--suffix #'opencode-forms--answer .value))))))
 
 (defun opencode-forms--menu-children (_children)
@@ -336,6 +341,14 @@ _CHILDREN is the statically-defined children, of which there are none."
                   (opencode-forms--heading opencode-forms--current
                                            (opencode-forms--field)))
    :setup-children opencode-forms--menu-children])
+
+(defun opencode-forms--wrap-lines ()
+  "Wrap long lines in the form menu, as questions and options can be any length."
+  (when (eq (oref transient--prefix command) 'opencode-forms--menu)
+    (setq truncate-lines nil
+          word-wrap t)))
+
+(add-hook 'transient-setup-buffer-hook #'opencode-forms--wrap-lines)
 
 (defun opencode-forms--menu-exited ()
   "Do what was chosen in the menu, or cancel the form if nothing was."

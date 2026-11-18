@@ -339,6 +339,11 @@ performance fix, and set both =comint-scroll-show-maximum-output= and
 Known bugs in other packages that affect users of opencode.el are documented in
 [[file:Bugs.org][Bugs.org]]. For bugs in opencode.el itself, see the issue tracker.
 
+* Contributing
+PRs for relatively small changes or fixes are welcome. For large new features or
+changes, please instead open an issue with a markdown specification we can
+discuss.
+
 * Configuration
 - =opencode-command= and =opencode-serve-command= can be used to configure how to
   run a headless opencode server

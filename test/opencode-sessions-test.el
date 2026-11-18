@@ -1616,6 +1616,28 @@ MENUS collects their selections.  Timers run immediately."
                       (metadata . ((kind . "mcp-elicitation") (message . "Sign in"))))
                     field)))))
 
+(ert-deftest opencode-forms-menu-wraps-test ()
+  "The menu wraps long questions even when lines are truncated by default."
+  (let ((opencode-forms--current '((id . "frm_1") (sessionID . "global")
+                                   (metadata . ((kind . "question")))))
+        (opencode-forms--fields '(((key . "k") (type . "string") (description . "Why?")
+                                   (options . (((value . "a") (label . "A")
+                                                (description . "Because")))))))
+        (opencode-forms--after-menu nil))
+    (cl-letf (((default-value 'truncate-lines) t))
+      (unwind-protect
+          (progn
+            (opencode-forms--show-menu nil)
+            (with-current-buffer " *transient*"
+              (should-not truncate-lines)
+              (should word-wrap)
+              (goto-char (point-min))
+              (search-forward "Because")
+              (should (equal "   " (get-text-property (match-beginning 0)
+                                                      'wrap-prefix)))))
+        (remove-hook 'transient-exit-hook #'opencode-forms--menu-exited)
+        (transient--emergency-exit)))))
+
 (ert-deftest opencode-json-falsy-test ()
   "All of JSON's false values are recognized, as `:false' is truthy in Lisp."
   (dolist (value '(nil :null :false 0))

@@ -98,32 +98,38 @@ BODY is evaluated inside `(let-alist tool-args ...)'."
 
 (defun opencode--format-tool-call (tool input)
   "Format TOOL call with INPUT arguments for display.
-A call with no INPUT, as when it was malformed, shows just the tool name."
+A call with no INPUT, as when it was malformed, shows just the tool name.
+Input a tool's formatter can't handle, as when a model sent malformed
+arguments, is shown generically."
   (when (alist-get 'path input)
     (setq input (copy-alist input))
     (setf (alist-get 'path input) (opencode--relative-path-for-display (alist-get 'path input))))
 
-  (if-let* ((tool-formatter (and input
-                                 (cdr (assoc-string tool opencode-tool-formatters)))))
-      (funcall tool-formatter input)
-    (cond
-     ((null input) tool)
-     ((= 1 (length input))
-      (let ((arg (format "%s" (cdar input))))
-        (format "%s%s%s"
-                tool
-                (if (string-match-p "\n" arg)
-                    "\n"
-                  " ")
-                arg)))
-     ;; Multiple arguments: tool-name, then arg-name: value per line
-     (t
-      (concat tool " ("
-              (mapconcat (lambda (pair)
-                           (format "%s=%s" (car pair) (cdr pair)))
-                         input
-                         ", ")
-              ")")))))
+  (or (when-let* ((tool-formatter (and input
+                                       (cdr (assoc-string tool opencode-tool-formatters)))))
+        (ignore-errors (funcall tool-formatter input)))
+      (opencode--format-tool-call-generic tool input)))
+
+(defun opencode--format-tool-call-generic (tool input)
+  "Format TOOL call with INPUT arguments, without a tool specific formatter."
+  (cond
+   ((null input) tool)
+   ((= 1 (length input))
+    (let ((arg (format "%s" (cdar input))))
+      (format "%s%s%s"
+              tool
+              (if (string-match-p "\n" arg)
+                  "\n"
+                " ")
+              arg)))
+   ;; Multiple arguments: tool-name, then arg-name: value per line
+   (t
+    (concat tool " ("
+            (mapconcat (lambda (pair)
+                         (format "%s=%s" (car pair) (cdr pair)))
+                       input
+                       ", ")
+            ")"))))
 
 (defun opencode--format-todos (todos)
   "Return TODOS as a markdown todo list."

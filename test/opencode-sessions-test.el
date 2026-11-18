@@ -161,6 +161,15 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
                                                file-directory)
                              440)))))))
 
+(ert-deftest opencode-tool-formatter-malformed-input-test ()
+  "Show input a tool's formatter can't handle generically, not signal."
+  (should (equal (opencode--format-tool-call
+                  "question" '((questions . "[{\"question\":\"x\"}]")))
+                 "question [{\"question\":\"x\"}]"))
+  (should (equal (opencode--format-tool-call
+                  "todowrite" '((todos . "[{\"content\":\"x\"}]") (merge . t)))
+                 "todowrite (todos=[{\"content\":\"x\"}], merge=t)")))
+
 (ert-deftest opencode-search-tool-code-span-test ()
   "Show search patterns and targets as code, not Markdown emphasis."
   (should (equal (opencode--format-tool-call

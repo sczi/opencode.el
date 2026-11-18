@@ -249,26 +249,36 @@ after `opencode-command-diagnostic-timeout' seconds."
 
 (defun opencode--emacs-ert-command ()
   "Return the batch Emacs command used to test with ERT."
-  (append
-   (list (concat invocation-directory invocation-name) "--batch"
-         ;; Use this Emacs's tree-sitter grammars instead of prompting to install
-         "--eval"
-         (prin1-to-string
-          `(setq treesit-auto-install-grammar 'never
-                 treesit-extra-load-path
-                 ',(cons (expand-file-name "tree-sitter" user-emacs-directory)
-                         (bound-and-true-p treesit-extra-load-path)))))
-   (cl-loop for path in (delete-dups (append (list default-directory) load-path nil))
-            when (and (stringp path) (file-directory-p path))
-            append (list "-L" (expand-file-name path)))
-   (cl-loop for file in (directory-files-recursively default-directory
-                                                     "\\(?:-test\\|-tests\\)\\.el\\'")
-            ;; Skip Flycheck's temporary copies, which may vanish before loading
-            unless (string-prefix-p "flycheck_" (file-name-nondirectory file))
-            append (list "-l" file))
-   ;; Set after loading, since libraries like dbus call `read-event' on load
-   (list "--eval" "(setq inhibit-interaction t)"
-         "-f" "ert-run-tests-batch-and-exit")))
+  (let ((test-files
+         (cl-loop for file in (directory-files-recursively
+                               default-directory "\\(?:-test\\|-tests\\)\\.el\\'")
+                  ;; Skip Flycheck's temporary copies, which may vanish before loading
+                  unless (string-prefix-p "flycheck_" (file-name-nondirectory file))
+                  collect file)))
+    (append
+     (list (concat invocation-directory invocation-name) "--batch"
+           ;; Use this Emacs's tree-sitter grammars instead of prompting to install
+           "--eval"
+           (prin1-to-string
+            `(setq treesit-auto-install-grammar 'never
+                   treesit-extra-load-path
+                   ',(cons (expand-file-name "tree-sitter" user-emacs-directory)
+                           (bound-and-true-p treesit-extra-load-path)))))
+     ;; Test directories too, so tests can require their helper libraries
+     (cl-loop for path in (delete-dups
+                           (mapcar (lambda (path)
+                                     (and (stringp path)
+                                          (file-name-as-directory (expand-file-name path))))
+                                   (append (list default-directory)
+                                           (mapcar #'file-name-directory test-files)
+                                           load-path)))
+              when (and path (file-directory-p path))
+              append (list "-L" path))
+     (cl-loop for file in test-files
+              append (list "-l" file))
+     ;; Set after loading, since libraries like dbus call `read-event' on load
+     (list "--eval" "(setq inhibit-interaction t)"
+           "-f" "ert-run-tests-batch-and-exit"))))
 
 (defun opencode--emacs-ert-script ()
   "Write a script running the tests of `default-directory' with ERT.

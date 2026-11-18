@@ -54,6 +54,27 @@
       (should (equal "tool" (alist-get 'role tool-result)))
       (should (string-search "1: alpha" (format "%s" (alist-get 'content tool-result)))))))
 
+(ert-deftest opencode-integration-read-image-test ()
+  "A read of an image shows the image instead of its text."
+  (skip-unless (image-type-available-p 'png))
+  (opencode-test-with-session
+      `(("pixel.png"
+         . ,(base64-decode-string
+             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==")))
+    (opencode-test-llm-reply '((:tool "read" ((path . "pixel.png")))) "A pixel.")
+    ;; Only images are displayed as if graphical, as the rest of the session
+    ;; can't be in batch mode.
+    (cl-letf (((symbol-function 'opencode--inline-image)
+               (let ((inline-image (symbol-function 'opencode--inline-image)))
+                 (lambda (&rest args)
+                   (cl-letf (((symbol-function 'display-graphic-p) #'always))
+                     (apply inline-image args))))))
+      (opencode-test-send "Look at pixel.png"))
+    (should-not (string-search "Image read successfully" (opencode-test-output)))
+    (goto-char (point-min))
+    (search-forward "read pixel.png\n```text\n")
+    (should (eq (car-safe (get-text-property (point) 'display)) 'image))))
+
 (ert-deftest opencode-integration-parallel-tools-test ()
   "Parallel tool calls each have their output after them."
   (opencode-test-with-session '(("a.txt" . "alpha\n") ("b.txt" . "gamma\n"))

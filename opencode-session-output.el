@@ -704,12 +704,37 @@ INFO has an optional status and exit, like the metadata of a tool call."
                               (string-join answer ", "))))
              answers "\n"))
 
-(defun opencode--tool-content-text (content)
-  "Return the text items of tool output CONTENT joined, or nil if there are none."
-  (when-let* ((texts (cl-loop for item in content
-                              when (equal "text" (alist-get 'type item))
-                              collect (alist-get 'text item))))
-    (string-join texts "\n")))
+(defun opencode--tool-content-image (item)
+  "Return the image of tool output content ITEM to display, or nil.
+It's displayed as its name, with the image as its `display'."
+  (let-alist item
+    (when (and (equal .type "file")
+               (string-prefix-p "image/" .mime)
+               .uri
+               (string-match "\\`data:[^,]*;base64," .uri))
+      (when-let* ((image (opencode--inline-image
+                          (ignore-errors
+                            (base64-decode-string (substring .uri (match-end 0))))
+                          t)))
+        (propertize (or .name "image") 'display image)))))
+
+(defun opencode--tool-content-text (tool content)
+  "Return the output CONTENT of TOOL joined, or nil if there's none.
+That's its text and images.  As a read's text only says that an image
+was read, it's omitted when there's an image."
+  (let* ((items (cl-loop for item in content
+                         if (equal "text" (alist-get 'type item))
+                         collect (alist-get 'text item)
+                         else if (opencode--tool-content-image item)
+                         collect it))
+         (items (if (and (equal tool "read")
+                         (seq-some (lambda (item) (get-text-property 0 'display item))
+                                   items))
+                    (seq-filter (lambda (item) (get-text-property 0 'display item))
+                                items)
+                  items)))
+    (when items
+      (string-join items "\n"))))
 
 (defun opencode--add-error-face (beg end)
   "Style BEG to END with the `error' face."
@@ -735,7 +760,7 @@ non-zero status are highlighted with the `error' face."
                       ((and (string= tool "question") .metadata.answers)
                        (opencode--format-question-answers .metadata.answers))
                       ((not (member tool opencode--ignore-output-for-tools))
-                       (opencode--tool-content-text .content))))
+                       (opencode--tool-content-text tool .content))))
              (errorp (or failed (opencode--shell-failed-p tool .metadata))))
         (when output
           (let ((inhibit-read-only t)

@@ -277,15 +277,19 @@ connection to expand."
     (forward-line (1- line))
     (recenter)))
 
-(defun opencode--inline-image (file)
-  "Return an image to display FILE inline, or nil if it shouldn't be."
+(defun opencode--inline-image (file-or-data &optional data-p)
+  "Return an image to display FILE-OR-DATA inline, or nil if it shouldn't be.
+If DATA-P is non-nil, FILE-OR-DATA is the image's data, else its file."
   (when (and opencode-inline-images
              (display-graphic-p)
-             ;; Loading a remote image needs a connection, and this is done
-             ;; for output, from a process filter.
-             (not (opencode--tramp-prefix))
-             (image-supported-file-p file))
-    (create-image file nil nil
+             (if data-p
+                 (when-let* ((type (image-type-from-data file-or-data)))
+                   (image-type-available-p type))
+               ;; Loading a remote image needs a connection, and this is
+               ;; done for output, from a process filter.
+               (and (not (opencode--tramp-prefix))
+                    (image-supported-file-p file-or-data))))
+    (create-image file-or-data nil data-p
                   :max-width (car opencode-inline-image-max-size)
                   :max-height (cdr opencode-inline-image-max-size))))
 

@@ -56,6 +56,9 @@ Shown outputs can still be folded manually with `hs-toggle-hiding'."
 (defvar-local opencode--table-scan-marker nil
   "Marker at the unprocessed Markdown in the current assistant text part.")
 
+(defvar-local opencode--buttonize-marker nil
+  "Marker at the text not yet buttonized in the current assistant text part.")
+
 (defvar-local opencode--reasoning-start nil
   "Start of the streaming reasoning block, to fold once the next block starts.")
 
@@ -195,14 +198,37 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
 
 (defun opencode--output (string)
   "Output STRING as comint output."
-  (let ((start (save-excursion
-                 (goto-char (opencode--session-process-position))
-                 (let ((inhibit-field-text-motion t))
-                   (line-beginning-position)))))
-    (comint-output-filter (get-buffer-process (current-buffer)) string)
-    (opencode--buttonize-file-references
-     start (opencode--session-process-position))
-    (opencode--update-pending-input)))
+  (comint-output-filter (get-buffer-process (current-buffer)) string)
+  (opencode--update-pending-input))
+
+(defun opencode--start-text-lines ()
+  "Start processing the lines of an assistant text part at the process mark."
+  (let ((pos (opencode--session-process-position)))
+    (setq opencode--table-scan-marker (copy-marker pos)
+          opencode--buttonize-marker (copy-marker pos))))
+
+(defun opencode--buttonize-finished-lines (&optional finished)
+  "Buttonize file references in the complete lines of the text part.
+If FINISHED is non-nil, also in its last line, and stop processing it."
+  (when opencode--buttonize-marker
+    (let ((end (if finished
+                   (opencode--session-process-position)
+                 (save-excursion
+                   (goto-char (opencode--session-process-position))
+                   (let ((inhibit-field-text-motion t))
+                     (line-beginning-position))))))
+      (when (> end opencode--buttonize-marker)
+        (opencode--buttonize-file-references opencode--buttonize-marker end)
+        (set-marker opencode--buttonize-marker end))
+      (when finished
+        (set-marker opencode--buttonize-marker nil)
+        (setq opencode--buttonize-marker nil)))))
+
+(defun opencode--finish-text-lines (&optional finished)
+  "Process the complete lines of the assistant text part.
+If FINISHED is non-nil, the part has ended, so also its last line."
+  (opencode--buttonize-finished-lines finished)
+  (opencode--align-finished-tables finished))
 
 (defun opencode--align-output-table (beg end)
   "Align the completed Markdown table between BEG and END.
@@ -409,7 +435,7 @@ Display a blank line and the request margin before the pending input."
 (defun opencode-session--start-block (type key)
   "Start the block of TYPE identified by KEY, finishing the last one."
   (let ((last-type (car opencode--current-block)))
-    (opencode--align-finished-tables t)
+    (opencode--finish-text-lines t)
     (when (and (eq type 'text)
                (not (eq last-type 'text)))
       (setf opencode-last-response-start
@@ -425,8 +451,7 @@ Display a blank line and the request margin before the pending input."
       (setq opencode--reasoning-start
             (opencode--session-process-position)))
     (when (eq type 'text)
-      (setq opencode--table-scan-marker
-            (copy-marker (opencode--session-process-position))))
+      (opencode--start-text-lines))
     (setq opencode--current-block (cons type key))))
 
 (defun opencode-session--block-delta (session-id key delta)
@@ -446,7 +471,7 @@ KEY is (TYPE MESSAGE-ID ORDINAL)."
             (opencode--insert-reasoning-block delta)
           (opencode--output delta))
         (when (and (eq type 'text) (string-search "\n" delta))
-          (opencode--align-finished-tables nil))))))
+          (opencode--finish-text-lines nil))))))
 
 (defun opencode-session--block-ended (session-id key text)
   "Finish the text or reasoning block KEY of SESSION-ID with final TEXT.
@@ -459,7 +484,7 @@ send the whole block once it's done."
       (opencode-session--block-delta session-id key text))
     (when (and (eq (car key) 'text)
                (equal key (cdr opencode--current-block)))
-      (opencode--align-finished-tables t))))
+      (opencode--finish-text-lines t))))
 
 (defun opencode--tokens-total (tokens)
   "Return the sum of the fields of TOKENS, a TokenUsage.Info."
@@ -638,6 +663,8 @@ Return a marker at the end of the call, where its output goes."
     (opencode--insert-block-with-margin
      (opencode--format-tool-call tool input)
      'opencode-tool-margin-highlight)
+    (opencode--buttonize-file-references
+     start (opencode--session-process-position))
     (prog1 (save-excursion
              (goto-char (opencode--session-process-position))
              (skip-chars-backward "\n")
@@ -719,7 +746,6 @@ non-zero status are highlighted with the `error' face."
                                (opencode--fenced-block output "text")
                              (opencode--fenced-output output))))
             (opencode--mark-as-output call-end end)
-            (opencode--buttonize-file-references call-end end)
             ;; The first visible output line starts at the call's hidden
             ;; closing fence, so that's where its margin is read from.
             (opencode--add-margin (1+ (opencode--output-content-end call-end))
@@ -790,9 +816,9 @@ Calls not yet finished are recorded so that later events finish them."
                   ("text"
                    (unless (equal last-type "text")
                      (setf opencode-last-response-start start))
-                   (setq opencode--table-scan-marker (copy-marker start))
+                   (opencode--start-text-lines)
                    (opencode--output text)
-                   (opencode--align-finished-tables t))
+                   (opencode--finish-text-lines t))
                   ("reasoning"
                    (opencode--insert-reasoning-block text)))
                 (opencode--output "\n\n")

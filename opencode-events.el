@@ -115,7 +115,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           (session.step.ended
            (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID
-             (opencode--align-finished-tables t)
+             (opencode--finish-text-lines t)
              (setq opencode-session-tokens (opencode--tokens-total .tokens))
              (setq opencode-session-cost (+ opencode-session-cost (or .cost 0)))
              (force-mode-line-update)
@@ -124,7 +124,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           (session.step.failed
            (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID
-             (opencode--align-finished-tables t)))
+             (opencode--finish-text-lines t)))
           (session.retry.scheduled
            (opencode-api-session (.sessionID)
                session

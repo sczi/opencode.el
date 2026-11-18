@@ -100,6 +100,18 @@ This also applies to the session control buffer."
   :type 'boolean
   :group 'opencode)
 
+(defcustom opencode-inline-images t
+  "If non-nil, display file references to images as the images.
+This applies to backticked paths in assistant text and tool calls,
+in graphical frames, for local servers."
+  :type 'boolean
+  :group 'opencode)
+
+(defcustom opencode-inline-image-max-size '(600 . 400)
+  "Maximum (WIDTH . HEIGHT) in pixels of images shown inline."
+  :type '(cons (natnum :tag "Width") (natnum :tag "Height"))
+  :group 'opencode)
+
 (defcustom opencode-session-control-table-columns
   '(:required (title branch last-update created-at)
     :optional (cost tokens cache))
@@ -265,8 +277,21 @@ connection to expand."
     (forward-line (1- line))
     (recenter)))
 
+(defun opencode--inline-image (file)
+  "Return an image to display FILE inline, or nil if it shouldn't be."
+  (when (and opencode-inline-images
+             (display-graphic-p)
+             ;; Loading a remote image needs a connection, and this is done
+             ;; for output, from a process filter.
+             (not (opencode--tramp-prefix))
+             (image-supported-file-p file))
+    (create-image file nil nil
+                  :max-width (car opencode-inline-image-max-size)
+                  :max-height (cdr opencode-inline-image-max-size))))
+
 (defun opencode--buttonize-file-references (start end)
-  "Turn backticked file references between START and END into buttons."
+  "Turn backticked file references between START and END into buttons.
+References to images are displayed as the image, see `opencode-inline-images'."
   (let ((inhibit-read-only t)
         (regexp
          (rx "`"
@@ -281,6 +306,7 @@ connection to expand."
       (while (re-search-forward regexp end t)
         (let* ((match-beg (match-beginning 0))
                (match-end (match-end 0))
+               (file-beg (match-beginning 1))
                (file (match-string-no-properties 1))
                (line-string (match-string-no-properties 2))
                (line (if line-string
@@ -296,7 +322,13 @@ connection to expand."
              'help-echo (if line-string
                             (format "Open %s:%d in another window" file line)
                           (format "Open %s in another window" file))
-             'mouse-face 'highlight)))))))
+             'mouse-face 'highlight)
+            (when-let* ((image (opencode--inline-image path)))
+              ;; Not over the backticks, which Markdown makes invisible,
+              ;; where a display would start.
+              (with-silent-modifications
+                (put-text-property file-beg (1- match-end)
+                                   'display image)))))))))
 
 (defun opencode--default-toast-show (properties)
   "Default notifier to show notification with PROPERTIES from opencode."

@@ -186,8 +186,9 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
   "Stream Markdown without replacing text or losing session decorations."
   (with-opencode-session-test-buffer
     (font-lock-mode 1)
-    (opencode--output "# Heading\n\nSee `opencode-sessions")
-    (opencode--output ".el` and *emphasis*.\n\n")
+    (opencode-session-test--delta 'text "# Heading\n\nSee `opencode-sessions")
+    (opencode-session-test--delta 'text ".el` and *emphasis*.\n\n")
+    (opencode-session-test--ended 'text nil)
     (opencode--insert-tool-block "edit" opencode-session-test--edit)
     (opencode--output "**Testing button behavior**\n\n")
     (opencode--insert-block-with-margin
@@ -228,6 +229,46 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (search-forward "❯ ")
       (should (get-char-property (match-beginning 0) 'invisible))
       (should (opencode-session-test--margin-p (match-beginning 0))))))
+
+(ert-deftest opencode-session-inline-image-test ()
+  "Display references to images in assistant text as the image.
+References in reasoning aren't buttons."
+  (skip-unless (image-type-available-p 'svg))
+  (let ((image (make-temp-file "opencode-test-" nil ".svg"
+                               "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\"/>")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'display-graphic-p) #'always))
+          (with-opencode-session-test-buffer
+            (font-lock-mode 1)
+            (opencode-session-test--delta
+             'text (format "See `%s` and `opencode-sessions.el`.\n\nAgain `%s"
+                           image (substring image 0 5)))
+            (goto-char (point-min))
+            (search-forward image)
+            (let ((button (button-at (1- (point)))))
+              (should button)
+              (should (equal (car (button-get button 'button-data)) image))
+              (should (eq (car-safe (get-text-property (1- (point)) 'display))
+                          'image)))
+            (search-forward "opencode-sessions.el")
+            (should (button-at (1- (point))))
+            (should-not (eq (car-safe (get-text-property (1- (point)) 'display))
+                            'image))
+            ;; The last line is only buttonized once the text part ends.
+            (opencode-session-test--delta 'text (concat (substring image 5) "`"))
+            (search-forward image)
+            (should-not (button-at (1- (point))))
+            (opencode-session-test--ended 'text nil)
+            (should (button-at (1- (point))))
+            (should (eq (car-safe (get-text-property (1- (point)) 'display))
+                        'image))
+            (opencode-session-test--delta 'reasoning (format "Seen `%s`\n\n" image) 1)
+            (opencode-session-test--delta 'text "Done.\n\n" 2)
+            (opencode-session-test--refontify)
+            (search-forward image)
+            (should-not (button-at (1- (point))))
+            (should-not (get-text-property (1- (point)) 'display))))
+      (delete-file image))))
 
 (ert-deftest opencode-session-input-markup-test ()
   "Show the markup of pending input, and hide it once sent."

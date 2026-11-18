@@ -357,10 +357,12 @@ Known bugs in other packages that affect users of opencode.el are documented in
 - =opencode-session-control-table-columns= configures what columns are shown in
   the session management buffer
 - =opencode-mode-line-process=, =opencode-header-line-format=,
-  =opencode-overflow-format= and =opencode-mode-line-format= configure the session information shown in the
-  mode line and header line
+  =opencode-overflow-format= and =opencode-mode-line-format= configure the session
+  information shown in the mode line and header line
 - =opencode-servers=, =opencode-default-server=, and =opencode-project-servers= for
   when you need to connect to multiple opencode servers
+- =opencode-inline-images= and =opencode-inline-image-max-size= configure inline
+  display of images
 
 # Local Variables:
 # flycheck-org-lint-disabled-checkers: (invalid-id-link wrong-header-value)

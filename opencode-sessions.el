@@ -489,10 +489,9 @@ are marked with ✦."
   (let-alist session
     (cond ((and .time.busy (or (null .time.idle) (> .time.busy .time.idle)))
            "⏳")
-          ((equal .outcome "failed") "❌")
           ((seq-find (lambda (alerted) (equal .id (alist-get 'id alerted)))
                      opencode-alerted-sessions)
-           "✦"))))
+           (if (equal .outcome "failed") "❌" "✦")))))
 
 (defun opencode-session--set-status (session-id status)
   "Set STATUS for the session with SESSION-ID and update modeline."

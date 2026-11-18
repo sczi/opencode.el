@@ -190,6 +190,12 @@ to expand everything.
 Imenu contains all user messages for the session, so you can use =consult-imenu=
 to quickly search through and jump to past messages.
 
+Images are displayed inline, and if you have =latex= and =dvisvgm= then math
+formulas will also be rendered. To install in arch linux run:
+#+begin_src sh
+pacman -Sy texlive-latex texlive-latexrecommended texlive-fontsrecommended dvisvgm
+#+end_src
+
 |   Key   | Description                                                                                                                                                                                                                |
 |---------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |   <c>   |                                                                                                                                                                                                                            |
@@ -363,6 +369,8 @@ Known bugs in other packages that affect users of opencode.el are documented in
   when you need to connect to multiple opencode servers
 - =opencode-inline-images= and =opencode-inline-image-max-size= configure inline
   display of images
+- =opencode-render-latex=, =opencode-latex-preamble= and =opencode-latex-scale=
+  configure display of =$...$= and =$$...$$= math as images
 
 # Local Variables:
 # flycheck-org-lint-disabled-checkers: (invalid-id-link wrong-header-value)

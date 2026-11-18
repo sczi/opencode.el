@@ -19,6 +19,7 @@
 (require 'markdown-ts-mode)
 (require 'opencode-common)
 (require 'opencode-format-tool-calls)
+(require 'opencode-latex)
 
 (defcustom opencode-shown-outputs '(shell-non-zero error edit patch question)
   "Outputs in session buffers to show unfolded when first displayed.
@@ -120,6 +121,7 @@ Isolate conventional code-block fontification from session properties."
                      (funcall collect mode beg finish)
                    (opencode--fontify-code-block mode beg finish)))))
       (treesit-font-lock-fontify-region start end loudly)))
+  (opencode--render-latex start end)
   ;; Show all markup of the input being written.
   (when-let* ((process (get-buffer-process (current-buffer)))
               (input-start (max start (process-mark process)))

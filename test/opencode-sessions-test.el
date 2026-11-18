@@ -270,6 +270,40 @@ References in reasoning aren't buttons."
             (should-not (get-text-property (1- (point)) 'display))))
       (delete-file image))))
 
+(ert-deftest opencode-session-latex-test ()
+  "Display math as images once rendered, but not the text between prices."
+  (skip-unless (and (image-type-available-p 'svg)
+                    (executable-find "latex")
+                    (executable-find "dvisvgm")))
+  (let ((opencode-render-latex t)
+        (opencode--latex-cache (make-hash-table :test 'equal))
+        (opencode--latex-waiting (make-hash-table :test 'equal))
+        (opencode--latex-queue nil)
+        (opencode--latex-busy nil))
+    (cl-letf (((symbol-function 'display-graphic-p) #'always))
+      (with-opencode-session-test-buffer
+        (font-lock-mode 1)
+        (opencode-session-test--delta
+         'text "So $$E = mc^2$$ and $x^2$, for $5 and $10.\n\nBad $\\frac{$.\n\n")
+        (font-lock-ensure)
+        (let ((image-at (lambda (text)
+                          (goto-char (point-min))
+                          (search-forward text)
+                          (let ((display (get-text-property (match-beginning 0) 'display)))
+                            (and (eq (car-safe display) 'image) display)))))
+          (opencode-test-wait-until
+           (progn (font-lock-ensure)
+                  (and (funcall image-at "E = mc^2") (funcall image-at "x^2")
+                       (not opencode--latex-busy)))
+           10)
+          (should (consp (gethash '("E = mc^2" . t) opencode--latex-cache)))
+          (should (consp (gethash '("x^2" . nil) opencode--latex-cache)))
+          (should (eq 'error (gethash '("\\frac{" . nil) opencode--latex-cache)))
+          (should-not (funcall image-at "\\frac{"))
+          (should-not (funcall image-at "5 and "))
+          (opencode-session-test--refontify)
+          (should (funcall image-at "E = mc^2")))))))
+
 (ert-deftest opencode-session-input-markup-test ()
   "Show the markup of pending input, and hide it once sent."
   (with-opencode-session-test-buffer

@@ -17,6 +17,7 @@
 
 (require 'ert)
 (require 'opencode)
+(require 'opencode-test-helpers)
 (require 'websocket)
 
 (defvar opencode-test-port nil
@@ -38,9 +39,6 @@
           "(cat <&3 >/dev/null; kill $server 2>/dev/null) & watcher=$!; "
           "wait $server; status=$?; kill $watcher 2>/dev/null; exit $status")
   "Shell script running the test server, $0 with port $1, until stdin closes.")
-
-(defvar opencode-test-timeout 10
-  "Seconds to wait for the test server before failing.")
 
 (defvar opencode-test--root nil
   "Temporary directory holding the test server's files, or nil if it's not started.")
@@ -161,22 +159,6 @@ Set `opencode-test--drive-url' to the one of its simulated LLM."
            ;; The server doesn't open the UI's websocket, but it must have one
            . ((ui . ,(format "ws://127.0.0.1:%d" (opencode-test--free-port)))
               (backend . ,opencode-test--drive-url)))))))))
-
-(defun opencode-test--wait (predicate description &optional timeout)
-  "Wait until PREDICATE returns non-nil, and return its value.
-Fail with DESCRIPTION after TIMEOUT seconds, `opencode-test-timeout' by default."
-  (let ((end (+ (float-time) (or timeout opencode-test-timeout)))
-        value)
-    (while (and (not (setq value (funcall predicate)))
-                (< (float-time) end))
-      (accept-process-output nil 0.01))
-    (or value
-        (ert-fail (list "Timed out waiting for" description)))))
-
-(defmacro opencode-test-wait-until (form &optional timeout)
-  "Wait until FORM is non-nil, and return its value.
-Fail after TIMEOUT seconds, `opencode-test-timeout' by default."
-  `(opencode-test--wait (lambda () ,form) ',form ,timeout))
 
 (defun opencode-test--server-live-p ()
   "Return non-nil if the test server is running and its LLM is attached."

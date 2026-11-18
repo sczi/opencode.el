@@ -6,7 +6,27 @@
 
 ;;; Code:
 
+(require 'ert)
 (require 'opencode)
+
+(defvar opencode-test-timeout 10
+  "Seconds to wait for the test server before failing.")
+
+(defun opencode-test--wait (predicate description &optional timeout)
+  "Wait until PREDICATE returns non-nil, and return its value.
+Fail with DESCRIPTION after TIMEOUT seconds, `opencode-test-timeout' by default."
+  (let ((end (+ (float-time) (or timeout opencode-test-timeout)))
+        value)
+    (while (and (not (setq value (funcall predicate)))
+                (< (float-time) end))
+      (accept-process-output nil 0.01))
+    (or value
+        (ert-fail (list "Timed out waiting for" description)))))
+
+(defmacro opencode-test-wait-until (form &optional timeout)
+  "Wait until FORM is non-nil, and return its value.
+Fail after TIMEOUT seconds, `opencode-test-timeout' by default."
+  `(opencode-test--wait (lambda () ,form) ',form ,timeout))
 
 (defmacro with-opencode-session-test-buffer (&rest body)
   "Run BODY in a temporary `opencode-session-mode' buffer.

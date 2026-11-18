@@ -204,19 +204,15 @@ If INITIAL-PROMPT is given, it is sent after CALLBACK is called."
 
 (defun opencode-fork-session ()
   "Fork the current session from the message at point.
-Creates a new session starting from the current user message.
-If point is before the first prompt, creates a new session instead."
+Creates a new session starting from the current user message."
   (interactive)
   (unless opencode-session-id
     (user-error "Not in an opencode session buffer"))
   (opencode--current-user-message message
-    (if message
-        (opencode-api-fork-session (opencode-session-id)
-            `((before . ,(alist-get 'id message)))
-            session
-          (opencode-open-session session))
-      ;; if before the first prompt just open a new session
-      (opencode-new-session))))
+    (opencode-api-fork-session (opencode-session-id)
+        `((before . ,(alist-get 'id message)))
+        session
+      (opencode-open-session session))))
 
 (defun opencode-revert-message ()
   "Revert the user message at point and everything after it.
@@ -227,8 +223,6 @@ Its text and labels are put back in the prompt to edit and resend."
   (let ((start (copy-marker (opencode--prompt-start)))
         (input (opencode--prompt-input)))
     (opencode--current-user-message message
-      (unless message
-        (user-error "No user message at point"))
       (opencode-api-revert-message (opencode-session-id)
           `((messageID . ,(alist-get 'id message)))
           _result

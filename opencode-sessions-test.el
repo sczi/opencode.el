@@ -224,6 +224,28 @@ OUTPUT is the error message when STATUS is \"error\".  CALL-ID defaults to TOOL.
       (should (get-char-property start 'invisible))
       (should (opencode-session-test--margin-p start)))))
 
+(ert-deftest opencode-session-before-first-prompt-test ()
+  "Fork and revert refuse, without a request, before the first prompt."
+  (with-opencode-session-test-buffer
+    (opencode--output "logo ❯\n\n")
+    (opencode--replay-input "hi")
+    (opencode--output "reply\n\n")
+    (opencode--show-prompt)
+    (cl-letf (((symbol-function 'opencode-api--request)
+               (lambda (&rest _) (ert-fail "Unexpected api request"))))
+      (let ((text (buffer-string)))
+        (dolist (pos (list (point-min) 3))
+          (goto-char pos)
+          (should-not (opencode--current-message-number))
+          (should-error (opencode-fork-session) :type 'user-error)
+          (should-error (opencode-revert-message) :type 'user-error)
+          (should (equal-including-properties (buffer-string) text)))))
+    (goto-char (point-min))
+    (search-forward "hi")
+    (should (equal 0 (opencode--current-message-number)))
+    (goto-char (point-max))
+    (should (equal 1 (opencode--current-message-number)))))
+
 (ert-deftest opencode-session-send-empty-input-test ()
   "Don't send empty input, from the prompt or from an empty line above it."
   (with-opencode-session-test-buffer

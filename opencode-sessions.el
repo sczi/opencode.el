@@ -863,18 +863,27 @@ Emacs gives it the field `input'.  Input at the prompt isn't sent yet."
 (defun opencode--current-message-number ()
   "Return the 0-indexed message number at point.
 Counts prompts from the beginning of the buffer to the current position.
-Returns 0 if point is before the first prompt."
+Returns nil if point is before the first prompt."
   (save-excursion
-    (opencode--goto-prompt-input)
-    (let ((target-point (point)))
-      (goto-char (point-min))
-      (cl-loop do (comint-next-prompt 1)
-               while (< (point) target-point)
-               count t))))
+    (let ((pos (point))
+          (first (progn (goto-char (point-min))
+                        (comint-next-prompt 1)
+                        (point))))
+      (unless (or (= first (point-min))
+                  (< pos (let ((inhibit-field-text-motion t))
+                           (line-beginning-position))))
+        (goto-char pos)
+        (opencode--goto-prompt-input)
+        (let ((target-point (point)))
+          (goto-char (point-min))
+          (cl-loop do (comint-next-prompt 1)
+                   while (< (point) target-point)
+                   count t))))))
 
 (defmacro opencode--current-user-message (result &rest body)
-  "Run BODY with RESULT as the user message at point, nil before the first.
-Prompts are user messages and shell commands, in order."
+  "Run BODY with RESULT as the user message at point.
+Prompts are user messages and shell commands, in order.  Signal a
+`user-error' if point is before the first prompt."
   (declare (indent defun))
   (let ((message-number (gensym "message-number"))
         (messages (gensym "messages"))
@@ -882,7 +891,7 @@ Prompts are user messages and shell commands, in order."
     `(let ((,message-number (opencode--current-message-number))
            (,continue (lambda (,result) ,@body)))
        (if (not ,message-number)
-           (funcall ,continue nil)
+           (user-error "No user message at point")
          (opencode-api-all-messages (opencode-session-id)
              ,messages
            (let ((message (nth ,message-number
@@ -890,6 +899,8 @@ Prompts are user messages and shell commands, in order."
                                              (member (alist-get 'type message)
                                                      '("user" "shell")))
                                            ,messages))))
+             (unless message
+               (user-error "No user message at point"))
              (when (equal "shell" (alist-get 'type message))
                (user-error "Can't do that to a shell command"))
              (funcall ,continue message)))))))

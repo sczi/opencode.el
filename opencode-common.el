@@ -387,6 +387,39 @@ it again on redisplay, which is harmless."
        (with-current-buffer ,buffer
          ,@body))))
 
+(defun opencode--line-position (line)
+  "Return the position of the start of LINE in the current buffer.
+It's the last line if there are fewer than LINE."
+  (save-excursion
+    (goto-char (point-min))
+    (forward-line (1- line))
+    (point)))
+
+(defun opencode--call-preserving-lines (fn)
+  "Call FN, then restore the lines of point in the current buffer and its windows.
+The line of each window's start is restored too, so redrawing the whole
+buffer doesn't scroll windows it isn't selected in."
+  (let ((line (line-number-at-pos))
+        (windows (mapcar (lambda (window)
+                           (list window
+                                 (line-number-at-pos (window-point window))
+                                 (line-number-at-pos (window-start window))))
+                         (get-buffer-window-list nil nil t))))
+    (funcall fn)
+    (goto-char (opencode--line-position line))
+    (pcase-dolist (`(,window ,point-line ,start-line) windows)
+      (when (and (window-live-p window)
+                 (eq (window-buffer window) (current-buffer)))
+        (set-window-start window (opencode--line-position start-line) t)
+        (set-window-point window (opencode--line-position point-line))))))
+
+(defmacro opencode--with-preserved-lines (&rest body)
+  "Run BODY, then restore the lines of point in the current buffer and its windows.
+For BODY that redraws the whole buffer.  See
+`opencode--call-preserving-lines'."
+  (declare (indent 0) (debug t))
+  `(opencode--call-preserving-lines (lambda () ,@body)))
+
 (defvar opencode-event-log-max-lines nil
   "Maximum number of lines to log in the opencode event log buffer.
 Or nil to disable logging.")

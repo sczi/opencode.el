@@ -402,34 +402,32 @@ Run CALLBACK once fetched."
 
 (defun opencode--draw-connection-list ()
   "Draw the connection list in the current buffer."
-  (let ((inhibit-read-only t)
-        (line (line-number-at-pos)))
-    (erase-buffer)
-    (if (not opencode-connections)
-        (insert "No opencode connections")
-      (make-vtable
-       :columns '((:name "" :width 1) (:name "Name" :min-width 5) "URL" "Status"
-                  (:name "Sessions" :align right :min-width 8))
-       :objects opencode-connections
-       :getter (lambda (connection column _vtable)
-                 (pcase column
-                   (0 (if (eq connection opencode-default-connection) "*" ""))
-                   (1 (format "%s" (opencode-connection-name connection)))
-                   (2 (opencode-connection-url connection))
-                   (3 (opencode--connection-status connection))
-                   (4 (cl-loop for buffer being the hash-values
-                               of (opencode-connection-session-buffers connection)
-                               count (buffer-live-p buffer)))))
-       :actions (list "RET" (lambda (connection)
-                              (opencode-autoconnect #'opencode--read-project connection))
-                      "d" #'opencode--set-default-connection
-                      "x" #'opencode--disconnect
-                      "R" #'opencode--restart-server)
-       ;; So its g, which redraws from `opencode-connections', wins over
-       ;; vtable's, which just refreshes current entries, doesn't check for new ones
-       :keymap opencode-connection-list-mode-map))
-    (goto-char (point-min))
-    (forward-line (1- line))))
+  (let ((inhibit-read-only t))
+    (opencode--with-preserved-lines
+      (erase-buffer)
+      (if (not opencode-connections)
+          (insert "No opencode connections")
+        (make-vtable
+         :columns '((:name "" :width 1) (:name "Name" :min-width 5) "URL" "Status"
+                    (:name "Sessions" :align right :min-width 8))
+         :objects opencode-connections
+         :getter (lambda (connection column _vtable)
+                   (pcase column
+                     (0 (if (eq connection opencode-default-connection) "*" ""))
+                     (1 (format "%s" (opencode-connection-name connection)))
+                     (2 (opencode-connection-url connection))
+                     (3 (opencode--connection-status connection))
+                     (4 (cl-loop for buffer being the hash-values
+                                 of (opencode-connection-session-buffers connection)
+                                 count (buffer-live-p buffer)))))
+         :actions (list "RET" (lambda (connection)
+                                (opencode-autoconnect #'opencode--read-project connection))
+                        "d" #'opencode--set-default-connection
+                        "x" #'opencode--disconnect
+                        "R" #'opencode--restart-server)
+         ;; So its g, which redraws from `opencode-connections', wins over
+         ;; vtable's, which just refreshes current entries, doesn't check for new ones
+         :keymap opencode-connection-list-mode-map)))))
 
 (defun opencode-list-connections ()
   "List the connections to opencode servers.

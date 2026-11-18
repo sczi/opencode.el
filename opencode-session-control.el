@@ -603,29 +603,28 @@ only shown if the table fits in the window."
     (opencode--fetch-claude-plan-tier))
   (opencode--fetch-claude-rate-limit sessions)
   (let ((inhibit-read-only t)
-        (point (point))
         (window (get-buffer-window (current-buffer) t))
         (required (plist-get opencode-session-control-table-columns :required))
         (optional (plist-get opencode-session-control-table-columns :optional)))
-    (erase-buffer)
-    (if (not sessions)
-        (insert "No sessions in " (or default-directory "unknown directory"))
-      (if (not window)
-          (opencode--session-control-insert-table sessions required)
-        ;; vtable computes percentage widths from the selected window
-        (with-selected-window window
-          (opencode--session-control-insert-table
-           sessions (append required optional))
-          (when (and optional
-                     (> (car (window-text-pixel-size
-                              window (point-min) (point-max) t))
-                        (window-body-width window t)))
-            (erase-buffer)
-            (opencode--session-control-insert-table sessions required)))))
-    (setq opencode--session-control-width
-          (and window (window-body-width window t)))
-    (opencode--session-control-update-usage)
-    (goto-char point)))
+    (opencode--with-preserved-lines
+      (erase-buffer)
+      (if (not sessions)
+          (insert "No sessions in " (or default-directory "unknown directory"))
+        (if (not window)
+            (opencode--session-control-insert-table sessions required)
+          ;; vtable computes percentage widths from the selected window
+          (with-selected-window window
+            (opencode--session-control-insert-table
+             sessions (append required optional))
+            (when (and optional
+                       (> (car (window-text-pixel-size
+                                window (point-min) (point-max) t))
+                          (window-body-width window t)))
+              (erase-buffer)
+              (opencode--session-control-insert-table sessions required)))))
+      (setq opencode--session-control-width
+            (and window (window-body-width window t)))
+      (opencode--session-control-update-usage))))
 
 (defun opencode--session-control-window-size-change (window)
   "Redisplay the session control table in WINDOW if its width changed."

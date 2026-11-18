@@ -161,6 +161,42 @@
                              (opencode-test-llm-user-text
                               (car (last opencode-test-llm-requests))))))))
 
+(ert-deftest opencode-integration-alert-after-background-test ()
+  "A session isn't alerted as finished until its background shell finishes."
+  (opencode-test-with-session nil
+    (let (job-lists)
+      (cl-letf* ((request (symbol-function 'opencode-api--request))
+                 ((symbol-function 'opencode-api--request)
+                  (lambda (method path &rest args)
+                    (if (not (string-prefix-p "/api/experimental/job" path))
+                        (apply request method path args)
+                      (let ((then (plist-get args :then)))
+                        (apply request method path
+                               :then (lambda (jobs)
+                                       (funcall then jobs)
+                                       (push jobs job-lists))
+                               args)))))
+                 ((symbol-function 'opencode--buffer-active-p) #'ignore))
+        (opencode-test-llm-reply
+         '((:tool "shell" ((command . "while [ ! -e go ]; do sleep 0.1; done; echo went")
+                           (background . t))))
+         "Started it."
+         "It went.")
+        (opencode-test-send "Run it in the background")
+        (opencode-test-wait-until job-lists)
+        (should (car job-lists))
+        (should-not opencode-alerted-sessions)
+        (let ((since (length opencode-test-events)))
+          (write-region "" nil "go")
+          (opencode-test-wait-until
+           (opencode-test-event-p "session.execution.started" nil since))
+          (opencode-test-wait-finished since))
+        (opencode-test-wait-until opencode-alerted-sessions)
+        (should (equal 2 (length job-lists)))
+        (should-not (car job-lists))
+        (should (equal 1 (length opencode-alerted-sessions)))
+        (should (string-search "It went." (opencode-test-output)))))))
+
 (ert-deftest opencode-integration-continued-step-test ()
   "Text of a step the server continues is spaced from the next step's."
   (opencode-test-with-session nil

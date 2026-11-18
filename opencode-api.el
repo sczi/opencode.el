@@ -200,6 +200,8 @@ may start with :else HANDLER to handle errors."
   "/api/session?project=%s&archived=false&limit=200&parentID=null")
  (session-children "/api/session?parentID=%s")
  (sessions-active "/api/session/active")
+ (session-running-jobs
+  "/api/experimental/job?sessionID=%s&descendants=true&status=running")
  (post create-session "/api/session")
  (patch rename-session "/api/session/%s")
  (patch archive-session "/api/session/%s")

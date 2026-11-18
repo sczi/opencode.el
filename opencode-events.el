@@ -60,10 +60,15 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
                (opencode--buffer-active-p (current-buffer))
                ;; don't show alert for subagent sessions
                (alist-get 'parentID session))
-        (opencode--toast-show `((title . "OpenCode Finished")
-                                (message . ,(opencode--session-title session))
-                                (variant . "success")))
-        (opencode--alert-session session)))))
+        ;; A background subagent or shell still running will wake the
+        ;; session when it finishes, so alert once that run finishes.
+        (opencode-api-session-running-jobs (session-id)
+            jobs
+          (unless (or jobs (opencode--buffer-active-p (current-buffer)))
+            (opencode--toast-show `((title . "OpenCode Finished")
+                                    (message . ,(opencode--session-title session))
+                                    (variant . "success")))
+            (opencode--alert-session session)))))))
 
 (defun opencode--handle-message (event)
   "Handle decoded EVENT from opencode server."

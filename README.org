@@ -68,7 +68,8 @@ of advantages over the official TUI:
      git branch and worktree for the current project, and start an opencode session in it
    - =`file`= and =file:line= references in LLM output are turned into clickable buttons
    - use =dabbrev-expand= in the chat window to complete long variable or function
-     names from your code buffers
+     names from your code buffers. We set =dabbrev-select-buffers-function= in the
+     chat windows, to include all other buffers from your project.
    - configure how your custom MCP and tools are displayed with =opencode-tool-formatters=
    - I use with [[https://codeberg.org/sczi/eval-elisp-mcp][eval-elisp-mcp]] when developing in elisp.
    - For python development integrated with opencode.el, with features like AI

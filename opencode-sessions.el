@@ -560,6 +560,11 @@ are marked with ✦."
 
 (defvar evil-buffer-regexps)
 
+(defun opencode--dabbrev-project-buffers ()
+  "Return the buffers dabbrev searches: the current project's, but not this one."
+  (when-let* ((project (project-current)))
+    (remq (current-buffer) (project-buffers project))))
+
 (define-derived-mode opencode-session-mode comint-mode "OpenCode"
   "Major mode for interacting with an opencode session."
   (setq-local comint-use-prompt-regexp nil
@@ -591,6 +596,8 @@ are marked with ✦."
   ;; Index user messages instead of Markdown headings.  The index is a
   ;; cheap text property walk, so rescan it as the session grows,
   ;; whatever its size.
+  ;; Complete words from the code being discussed, not just other sessions.
+  (setq-local dabbrev-select-buffers-function #'opencode--dabbrev-project-buffers)
   (setq-local imenu-create-index-function #'opencode--imenu-create-index
               imenu-auto-rescan t
               imenu-auto-rescan-maxout most-positive-fixnum)

@@ -355,6 +355,28 @@ The server may briefly remove a file while restoring it, as on revert."
                               (process-mark (get-buffer-process (current-buffer)))
                               (point-max))))))
 
+(ert-deftest opencode-integration-turn-file-diffs-test ()
+  "A message's turn diff has only the files that turn changed, before and after."
+  (opencode-test-with-session '(("a.txt" . "one\n"))
+    (opencode-test-llm-reply
+     '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
+     "Edited."
+     '((:tool "write" ((path . "b.txt") (content . "new\n"))))
+     "Wrote.")
+    (opencode-test-send "Edit it")
+    (opencode-test-send "Write it")
+    (goto-char (opencode-test--search "Edit it"))
+    (let (diffs)
+      (opencode--current-user-message message
+        (opencode--turn-file-diffs (alist-get 'id message)
+                                   (lambda (result) (setq diffs (list result)))))
+      (opencode-test-wait-until diffs)
+      (pcase-let ((`((,diff)) diffs))
+        (should (equal "a.txt" (alist-get 'file diff)))
+        (should (equal "modified" (alist-get 'status diff)))
+        (should (equal '("one\n" . "two\n")
+                       (opencode--patch-sides (alist-get 'patch diff))))))))
+
 (ert-deftest opencode-integration-kill-session-test ()
   "Killing a session deletes it on the server, and kills its buffer."
   (opencode-test-with-session nil

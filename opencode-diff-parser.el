@@ -304,5 +304,31 @@ line 80 is the insertion/deletion point in the new file."
 
     (opencode--table->alist table)))
 
+(defun opencode--patch-sides (patch)
+  "Return (BEFORE . AFTER), the texts of a file compared by PATCH.
+PATCH is a single-file unified diff whose hunks cover the whole file,
+such as the server's patches without a context limit."
+  (let ((lines (split-string (string-remove-suffix "\n" patch) "\n"))
+        ;; Each element is (TEXT IN-BEFORE IN-AFTER), most recent first
+        out in-hunk)
+    (dolist (line lines)
+      (cond
+       ((and in-hunk (opencode--diff-no-newline-marker-p line))
+        ;; The previous line has no newline, so drop the one we gave it
+        (when out
+          (setcar (car out) (string-remove-suffix "\n" (caar out)))))
+       ((opencode--parse-unified-hunk-header line)
+        (setq in-hunk t))
+       (in-hunk
+        ;; A bare empty line is a blank context line whose space was lost
+        (let ((type (if (string-empty-p line) ?\s (aref line 0))))
+          (push (list (concat (if (string-empty-p line) "" (substring line 1)) "\n")
+                      (/= type ?+)
+                      (/= type ?-))
+                out)))))
+    (setq out (nreverse out))
+    (cons (mapconcat #'car (seq-filter #'cadr out))
+          (mapconcat #'car (seq-filter #'caddr out)))))
+
 (provide 'opencode-diff-parser)
 ;;; opencode-diff-parser.el ends here

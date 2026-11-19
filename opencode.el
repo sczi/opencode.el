@@ -231,6 +231,87 @@ Its text and labels are put back in the prompt to edit and resend."
         (opencode--truncate-to-prompt start input)
         (message "Reverted edits after message")))))
 
+(defun opencode--turn-file-diffs (message-id then)
+  "Call THEN with the diffs of the text files changed in MESSAGE-ID's turn.
+They're the server's file diffs, with patches covering the whole files."
+  (opencode-api-turn-diff (opencode-session-id message-id)
+      diffs
+    (funcall then (seq-remove (lambda (diff) (equal "" (alist-get 'patch diff)))
+                              diffs))))
+
+(defun opencode--turn-file-candidates (diffs)
+  "Return `opencode--annotated-completion' candidates for file DIFFS.
+They're annotated with their added and removed line counts, and status
+unless it's modified."
+  (let ((width (lambda (key)
+                 (seq-max (mapcar (lambda (diff)
+                                    (length (number-to-string (alist-get key diff))))
+                                  diffs)))))
+    (let ((added-width (funcall width 'additions))
+          (removed-width (funcall width 'deletions)))
+      (mapcar
+       (lambda (diff)
+         (let-alist diff
+           (list .file
+                 diff
+                 (string-trim-right
+                  (concat
+                   (propertize (string-pad (format "+%d" .additions) (1+ added-width))
+                               'face 'diff-indicator-added)
+                   "  "
+                   (propertize (string-pad (format "-%d" .deletions) (1+ removed-width))
+                               'face 'diff-indicator-removed)
+                   (unless (equal .status "modified")
+                     (concat "  " (propertize .status 'face 'shadow))))))))
+       diffs))))
+
+(defun opencode--ediff-file-diff (diff)
+  "Ediff the before and after texts of file DIFF.
+Its buffers are killed when ediff quits."
+  (let* ((file (alist-get 'file diff))
+         (sides (opencode--patch-sides (alist-get 'patch diff)))
+         (make-buffer
+          (lambda (label text)
+            (let ((buffer (generate-new-buffer
+                           (format "*opencode-turn %s (%s)*" file label))))
+              (with-current-buffer buffer
+                (insert text)
+                (goto-char (point-min))
+                (let ((buffer-file-name (expand-file-name file (opencode--project-root))))
+                  (set-auto-mode))
+                (set-buffer-modified-p nil)
+                (setq buffer-read-only t))
+              buffer)))
+         (before (funcall make-buffer "before" (car sides)))
+         (after (funcall make-buffer "after" (cdr sides))))
+    (ediff-buffers
+     before after
+     (list (lambda ()
+             (add-hook 'ediff-quit-hook
+                       (lambda ()
+                         (kill-buffer before)
+                         (kill-buffer after))
+                       nil t))))))
+
+(defun opencode-ediff-turn ()
+  "Ediff a file changed during the turn of the user message at point.
+The files are compared from before the turn to its end, so later changes
+aren't shown.  It reads the file when the turn changed several."
+  (interactive)
+  (unless opencode-session-id
+    (user-error "Not in an opencode session buffer"))
+  (opencode--current-user-message message
+    (opencode--turn-file-diffs
+     (alist-get 'id message)
+     (lambda (diffs)
+       (pcase diffs
+         ('nil (user-error "The turn changed no text files"))
+         (`(,diff) (opencode--ediff-file-diff diff))
+         (_ (when-let* ((diff (opencode--annotated-completion
+                               "Ediff file: "
+                               (opencode--turn-file-candidates diffs))))
+              (opencode--ediff-file-diff diff))))))))
+
 (defun opencode-unrevert-all ()
   "Unrevert all reverted messages in the current session."
   (interactive)

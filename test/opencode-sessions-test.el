@@ -348,6 +348,7 @@ References in reasoning aren't buttons."
           (should-not (opencode--current-message-number))
           (should-error (opencode-fork-session) :type 'user-error)
           (should-error (opencode-revert-message) :type 'user-error)
+          (should-error (opencode-ediff-turn) :type 'user-error)
           (should (equal-including-properties (buffer-string) text)))))
     (goto-char (point-min))
     (search-forward "hi")
@@ -2386,6 +2387,22 @@ afterwards."
   (opencode-session-test--with-btw '((text . "answer"))
     (should-error (opencode-btw "  ") :type 'user-error)
     (should-not requests)))
+
+(ert-deftest opencode-turn-file-candidates-test ()
+  "Turn files are annotated with aligned line counts, and unusual statuses."
+  (let ((candidates
+         (opencode--turn-file-candidates
+          '(((file . "a.el") (additions . 12) (deletions . 3) (status . "modified"))
+            ((file . "new.el") (additions . 4) (deletions . 0) (status . "added"))
+            ((file . "old.el") (additions . 0) (deletions . 100) (status . "deleted"))))))
+    (should (equal '("a.el" "new.el" "old.el") (mapcar #'car candidates)))
+    (should (equal "new.el" (alist-get 'file (nth 1 (nth 1 candidates)))))
+    (should (equal '("+12  -3" "+4   -0    added" "+0   -100  deleted")
+                   (mapcar #'caddr candidates)))
+    (let ((annotation (caddr (car candidates))))
+      (should (eq 'diff-indicator-added (get-text-property 0 'face annotation)))
+      (should (eq 'diff-indicator-removed (get-text-property 5 'face annotation))))
+    (should (eq 'shadow (get-text-property 11 'face (caddr (nth 1 candidates)))))))
 
 (provide 'opencode-sessions-test)
 ;;; opencode-sessions-test.el ends here

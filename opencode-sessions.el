@@ -61,6 +61,7 @@
     "C-c M" 'opencode-toggle-mcp
     "C-c F" 'opencode-fork-session
     "C-c r" 'opencode-revert-message
+    "C-c e" 'opencode-ediff-turn
     "C-c C-x n" 'opencode-next-connection
     "C-c C-x p" 'opencode-prev-connection
     "C-c C-x c" 'opencode-list-connections

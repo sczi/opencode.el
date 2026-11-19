@@ -5,17 +5,6 @@
 ;; Author: Scott Zimmermann <sczi@disroot.org>
 ;; Keywords: internal
 
-;;; Commentary:
-
-;; ERT tests for `opencode-diff-parser.el'.
-;;
-;; Run from the project root with:
-;;
-;;   emacs -Q -L . -batch \
-;;     -l opencode-diff-parser.el \
-;;     -l opencode-diff-parser-test.el \
-;;     -f ert-run-tests-batch-and-exit
-
 ;;; Code:
 
 (require 'ert)
@@ -271,6 +260,37 @@ This also uses a bare empty line inside the hunk."
              "+three\n"
              " four\n"))
     '(("dir/a.txt" (2 . 2))))))
+
+(ert-deftest opencode-patch-sides-test ()
+  "A full-file patch gives the file's texts before and after it."
+  (should (equal '("one\n\ntwo\nthree\n" . "one\n\nTWO\nthree\n")
+                 (opencode--patch-sides
+                  (concat "Index: a.txt\n===\n--- a.txt\n+++ a.txt\n"
+                          "@@ -1,4 +1,4 @@\n one\n \n-two\n+TWO\n three\n"))))
+  ;; A bare empty line is a blank context line
+  (should (equal '("a\n\nb\n" . "a\n\nc\n")
+                 (opencode--patch-sides "--- a\n+++ a\n@@ -1,3 +1,3 @@\n a\n\n-b\n+c\n"))))
+
+(ert-deftest opencode-patch-sides-no-newline-test ()
+  "A no-newline marker drops the newline only from its line's side."
+  (should (equal '("one\ntwo" . "one\ntwo\n")
+                 (opencode--patch-sides
+                  (concat "--- a\n+++ a\n@@ -1,2 +1,2 @@\n one\n-two\n"
+                          "\\ No newline at end of file\n+two\n"))))
+  (should (equal '("one\n" . "one")
+                 (opencode--patch-sides
+                  (concat "--- a\n+++ a\n@@ -1 +1 @@\n-one\n+one\n"
+                          "\\ No newline at end of file\n"))))
+  (should (equal '("same" . "same")
+                 (opencode--patch-sides
+                  "--- a\n+++ a\n@@ -1 +1 @@\n same\n\\ No newline at end of file\n"))))
+
+(ert-deftest opencode-patch-sides-added-deleted-test ()
+  "An added file has no before text, and a deleted one no after text."
+  (should (equal '("" . "x\ny\n")
+                 (opencode--patch-sides "--- /dev/null\n+++ b\n@@ -0,0 +1,2 @@\n+x\n+y\n")))
+  (should (equal '("x\n" . "")
+                 (opencode--patch-sides "--- a\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n"))))
 
 (provide 'opencode-diff-parser-test)
 ;;; opencode-diff-parser-test.el ends here

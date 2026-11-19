@@ -218,6 +218,8 @@ may start with :else HANDLER to handle errors."
  (recent-assistant-messages
   "/api/session/%s/message?type=assistant&order=desc&limit=50")
  (session-diff "/api/session/%s/diff?context=0")
+ ;; Without context the patches cover the whole files
+ (turn-diff "/api/session/%s/diff?from=%s")
  (post revert-message "/api/session/%s/revert/stage")
  (delete unrevert-all "/api/session/%s/revert")
  (session-permissions "/api/session/%s/permission")

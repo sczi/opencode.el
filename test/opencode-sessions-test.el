@@ -538,28 +538,41 @@ References in reasoning aren't buttons."
     (opencode-yank-code-block)
     (should (equal (current-kill 0 t) "```\ntext\n"))))
 
+(defun opencode-session-test--table-displays (&optional properties)
+  "Return the display strings of the rendered table rows, in buffer order.
+Keep their text properties if PROPERTIES is non-nil."
+  (mapcar (lambda (overlay)
+            (let ((display (overlay-get overlay 'display)))
+              (if properties display (substring-no-properties display))))
+          (sort (seq-filter (lambda (overlay) (overlay-get overlay 'opencode-table))
+                            (overlays-in (point-min) (point-max)))
+                :key #'overlay-start)))
+
 (ert-deftest opencode-session-completed-tables-test ()
-  "Align completed streamed tables once without disturbing pending input."
+  "Render completed streamed tables once without disturbing pending input."
   (with-opencode-session-test-buffer
-    (let ((align (symbol-function 'opencode--align-output-table))
+    (let ((render (symbol-function 'opencode--render-table))
           (calls 0))
-      (cl-letf (((symbol-function 'opencode--align-output-table)
-                 (lambda (beg end)
+      (cl-letf (((symbol-function 'opencode--render-table)
+                 (lambda (table)
                    (cl-incf calls)
-                   (funcall align beg end))))
+                   (funcall render table))))
         (insert "pending input")
-        (opencode-session-test--delta 'text "| File | Value |\n")
-        (opencode-session-test--delta 'text "| :--- | ---: |\n")
-        (opencode-session-test--delta 'text "| `opencode-sessions.el` | 7 |\n")
-        (should (= calls 0))
-        ;; An incomplete following line cannot yet establish the boundary.
-        (opencode-session-test--delta 'text "# Following")
-        (should (= calls 0))
-        (opencode-session-test--delta 'text " prose.\n")
-        (should (= calls 1))
-        (let ((output (opencode-session-test--output)))
-          (should (string-match-p "| +7|" output))
-          (should (string-suffix-p "Following prose.\n" output)))
+        (let ((table "| File | Value |\n| :--- | ---: |\n| `opencode-sessions.el` | 7 |\n"))
+          (opencode-session-test--delta 'text table)
+          (should (= calls 0))
+          ;; An incomplete following line cannot yet establish the boundary.
+          (opencode-session-test--delta 'text "# Following")
+          (should (= calls 0))
+          (opencode-session-test--delta 'text " prose.\n")
+          (should (= calls 1))
+          ;; The text stays the received Markdown, displayed as a box.
+          (should (string-suffix-p (concat "\n" table "# Following prose.\n")
+                                   (opencode-session-test--output)))
+          (should (equal (opencode-session-test--table-displays)
+                         '("┌──────────────────────┬───────┐\n│ File                 │ Value │"
+                           "├──────────────────────┼───────┤"
+                           "│ opencode-sessions.el │     7 │\n└──────────────────────┴───────┘"))))
         (should (equal (buffer-substring-no-properties
                         (process-mark process) (point-max))
                        "pending input"))
@@ -567,10 +580,8 @@ References in reasoning aren't buttons."
         (save-excursion
           (goto-char (point-min))
           (search-forward "opencode-sessions.el")
-          (should (button-at (1- (point))))
-          (search-forward "7|")
-          (should (eq (get-text-property (match-beginning 0) 'field) 'output)))
-        ;; A fenced table is code and must never be aligned.
+          (should (button-at (1- (point)))))
+        ;; A fenced table is code and must never be rendered.
         (opencode-session-test--delta
          'text "\n```markdown\n| Code | Value |\n| --- | --- |\n| x | y |\n```\n\n")
         (should (= calls 1))
@@ -591,6 +602,75 @@ References in reasoning aren't buttons."
         (should (equal (buffer-substring-no-properties
                         (process-mark process) (point-max))
                        "pending input"))))))
+
+(ert-deftest opencode-session-table-wrap-test ()
+  "Tables wider than the window wrap their widest cells, and rewrap on resize."
+  (with-opencode-session-test-buffer
+    (let ((fill-column 80))
+      (opencode-session-test--delta
+       'text (concat "| Option | Description |\n| --- | :-: |\n"
+                     "| a | The base URL of the server the client connects to |\n\n"))
+      ;; It fits, so isn't wrapped.
+      (should (equal (nth 2 (opencode-session-test--table-displays))
+                     (concat "│ a      │ The base URL of the server the client connects to │\n"
+                             "└────────┴───────────────────────────────────────────────────┘")))
+      (setq fill-column 30)
+      (opencode--rerender-tables)
+      (let ((displays (opencode-session-test--table-displays)))
+        (should (equal (nth 2 displays)
+                       (concat "│ a      │  The base URL of  │\n"
+                               "│        │  the server the   │\n"
+                               "│        │  client connects  │\n"
+                               "│        │        to         │\n"
+                               "└────────┴───────────────────┘")))
+        ;; Every line of the box is exactly as wide as is available.
+        (should (equal (delete-dups
+                        (mapcar #'string-width
+                                (split-string (string-join displays "\n") "\n")))
+                       '(30)))))))
+
+(ert-deftest opencode-session-table-markdown-test ()
+  "Table cells display their Markdown with its markup hidden."
+  (with-opencode-session-test-buffer
+    (opencode-session-test--delta
+     'text "| A | B |\n| --- | --- |\n| `code` | **bold** [link](http://x.y) `a \\| b` |\n\n")
+    (let ((row (car (split-string (nth 2 (opencode-session-test--table-displays t))
+                                  "\n"))))
+      (should (equal (substring-no-properties row) "│ code │ bold link a | b │"))
+      (should (memq 'markdown-ts-code-span
+                    (ensure-list (get-text-property (string-search "code" row) 'face row))))
+      (should (memq 'markdown-ts-bold
+                    (ensure-list (get-text-property (string-search "bold" row) 'face row)))))))
+
+(ert-deftest opencode-session-table-button-test ()
+  "File references in rendered tables can be clicked."
+  (with-opencode-session-test-buffer
+    (opencode-session-test--delta
+     'text "| File | Line |\n| --- | --- |\n| `opencode-sessions.el:3` | 3 |\n\n")
+    (let* ((display (nth 2 (opencode-session-test--table-displays t)))
+           (index (string-search "opencode-sessions.el" display))
+           visited)
+      (should (eq (get-text-property index 'keymap display) button-map))
+      (should (eq (get-text-property index 'mouse-face display) 'highlight))
+      (cl-letf (((symbol-function 'opencode--visit-file-location)
+                 (lambda (location) (setq visited location))))
+        (save-window-excursion
+          (switch-to-buffer (current-buffer))
+          (push-button `(mouse-2 (,(selected-window) 1 (0 . 0) 0
+                                  (,display . ,(1+ index)))))))
+      (should (equal (cdr visited) 3))
+      (should (string-suffix-p "/opencode-sessions.el" (car visited))))))
+
+(ert-deftest opencode-session-table-cell-text-test ()
+  "Cell widths ignore hidden markup, and long words are broken."
+  (with-opencode-session-test-buffer
+    (insert "**ab**")
+    (put-text-property (point-min) (+ (point-min) 2) 'invisible t)
+    (put-text-property (- (point-max) 2) (point-max) 'invisible t)
+    (should (equal (opencode--table-cell-text (point-min) (point-max)) "ab")))
+  (should (equal (opencode--table-wrap "abcdefghij kl" 4) '("abcd" "efgh" "ij" "kl")))
+  (should (equal (opencode--table-wrap "" 4) '("")))
+  (should (equal (opencode--table-column-widths '(3 50 20) 40) '(3 18 18))))
 
 (ert-deftest opencode-session-reasoning-leading-newline-test ()
   "A streamed reasoning part starting with a newline adds no blank line or margin."
@@ -892,28 +972,8 @@ The first visible output line starts at that hidden fence."
       (opencode-session-test--tool "execute" "completed" input "3")
       (should (funcall fence-margin-p)))))
 
-(ert-deftest opencode-session-table-alignment-context-test ()
-  "Table alignment must not schedule a context mode in the session buffer."
-  (with-opencode-session-test-buffer
-    (insert "| Name | Value |\n| --- | --- |\n| x | y |\n")
-    (let ((markdown-ts-enable-table-mode t)
-          (markdown-ts-enable-code-block-context-mode t)
-          (timer (symbol-function 'run-with-timer))
-          context-timers)
-      (cl-letf (((symbol-function 'run-with-timer)
-                 (lambda (seconds repeat function &rest args)
-                   (if (memq function '(markdown-ts--enable-in-table-mode
-                                        markdown-ts--enable-code-block-in-context-mode))
-                       (push function context-timers)
-                     (apply timer seconds repeat function args)))))
-        (opencode--align-output-table (point-min) (point-max)))
-      (should-not context-timers)
-      (should-not markdown-ts-table-mode)
-      (should-not markdown-ts-in-table-mode)
-      (should (eq (key-binding (kbd "RET")) 'opencode-send-input)))))
-
-(ert-deftest opencode-session-history-table-alignment-test ()
-  "Align replayed assistant tables, preserving user requests and code fences."
+(ert-deftest opencode-session-history-table-rendering-test ()
+  "Render replayed assistant tables, but not user requests and code fences."
   (with-opencode-session-test-buffer
     (let* ((table "| Name | Value |\n| --- | ---: |\n| x | y |")
            (fenced (concat "```markdown\n" table "\n```"))
@@ -924,16 +984,22 @@ The first visible output line starts at that hidden fence."
                   ((type . "text") (text . ,fenced)))
                 "msg_2"))))
       ;; Capture the request separately to verify it reaches the user
-      ;; renderer without going through the table alignment path.
+      ;; renderer without going through the table rendering path.
       (cl-letf (((symbol-function 'opencode--replay-user-request)
                  (lambda (message)
                    (opencode--output (alist-get 'text message))
                    (opencode--output "\n\n"))))
         (opencode--replay-session-messages messages))
       (let ((output (buffer-substring-no-properties (point-min) (point-max))))
-        (should (string-prefix-p (concat table "\n\n") output))
-        (should (string-match-p "|x +| +y|" output))
-        (should (string-suffix-p (concat "\n\n" fenced "\n") output)))
+        (should (equal output (concat table "\n\n" table "\n\n" fenced "\n"))))
+      ;; Only the assistant's table, starting after the request's.
+      (let ((overlays (seq-filter (lambda (overlay) (overlay-get overlay 'opencode-table))
+                                  (overlays-in (point-min) (point-max)))))
+        (should (= (length overlays) 3))
+        (should (> (apply #'min (mapcar #'overlay-start overlays))
+                   (length table))))
+      (should (equal (car (last (opencode-session-test--table-displays)))
+                     "│ x    │     y │\n└──────┴───────┘"))
       (should-not opencode--table-scan-marker)
       (should (= (process-mark process) (point-max))))))
 

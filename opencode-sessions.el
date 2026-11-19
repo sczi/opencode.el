@@ -521,6 +521,15 @@ are marked with ✦."
   ;; Set up Markdown's parser and font-lock without replacing comint as the
   ;; major mode (and losing its process, prompt, and input handling).
   (markdown-ts-mode--initialize)
+  ;; Markdown only parses inline markup in paragraphs, but tables render
+  ;; their cells' markup too.
+  (setq-local treesit-range-settings
+              (append treesit-range-settings
+                      (treesit-range-rules
+                       :embed 'markdown-inline
+                       :host 'markdown
+                       :local t
+                       '((pipe_table_cell) @markdown-inline))))
   ;; Index user messages instead of Markdown headings.  The index is a
   ;; cheap text property walk, so rescan it as the session grows,
   ;; whatever its size.
@@ -543,6 +552,8 @@ are marked with ✦."
   (opencode--setup-mode-line)
   ;; typing while busy starts or ends pending input
   (add-hook 'after-change-functions #'opencode--update-pending-input nil t)
+  ;; Rendered tables wrap their cells to fit the window.
+  (add-hook 'window-size-change-functions #'opencode--tables-window-size-change nil t)
   (visual-line-mode)
   (yank-media-handler "\\`image/" #'opencode--yank-image)
   ;; A foldable block starts with a line whose first char has an
@@ -575,7 +586,6 @@ are marked with ✦."
   (setq-local evil-buffer-regexps '(("" . insert))))
 
 ;; Markdown hides whole fence lines, including their newline, only in view mode.
-;; this also allows us to call markdown-ts-table-align-table in the buffer
 (derived-mode-add-parents 'opencode-session-mode '(markdown-ts-view-mode))
 
 (defun opencode-yank-code-block ()

@@ -231,31 +231,227 @@ If FINISHED is non-nil, also in its last line, and stop processing it."
   "Process the complete lines of the assistant text part.
 If FINISHED is non-nil, the part has ended, so also its last line."
   (opencode--buttonize-finished-lines finished)
-  (opencode--align-finished-tables finished))
+  (opencode--render-finished-tables finished))
 
-(defun opencode--align-output-table (beg end)
-  "Align the completed Markdown table between BEG and END.
-Markdown's table command applies only its text changes, so session
-properties and markers survive on unchanged text."
-  (let ((final-newline (eq (char-before end) ?\n))
-        (end (copy-marker end t))
-        (inhibit-read-only t))
-    (unwind-protect
-        (save-excursion
-          (goto-char beg)
-          ;; The command only aligns tables with an in-table overlay.
-          (markdown-ts-in-table-mode 1)
-          (unwind-protect
-              (markdown-ts-table-align-table t)
-            (markdown-ts-in-table-mode -1))
-          ;; The command always adds a newline.  Do not introduce one if the
-          ;; final text part ended at the last cell instead.
-          (when (and (not final-newline) (eq (char-before end) ?\n))
-            (delete-region (1- end) end))
-          ;; Diff insertion preserves existing cells, but newly inserted
-          ;; padding also needs comint's output properties.
-          (opencode--mark-as-output beg end))
-      (set-marker end nil))))
+(defconst opencode--table-min-column-width 6
+  "Narrowest a rendered table column is shrunk to, to fit its window.")
+
+(defvar-local opencode--table-width nil
+  "Columns available to the rendered tables, when they were last rendered.")
+
+(defun opencode--table-available-width ()
+  "Return the columns available to tables, in the narrowest window showing them.
+Without a window, use `fill-column'."
+  (let ((widths (mapcar #'window-max-chars-per-line
+                        (get-buffer-window-list nil nil t))))
+    ;; The margin bar is outside the text area, but leave a column so a
+    ;; line exactly as wide as the window isn't wrapped.
+    (if widths (1- (apply #'min widths)) fill-column)))
+
+(defconst opencode--table-button-properties
+  '(button category action button-data follow-link help-echo mouse-face)
+  "Properties of buttons that their text keeps in rendered tables.
+`push-button' activates buttons in display strings clicked with the mouse.")
+
+(defun opencode--table-cell-text (beg end)
+  "Return the visible text of the table cell from BEG to END.
+Keep its faces, and its buttons for mouse clicks."
+  (let ((pos beg)
+        parts)
+    (while (< pos end)
+      (let ((next (min (next-single-char-property-change pos 'invisible nil end)
+                       (next-single-property-change pos 'face nil end)
+                       (next-single-property-change pos 'button nil end))))
+        (unless (invisible-p pos)
+          (let ((text (propertize (buffer-substring-no-properties pos next)
+                                  'face (get-text-property pos 'face))))
+            (when (get-text-property pos 'button)
+              (dolist (prop opencode--table-button-properties)
+                (put-text-property 0 (length text) prop
+                                   (get-text-property pos prop) text))
+              ;; Only mouse events use the keymaps of display strings.
+              (put-text-property 0 (length text) 'keymap button-map text))
+            (push text parts)))
+        (setq pos next)))
+    ;; In tables, an escaped pipe is a pipe even inside a code span.
+    (replace-regexp-in-string
+     (rx "\\|") "|" (string-trim (apply #'concat (nreverse parts))) t t)))
+
+(defun opencode--table-alignment (delimiter-cell)
+  "Return the justification of DELIMITER-CELL: left, right or center."
+  (let ((types (mapcar #'treesit-node-type (treesit-node-children delimiter-cell))))
+    (cond ((not (member "pipe_table_align_right" types)) 'left)
+          ((member "pipe_table_align_left" types) 'center)
+          (t 'right))))
+
+(defun opencode--table-rows (table)
+  "Return the rows of the TABLE node, as (KIND BEG END CELLS).
+KIND is header, delimiter or row.  CELLS are the alignments of the
+delimiter row, and the cell texts of other rows."
+  (mapcan
+   (lambda (row)
+     (let ((kind (pcase (treesit-node-type row)
+                   ("pipe_table_header" 'header)
+                   ("pipe_table_delimiter_row" 'delimiter)
+                   ("pipe_table_row" 'row))))
+       (when kind
+         (list
+          (list kind (treesit-node-start row) (treesit-node-end row)
+                (mapcan
+                 (lambda (cell)
+                   (pcase (treesit-node-type cell)
+                     ("pipe_table_delimiter_cell"
+                      (list (opencode--table-alignment cell)))
+                     ("pipe_table_cell"
+                      (list (opencode--table-cell-text
+                             (treesit-node-start cell) (treesit-node-end cell))))))
+                 (treesit-node-children row)))))))
+   (treesit-node-children table)))
+
+(defun opencode--table-column-widths (natural available)
+  "Return column widths fitting AVAILABLE columns of text, from NATURAL widths.
+Cap the widest columns at the same width, but at no less than
+`opencode--table-min-column-width'."
+  (let ((cap (apply #'max natural)))
+    (while (and (> cap opencode--table-min-column-width)
+                (> (apply #'+ (mapcar (lambda (width) (min width cap)) natural))
+                   available))
+      (cl-decf cap))
+    (mapcar (lambda (width) (min width cap)) natural)))
+
+(defun opencode--table-wrap (string width)
+  "Return the lines of STRING word-wrapped to WIDTH columns, keeping its faces.
+Break words wider than WIDTH."
+  (let (lines line)
+    (dolist (word (split-string string "[ \t]+" t))
+      (cond ((null line))
+            ((<= (+ (string-width line) 1 (string-width word)) width)
+             (setq word (concat line " " word)))
+            (t (push line lines)))
+      (while (> (string-width word) width)
+        (let ((n (max 1 (length (truncate-string-to-width word width)))))
+          (push (substring word 0 n) lines)
+          (setq word (substring word n))))
+      (setq line word))
+    (nreverse (cons (or line "") lines))))
+
+(defun opencode--table-pad (string width alignment)
+  "Pad STRING to WIDTH columns, justified according to ALIGNMENT."
+  (let* ((gap (max 0 (- width (string-width string))))
+         (before (pcase alignment
+                   ('right gap)
+                   ('center (/ gap 2))
+                   (_ 0))))
+    (concat (make-string before ?\s) string (make-string (- gap before) ?\s))))
+
+(defun opencode--table-border (widths left middle right)
+  "Return a border line for columns of WIDTHS, joined by LEFT, MIDDLE and RIGHT."
+  (propertize (concat left
+                      (mapconcat (lambda (width) (make-string (+ width 2) ?─))
+                                 widths middle)
+                      right)
+              'face 'shadow))
+
+(defun opencode--table-row-lines (cells widths alignments)
+  "Return the display lines of a row of CELLS, wrapped to column WIDTHS.
+Justify cells by their column's ALIGNMENTS."
+  (let* ((wrapped (cl-mapcar #'opencode--table-wrap cells widths))
+         (height (apply #'max (mapcar #'length wrapped)))
+         (bar (propertize "│" 'face 'shadow)))
+    (mapcar (lambda (i)
+              (concat bar " "
+                      (mapconcat #'identity
+                                 (cl-mapcar (lambda (lines width alignment)
+                                              (opencode--table-pad
+                                               (or (nth i lines) "") width alignment))
+                                            wrapped widths alignments)
+                                 (concat " " bar " "))
+                      " " bar))
+            (number-sequence 0 (1- height)))))
+
+(defun opencode--table-at (pos)
+  "Return the Markdown table node on the line at POS, or nil."
+  (save-excursion
+    (goto-char pos)
+    (skip-chars-forward " \t")
+    (treesit-parent-until (treesit-node-at (point) 'markdown)
+                          "\\`pipe_table\\'" t)))
+
+(defun opencode--render-table (table)
+  "Display the Markdown TABLE node wrapped to fit its window, with box borders.
+Each source row gets an overlay displaying it, so the text stays the
+Markdown that was received."
+  (setq opencode--table-width (opencode--table-available-width))
+  (save-excursion
+    (let ((start (treesit-node-start table)))
+      (font-lock-ensure start (treesit-node-end table))
+      ;; Fontifying widens the buffer, which reparses it if narrowed.
+      (setq table (opencode--table-at start)))
+    (let* ((rows (opencode--table-rows table))
+           (alignments (nth 3 (assq 'delimiter rows)))
+           (columns (length alignments))
+           (rows (mapcar (lambda (row)
+                           (if (eq (car row) 'delimiter)
+                               row
+                             (let ((cells (take columns (nth 3 row))))
+                               (append (take 3 row)
+                                       (list (append cells
+                                                     (make-list (- columns (length cells))
+                                                                "")))))))
+                         rows))
+           (natural (apply #'cl-mapcar
+                           (lambda (&rest cells)
+                             (max 1 (apply #'max (mapcar #'string-width cells))))
+                           (mapcar (lambda (row) (nth 3 row))
+                                   (seq-remove (lambda (row) (eq (car row) 'delimiter))
+                                               rows))))
+           (widths (opencode--table-column-widths
+                    natural
+                    ;; The borders, and the padding around each column.
+                    (- (opencode--table-available-width) 1 (* 3 columns))))
+           (middle (opencode--table-border widths "├" "┼" "┤"))
+           (bottom (opencode--table-border widths "└" "┴" "┘"))
+           (last (car (last rows))))
+      (dolist (row rows)
+        (pcase-let* ((`(,kind ,beg ,end ,cells) row)
+                     (lines (unless (eq kind 'delimiter)
+                              (opencode--table-row-lines cells widths alignments)))
+                     (end-border (if (eq row last) bottom middle))
+                     (overlay (make-overlay (progn (goto-char beg) (pos-bol))
+                                            (progn (goto-char end) (pos-eol)))))
+          ;; The header's overlay finds the table to render it again.
+          (overlay-put overlay 'opencode-table kind)
+          (overlay-put overlay 'evaporate t)
+          (overlay-put overlay 'display
+                       (string-join
+                        (pcase kind
+                          ('header (cons (opencode--table-border widths "┌" "┬" "┐")
+                                         (if (eq row last)
+                                             (append lines (list bottom))
+                                           lines)))
+                          ('delimiter (list end-border))
+                          (_ (append lines (list end-border))))
+                        "\n")))))))
+
+(defun opencode--rerender-tables ()
+  "Render all tables again, to fit the current width."
+  (let (starts)
+    (dolist (overlay (overlays-in (point-min) (point-max)))
+      (when-let* ((kind (overlay-get overlay 'opencode-table)))
+        (when (eq kind 'header)
+          (push (copy-marker (overlay-start overlay)) starts))
+        (delete-overlay overlay)))
+    (dolist (start starts)
+      (when-let* ((node (opencode--table-at start)))
+        (opencode--render-table node))
+      (set-marker start nil))
+    (setq opencode--table-width (opencode--table-available-width))))
+
+(defun opencode--tables-window-size-change (window)
+  "Render the tables of WINDOW's buffer again if their width changed."
+  (with-current-buffer (window-buffer window)
+    (unless (eql opencode--table-width (opencode--table-available-width))
+      (opencode--rerender-tables))))
 
 (defun opencode--mark-as-output (beg end)
   "Mark text from BEG to END, inserted outside `comint-output-filter', as output."
@@ -284,9 +480,9 @@ properties and markers survive on unchanged text."
                           'markdown '((pipe_table) @table) t)))
                beg end t))))
 
-(defun opencode--align-finished-tables (&optional finished)
-  "Align tables whose end is confirmed by subsequent complete output lines.
-If FINISHED is non-nil, also align a table at the end of the text part.
+(defun opencode--render-finished-tables (&optional finished)
+  "Render tables whose end is confirmed by subsequent complete output lines.
+If FINISHED is non-nil, also render a table at the end of the text part.
 Retain one line of context for headers whose delimiter has yet to arrive."
   (when opencode--table-scan-marker
     (save-excursion
@@ -316,12 +512,9 @@ Retain one line of context for headers whose delimiter has yet to arrive."
                                  (if (bolp) (point)
                                    (line-beginning-position 2)))
                                complete-end))
-                        (let ((next (copy-marker end t)))
-                          (unwind-protect
-                              (progn
-                                (opencode--align-output-table beg end)
-                                (set-marker opencode--table-scan-marker next))
-                            (set-marker next nil)))
+                        (progn
+                          (opencode--render-table table)
+                          (set-marker opencode--table-scan-marker end))
                       (set-marker opencode--table-scan-marker beg)
                       (setq waiting t))))
                 (if finished

@@ -293,6 +293,17 @@ If DATA-P is non-nil, FILE-OR-DATA is the image's data, else its file."
                   :max-width (car opencode-inline-image-max-size)
                   :max-height (cdr opencode-inline-image-max-size))))
 
+(defface opencode-image-reference-highlight
+  '((t :inherit highlight :box (:line-width (-2 . -2))))
+  "Face for an inline image of a file reference under the mouse.
+Unlike a face's background, its box is visible over an image."
+  :group 'opencode)
+
+;; Without the button face, whose underline would be drawn across the
+;; middle of the image, at its baseline.  It must be on the button type,
+;; as fontification removes faces in the text and then finds the type's.
+(define-button-type 'opencode-image-reference 'face nil)
+
 (defun opencode--buttonize-file-references (start end)
   "Turn backticked file references between START and END into buttons.
 References to images are displayed as the image, see `opencode-inline-images'."
@@ -316,18 +327,23 @@ References to images are displayed as the image, see `opencode-inline-images'."
                (line (if line-string
                          (string-to-number line-string)
                        1))
-               (path (opencode--resolve-file-reference file)))
+               (path (opencode--resolve-file-reference file))
+               (image nil))
           (when (and path (not (button-at match-beg)))
+            (setq image (opencode--inline-image path))
             (make-text-button
              match-beg match-end
+             :type (if image 'opencode-image-reference 'button)
              'action #'opencode--visit-file-location
              'button-data (cons path line)
              'follow-link t
              'help-echo (if line-string
                             (format "Open %s:%d in another window" file line)
                           (format "Open %s in another window" file))
-             'mouse-face 'highlight)
-            (when-let* ((image (opencode--inline-image path)))
+             'mouse-face (if image
+                             'opencode-image-reference-highlight
+                           'highlight))
+            (when image
               ;; Not over the backticks, which Markdown makes invisible,
               ;; where a display would start.
               (with-silent-modifications

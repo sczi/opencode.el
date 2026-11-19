@@ -2003,7 +2003,7 @@ Windows past their reset show as 0% without a reset time."
          (usage (opencode--format-claude-usage
                  (opencode-session-test--rate-limit now))))
     (should (string-match-p
-             (rx bos "Claude usage: 5h " (= 2 "━") (= 18 "─")
+             (rx bos "5h " (= 2 "━") (= 18 "─")
                  " 9% (resets " (+ (not ")")) ") · "
                  "week " (= 20 "─") " 0% · "
                  "seven day sonnet " (= 17 "━") (= 3 "─")
@@ -2016,18 +2016,21 @@ Windows past their reset show as 0% without a reset time."
                         'face usage)))
     (should-not (get-text-property (string-search "85%" usage) 'face usage))))
 
-(ert-deftest opencode-claude-usage-wrap ()
-  "Usage is split one window per line when it doesn't fit in WIDTH."
+(ert-deftest opencode-claude-usage-levels ()
+  "Usage can show only the 5h window, with or without its reset time."
   (let* ((now (float-time))
-         (rate-limit (opencode-session-test--rate-limit now))
-         (line (opencode--format-claude-usage rate-limit))
-         (narrow (opencode--format-claude-usage rate-limit 10)))
-    (should (equal line (opencode--format-claude-usage rate-limit 100000)))
-    (should-not (string-search " · " narrow))
+         (rate-limit (opencode-session-test--rate-limit now)))
+    (should (equal (opencode--format-claude-usage rate-limit)
+                   (opencode--format-claude-usage rate-limit 'all)))
     (should (string-match-p
-             (rx bos "Claude usage:\n5h " (+ nonl) "\nweek " (+ nonl)
-                 "\nseven day sonnet " (+ nonl) eos)
-             narrow))))
+             (rx bos "5h " (+ (any "━─")) " 9% (resets " (+ (not ")")) ")" eos)
+             (opencode--format-claude-usage rate-limit 'five-hour)))
+    (should (string-match-p
+             (rx bos "5h " (+ (any "━─")) " 9%" eos)
+             (opencode--format-claude-usage rate-limit 'five-hour-no-reset)))
+    (should-not (opencode--format-claude-usage
+                 '((unifiedWindows (seven_day (utilization . 0.1))))
+                 'five-hour))))
 
 (ert-deftest opencode-claude-usage-bar-face ()
   "Usage bars are green below 60%, warning below 85% and error above."
@@ -2036,30 +2039,60 @@ Windows past their reset show as 0% without a reset time."
   (should (eq 'warning (opencode--usage-bar-face 0.84)))
   (should (eq 'error (opencode--usage-bar-face 0.85))))
 
-(ert-deftest opencode-claude-usage-overlay ()
-  "Recorded usage is shown after the end of session control buffers."
+(ert-deftest opencode-claude-usage-mode-line-level ()
+  "The most detailed level of usage that fits is chosen.
+The latest report is used, not an older one reported after it."
   (let ((opencode-default-connection
          (opencode--make-connection :name 'test :claude-rate-limit nil)))
     (with-temp-buffer
-      (insert "table\n")
-      (push (current-buffer) (opencode-connection-session-control-buffers
-                              opencode-default-connection))
-      (opencode--session-control-update-usage)
-      (should-not (overlay-get opencode--session-control-usage-overlay
-                               'after-string))
+      (should-not (opencode--session-control-usage-level 100000))
       (opencode--update-claude-rate-limit
        (opencode-session-test--rate-limit (float-time)))
-      (should (= (point-max) (overlay-start
-                              opencode--session-control-usage-overlay)))
-      (should (string-match-p
-               (rx bos "\nClaude usage: 5h " (+ (any "━─")) " 9%")
-               (overlay-get opencode--session-control-usage-overlay
-                            'after-string)))
-      ;; An older report doesn't replace a newer one
       (opencode--update-claude-rate-limit '((unifiedWindows)) 0)
-      (should (string-search
-               " 9% (resets" (overlay-get opencode--session-control-usage-overlay
-                                          'after-string))))))
+      (let ((widths (opencode--session-control-usage-widths)))
+        (should (equal opencode--claude-usage-levels (mapcar #'car widths)))
+        (should (apply #'> (mapcar #'cdr widths)))
+        (pcase-dolist (`(,level . ,width) widths)
+          (should (eq level (opencode--session-control-usage-level width)))
+          (should (eq (cadr (memq level opencode--claude-usage-levels))
+                      (opencode--session-control-usage-level (1- width)))))))))
+
+(ert-deftest opencode-mode-line-content-width-test ()
+  "Mode line width leaves out aligning spaces, and tells if there were any."
+  (should (equal (cons (string-pixel-width "abcd") nil)
+                 (opencode--mode-line-content-width "abcd")))
+  (should (equal (cons (string-pixel-width "abcd") t)
+                 (opencode--mode-line-content-width
+                  (concat "ab" (propertize " " 'display '(space :align-to 50))
+                          "cd")))))
+
+(ert-deftest opencode-claude-usage-mode-line-item ()
+  "Usage is first in a right-aligned part, or else right-aligned last."
+  (let ((opencode-default-connection
+         (opencode--make-connection :name 'test :claude-rate-limit nil))
+        (window (selected-window)))
+    (unwind-protect
+        (with-temp-buffer
+          (opencode--update-claude-rate-limit
+           (opencode-session-test--rate-limit (float-time)))
+          (set-window-parameter window 'opencode-usage-level nil)
+          (should-not (opencode--session-control-usage-item nil))
+          (should-not (opencode--session-control-usage-item t))
+          (set-window-parameter window 'opencode-usage-level 'five-hour-no-reset)
+          (set-window-parameter window 'opencode-usage-aligned t)
+          (should (string-match-p (rx bos "5h " (+ (any "━─")) " 9%% " eos)
+                                  (opencode--session-control-usage-item nil)))
+          (should-not (opencode--session-control-usage-item t))
+          (let ((opencode--session-control-usage-measuring t))
+            (should-not (opencode--session-control-usage-item nil)))
+          (set-window-parameter window 'opencode-usage-aligned nil)
+          (should-not (opencode--session-control-usage-item nil))
+          (pcase-let ((`(,space ,usage) (opencode--session-control-usage-item t)))
+            (should (eq 'space (car (get-text-property 0 'display space))))
+            (should (string-match-p (rx bos "5h " (+ (any "━─")) " 9%%" eos)
+                                    usage))))
+      (set-window-parameter window 'opencode-usage-level nil)
+      (set-window-parameter window 'opencode-usage-aligned nil))))
 
 (ert-deftest opencode-mode-line-claude-usage-test ()
   "%u, %U and %r show the Claude 5h usage, only in claude-agent sessions."
@@ -2168,22 +2201,6 @@ for the columns title and last-update."
   (should (equal '("orphan" "old-root" "├─ first" "│  └─ nested"
                    "└─ second" "new-root")
                  (opencode-session-test--table-titles t '((0 . descend))))))
-
-(ert-deftest opencode-session-control-usage-stays-at-end-when-sorting ()
-  "The Claude usage overlay stays after the table when it's sorted."
-  (with-temp-buffer
-    (let ((opencode-default-connection
-           (opencode--make-connection
-            :name 'test
-            :claude-rate-limit '(0 (unifiedWindows (five_hour (utilization . 0.5)))))))
-      (opencode--session-control-insert-table
-       opencode-session-test--tree-sessions '(title last-update))
-      (opencode--session-control-update-usage)
-      (goto-char (point-min))
-      (setf (vtable-sort-by (vtable-current-table)) '((0 . descend)))
-      (vtable-revert-command)
-      (should (= (point-max)
-                 (overlay-start opencode--session-control-usage-overlay))))))
 
 (ert-deftest opencode-session-control-normal-table-sorted-by-update ()
   "Without verbose the table has no connectors and sorts by last update."

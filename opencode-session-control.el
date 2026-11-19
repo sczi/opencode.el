@@ -143,6 +143,12 @@ before acting on more than one session."
   ;; Doom ignores buffers it doesn't consider real when choosing which buffer
   ;; to show after killing one, or for `evil-switch-to-windows-last-buffer'.
   (setq-local doom-real-buffer-p t)
+  (setq-local mode-line-misc-info
+              '((:eval (opencode--session-control-usage-item nil))
+                (:eval (default-value 'mode-line-misc-info))
+                (:eval (opencode--session-control-usage-item t))))
+  (add-hook 'pre-redisplay-functions
+            #'opencode--session-control-update-usage nil t)
   (add-hook 'window-size-change-functions
             #'opencode--session-control-window-size-change nil t))
 
@@ -291,9 +297,6 @@ An alias of a model family, such as opus, uses the family's newest model."
                  (let ((opencode--dispatching-connection connection))
                    (opencode--redraw-session-control-buffers)))))))))))
 
-(defvar-local opencode--session-control-usage-overlay nil
-  "Overlay at the end of the session control buffer showing Claude usage.")
-
 (defconst opencode--claude-usage-window-names
   '((five_hour . "5h") (seven_day . "week"))
   "Alist of names to show for Claude rate limit windows.
@@ -308,10 +311,9 @@ TIME is now if nil.  It is ignored if older than the one already recorded."
                (or (not current) (>= time (car current))))
       (setf (opencode-connection-claude-rate-limit (opencode--conn))
             (cons time rate-limit))
-      ;; For %u and %U in the mode line of the server's sessions
-      (force-mode-line-update t)
-      (opencode--map-session-control-buffers
-       #'opencode--session-control-update-usage))))
+      ;; For %u and %U in the mode line of the server's sessions, and
+      ;; the usage in the mode line of its session control buffers
+      (force-mode-line-update t))))
 
 (defun opencode--fetch-claude-rate-limit (sessions)
   "Record the latest rate limit info stored in the newest of SESSIONS, once.
@@ -346,48 +348,129 @@ It's done once per connection.  Only claude-agent sessions are considered."
          .native.rateLimit
          (/ (or .time.completed .time.created) 1000.0))))))
 
-(defun opencode--format-claude-usage (rate-limit &optional width)
-  "Return a line describing Claude usage from RATE-LIMIT.
-If WIDTH, in pixels, is too narrow to fit it on one line, put each
-usage window on its own line instead."
-  (let ((windows
-         (mapcar
-          (pcase-lambda (`(,name . ,window))
-            (let ((utilization (opencode--claude-window-utilization window))
-                  (reset (opencode--claude-window-reset window)))
-              (concat
-               (or (alist-get name opencode--claude-usage-window-names)
-                   (string-replace "_" " " (symbol-name name)))
-               " "
-               (opencode--usage-bar utilization)
-               " "
-               (format "%d%%" (round (* 100 utilization)))
-               (when reset
-                 (format " (resets %s)" reset)))))
-          (alist-get 'unifiedWindows rate-limit))))
-    (when windows
-      (let ((line (concat "Claude usage: " (string-join windows " · "))))
-        (if (and width (> (string-pixel-width line) width))
-            (concat "Claude usage:\n" (string-join windows "\n"))
-          line)))))
+(defconst opencode--claude-usage-levels '(all five-hour five-hour-no-reset)
+  "Levels of detail of Claude usage in the mode line, most detailed first.
+See `opencode--format-claude-usage'.")
 
-(defun opencode--session-control-update-usage ()
-  "Show Claude usage at the end of the current session control buffer."
-  (let* ((window (get-buffer-window (current-buffer)))
-         (rate-limit (opencode--claude-rate-limit))
-         (usage (and rate-limit
-                     (opencode--format-claude-usage
-                      (cdr rate-limit)
-                      (and window (window-body-width window t))))))
-    (unless (overlayp opencode--session-control-usage-overlay)
-      ;; Advancing both ends keeps it after the table when vtable deletes
-      ;; and reinserts the table, such as when sorting
-      (setq opencode--session-control-usage-overlay
-            (make-overlay (point-max) (point-max) nil t t)))
-    (move-overlay opencode--session-control-usage-overlay
-                  (point-max) (point-max))
-    (overlay-put opencode--session-control-usage-overlay 'after-string
-                 (when usage (concat "\n" usage "\n")))))
+(defun opencode--format-claude-usage (rate-limit &optional level face)
+  "Return a line describing Claude usage from RATE-LIMIT, or nil if unknown.
+LEVEL is `all' or nil to show every usage window, `five-hour' to show
+only the 5h window and `five-hour-no-reset' to show it without when it
+resets.  FACE is the face the line is shown in, for the background of
+the usage bars."
+  (let* ((five-hour (memq level '(five-hour five-hour-no-reset)))
+         (windows
+          (mapcan
+           (pcase-lambda (`(,name . ,window))
+             (when (or (not five-hour) (eq name 'five_hour))
+               (let ((utilization (opencode--claude-window-utilization window))
+                     (reset (and (not (eq level 'five-hour-no-reset))
+                                 (opencode--claude-window-reset window))))
+                 (list
+                  (concat
+                   (or (alist-get name opencode--claude-usage-window-names)
+                       (string-replace "_" " " (symbol-name name)))
+                   " "
+                   (opencode--usage-bar utilization face)
+                   " "
+                   (format "%d%%" (round (* 100 utilization)))
+                   (when reset
+                     (format " (resets %s)" reset)))))))
+           (alist-get 'unifiedWindows rate-limit))))
+    (when windows
+      (string-join windows " · "))))
+
+(defvar opencode--session-control-usage-measuring nil
+  "Non-nil while measuring the mode line, so it leaves out Claude usage.")
+
+(defvar-local opencode--session-control-usage-widths nil
+  "Cache of the pixel widths of each level of Claude usage.
+A cons of what they depend on and an alist of the widths by level.")
+
+(defun opencode--session-control-usage-widths ()
+  "Return an alist of the pixel width of each level of Claude usage.
+Levels without any usage aren't included."
+  (when-let* ((rate-limit (opencode--claude-rate-limit)))
+    ;; Reset times and utilization change at most once a minute
+    (let ((key (list rate-limit (format-time-string "%F %R")
+                     (frame-char-width))))
+      (unless (equal key (car opencode--session-control-usage-widths))
+        (setq opencode--session-control-usage-widths
+              (cons key
+                    (mapcan
+                     (lambda (level)
+                       (when-let* ((usage (opencode--format-claude-usage
+                                           (cdr rate-limit) level)))
+                         (list (cons level (string-pixel-width
+                                            (concat usage " "))))))
+                     opencode--claude-usage-levels))))
+      (cdr opencode--session-control-usage-widths))))
+
+(defun opencode--session-control-usage-level (available)
+  "Return the most detailed level of Claude usage AVAILABLE pixels fit.
+It's nil if none fit.  See `opencode--claude-usage-levels'."
+  (car (seq-find (lambda (level) (<= (cdr level) available))
+                 (opencode--session-control-usage-widths))))
+
+(defun opencode--mode-line-content-width (line)
+  "Return the pixel width of LINE, a formatted mode line, and if it aligns.
+It's a cons of the width without the spaces that align parts of it, as
+`mode-line-format-right-align' and doom-modeline use, and whether it had
+any of them."
+  (let ((start 0)
+        (parts nil)
+        (aligned nil))
+    (while (< start (length line))
+      (let ((end (next-single-property-change start 'display line (length line)))
+            (display (get-text-property start 'display line)))
+        (if (and (eq (car-safe display) 'space)
+                 (plist-member (cdr display) :align-to))
+            (setq aligned t)
+          (push (substring line start end) parts))
+        (setq start end)))
+    (cons (string-pixel-width (apply #'concat (nreverse parts))) aligned)))
+
+(defun opencode--session-control-update-usage (window)
+  "Choose how much Claude usage fits in the mode line of WINDOW.
+It's the most detailed of `opencode--claude-usage-levels' that fits
+with the rest of the mode line, or none.  For `pre-redisplay-functions'."
+  (when (and (windowp window) (window-live-p window)
+             (eq (window-buffer window) (current-buffer)))
+    (pcase-let* ((`(,width . ,aligned)
+                  (opencode--mode-line-content-width
+                   (let ((opencode--session-control-usage-measuring t))
+                     (format-mode-line mode-line-format 'mode-line window))))
+                 (level (opencode--session-control-usage-level
+                         (- (window-pixel-width window)
+                            (window-right-divider-width window)
+                            width
+                            ;; between the left and right parts
+                            (* 2 (frame-char-width (window-frame window)))))))
+      (unless (and (eq level (window-parameter window 'opencode-usage-level))
+                   (eq aligned (window-parameter window 'opencode-usage-aligned)))
+        (set-window-parameter window 'opencode-usage-level level)
+        (set-window-parameter window 'opencode-usage-aligned aligned)
+        (force-mode-line-update)))))
+
+(defun opencode--session-control-usage-item (alone)
+  "Return the Claude usage in the mode line of the session control buffer.
+It's both first and last in its `mode-line-misc-info'.  When the mode
+line has a right-aligned part, the first one is shown, so it starts the
+right-aligned part.  Otherwise the last one, with ALONE non-nil, is
+shown, right-aligned by itself."
+  (when-let* (((not opencode--session-control-usage-measuring))
+              (level (window-parameter nil 'opencode-usage-level))
+              ((eq alone (not (window-parameter nil 'opencode-usage-aligned))))
+              (rate-limit (opencode--claude-rate-limit))
+              (usage (opencode--format-claude-usage
+                      (cdr rate-limit) level
+                      (if (mode-line-window-selected-p)
+                          'mode-line-active
+                        'mode-line-inactive))))
+    (let ((usage (string-replace "%" "%%" usage)))
+      (if alone
+          (list (opencode--right-align-space (list usage) 'mode-line) usage)
+        (concat usage " ")))))
 
 (defun opencode--session-control-cost (session)
   "Return the text of the cost column for SESSION.
@@ -623,8 +706,7 @@ only shown if the table fits in the window."
               (erase-buffer)
               (opencode--session-control-insert-table sessions required)))))
       (setq opencode--session-control-width
-            (and window (window-body-width window t)))
-      (opencode--session-control-update-usage))))
+            (and window (window-body-width window t))))))
 
 (defun opencode--session-control-window-size-change (window)
   "Redisplay the session control table in WINDOW if its width changed."

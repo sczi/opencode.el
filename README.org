@@ -134,9 +134,10 @@ With a claude subscription plan, the cost column will show an estimate in
 dollars at API pricing, and show the estimated percent of the 5 hour limit a
 session has used.
 
-Below the table is the actual usage of your 5 hour and weekly limits, as last
-reported by Claude Code.  Until a claude-agent session makes a request, it is
-read from the most recent one, so can under report if you use claude outside of opencode.
+The mode line shows the actual usage of your 5 hour and weekly limits, as last
+reported by Claude Code. Until a claude-agent session makes a request, it is
+read from the most recent one, so can under report if you use claude outside of
+opencode.
 
 PRs are welcome to add this information for providers of other subscription
 plans you may have.

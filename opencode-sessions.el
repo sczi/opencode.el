@@ -376,19 +376,6 @@ selected."
      (opencode--option-value opencode-mode-line-process)
      (opencode--format-specs (opencode--line-face 'mode-line)))))
 
-(defun opencode--right-align-space (rest face)
-  "Return a space that right-aligns REST, mode line constructs, in FACE."
-  (let ((width (string-pixel-width (format-mode-line `("" ,@rest) face))))
-    (propertize " " 'display
-                `(space :align-to
-                  (,(- (window-pixel-width)
-                       (window-scroll-bar-width)
-                       (window-right-divider-width)
-                       (* (or (car (window-margins)) 0)
-                          (frame-char-width))
-                       (car (window-fringes))
-                       width))))))
-
 (defun opencode--render-format (format face)
   "Return FORMAT, a list of mode line elements, as a mode line construct.
 Strings are expanded with `opencode--format-specs', and `right-align' and

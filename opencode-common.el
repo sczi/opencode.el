@@ -526,6 +526,19 @@ frames.  The SVG blends with the background of BACKGROUND-FACE, by default
                     (opencode--usage-bar-svg fraction face background-face))
       text)))
 
+(defun opencode--right-align-space (rest face)
+  "Return a space that right-aligns REST, mode line constructs, in FACE."
+  (let ((width (string-pixel-width (format-mode-line `("" ,@rest) face))))
+    (propertize " " 'display
+                `(space :align-to
+                  (,(- (window-pixel-width)
+                       (window-scroll-bar-width)
+                       (window-right-divider-width)
+                       (* (or (car (window-margins)) 0)
+                          (frame-char-width))
+                       (car (window-fringes))
+                       width))))))
+
 (defun opencode--claude-rate-limit ()
   "Return the current connection's latest Claude rate limit info.
 It's a cons of the time it was reported and the rateLimit alist, or nil if

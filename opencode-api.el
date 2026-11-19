@@ -219,6 +219,8 @@ may start with :else HANDLER to handle errors."
  (post session-generate "/api/session/%s/generate")
  (recent-assistant-messages
   "/api/session/%s/message?type=assistant&order=desc&limit=50")
+ (last-assistant-message
+  "/api/session/%s/message?type=assistant&order=desc&limit=1")
  (session-diff "/api/session/%s/diff?context=0")
  ;; Without context the patches cover the whole files
  (turn-diff "/api/session/%s/diff?from=%s")

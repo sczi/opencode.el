@@ -94,7 +94,8 @@ It's on CONNECTION's server, defaulting to the current connection."
 
 ;;;###autoload
 (defun opencode-select-session ()
-  "Select and open a session from the current project using completion."
+  "Select and open a session from the current project, sorted by last updated time.
+With consult, \\`C-SPC' previews the session under point."
   (interactive)
   (opencode-autoconnect
    (lambda ()

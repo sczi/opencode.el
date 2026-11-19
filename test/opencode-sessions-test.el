@@ -2439,5 +2439,32 @@ afterwards."
       (should (eq 'diff-indicator-removed (get-text-property 5 'face annotation))))
     (should (eq 'shadow (get-text-property 11 'face (caddr (nth 1 candidates)))))))
 
+(ert-deftest opencode-session-preview-open-buffer-test ()
+  "Previewing an open session shows its buffer, and ending restores the window."
+  (skip-unless (require 'consult nil t))
+  (with-opencode-session-test-buffer
+    (let* ((session-buffer (current-buffer))
+           (window (selected-window))
+           (original (window-buffer window))
+           (state (opencode--session-preview-state)))
+      (funcall state 'setup nil)
+      (funcall state 'preview '((id . "session") (title . "Test")))
+      (should (eq session-buffer (window-buffer window)))
+      (funcall state 'preview nil)
+      (funcall state 'exit nil)
+      (funcall state 'return nil)
+      (should (eq original (window-buffer window))))))
+
+(ert-deftest opencode-message-text-test ()
+  "Only the non-blank text parts of a message are kept."
+  (should (equal "one\n\ntwo"
+                 (opencode--message-text
+                  '((content ((type . "reasoning") (text . "hmm"))
+                     ((type . "text") (text . "one\n"))
+                     ((type . "tool") (name . "read"))
+                     ((type . "text") (text . "  "))
+                     ((type . "text") (text . "two")))))))
+  (should-not (opencode--message-text '((content ((type . "tool")))))))
+
 (provide 'opencode-sessions-test)
 ;;; opencode-sessions-test.el ends here

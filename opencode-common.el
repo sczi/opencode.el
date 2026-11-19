@@ -171,11 +171,15 @@ Returns \"-\" if SECONDS is nil."
     (forward-line (- (/ max-lines 2)))
     (delete-region (point-min) (point))))
 
-(cl-defun opencode--annotated-completion (prompt candidates)
+(cl-defun opencode--annotated-completion (prompt candidates &key state preview-key)
   "Read a candidate with PROMPT and annotations.
 CANDIDATES is a list of lists, where the first element is the string to show,
 the second is the value to return, the third is the annotation to show, and
-the optional fourth element is a number to sort by."
+the optional fourth element is a number to sort by.
+
+If consult is available, STATE is a preview state function as described
+in `consult--with-preview', called with candidate values rather than
+strings, and PREVIEW-KEY are the keys that trigger the preview."
   (if candidates
       (let* ((max-length (seq-max
                           (mapcar (lambda (candidate)
@@ -208,10 +212,25 @@ the optional fourth element is a number to sort by."
                              (< (get-text-property 0 'opencode-sort-value a)
                                 (get-text-property 0 'opencode-sort-value b)))))))))
         (gethash
-         (completing-read
-          prompt
-          candidates
-          nil t)
+         (if (and state (fboundp 'consult--read))
+             (consult--read
+              (if has-sort-values
+                  (funcall (plist-get completion-extra-properties
+                                      :display-sort-function)
+                           candidates)
+                candidates)
+              :prompt prompt
+              :require-match t
+              :sort (not has-sort-values)
+              :annotate (plist-get completion-extra-properties :annotation-function)
+              :preview-key preview-key
+              :state (lambda (action candidate)
+                       (funcall state action
+                                (and candidate (gethash candidate candidate-results)))))
+           (completing-read
+            prompt
+            candidates
+            nil t))
          candidate-results))
     (message "%sNo completion candidates" prompt)))
 

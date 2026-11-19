@@ -123,9 +123,76 @@ With prefix arg ALL, search all open opencode sessions."
       (opencode-open-session (car opencode-alerted-sessions))
     (message "No idle sessions")))
 
+(defconst opencode--session-preview-buffer-name "*opencode-session-preview*"
+  "Name of the buffer previewing a session that isn't open.
+It doesn't start with a space, since `font-lock-mode' won't turn on in
+such buffers.")
+
+(defun opencode--message-text (message)
+  "Return the text parts of MESSAGE joined by blank lines, or nil if none."
+  (when-let* ((texts (cl-loop for item in (alist-get 'content message)
+                              for text = (alist-get 'text item)
+                              when (and (equal (alist-get 'type item) "text")
+                                        (stringp text)
+                                        (not (string-blank-p text)))
+                              collect (string-trim text))))
+    (string-join texts "\n\n")))
+
+(declare-function consult--buffer-preview "ext:consult")
+
+(defun opencode--session-preview-state ()
+  "Return a consult preview state function for selecting sessions.
+An open session is previewed by showing its buffer.  Otherwise the text of
+its last assistant message is fetched and shown in a temporary buffer."
+  (let ((buffer-state (consult--buffer-preview))
+        (texts (make-hash-table :test 'equal))
+        (previewed nil))
+    (cl-labels
+        ((preview-buffer ()
+           (or (get-buffer opencode--session-preview-buffer-name)
+               (with-current-buffer
+                   (get-buffer-create opencode--session-preview-buffer-name)
+                 (markdown-ts-view-mode)
+                 (visual-line-mode)
+                 (current-buffer))))
+         (fill (session text)
+           (when-let* ((buffer (get-buffer opencode--session-preview-buffer-name)))
+             (with-current-buffer buffer
+               (let ((inhibit-read-only t))
+                 (erase-buffer)
+                 (insert "# " (opencode--session-title session) "\n\n" text "\n")
+                 (goto-char (point-min))))))
+         (show (session)
+           (let ((id (alist-get 'id session)))
+             (or (opencode--session-buffer id)
+                 (let ((buffer (preview-buffer)))
+                   (setq previewed id)
+                   (if-let* ((text (gethash id texts)))
+                       (fill session text)
+                     (fill session "_Loading…_")
+                     (opencode-api-last-assistant-message (id)
+                         messages
+                       :else (lambda (error-msg)
+                               (when (equal previewed id)
+                                 (fill session (format "_Couldn't fetch: %s_" error-msg))))
+                       (let ((text (or (opencode--message-text (car messages))
+                                       "_No reply yet_")))
+                         (puthash id text texts)
+                         (when (equal previewed id)
+                           (fill session text)))))
+                   buffer)))))
+      (lambda (action session)
+        (prog1 (funcall buffer-state action
+                        (and (eq action 'preview) session (show session)))
+          (when (eq action 'exit)
+            (setq previewed nil)
+            (when-let* ((buffer (get-buffer opencode--session-preview-buffer-name)))
+              (kill-buffer buffer))))))))
+
 (defun opencode--select-sessions (prompt sessions no-sessions-message)
   "Select a session from SESSIONS to open.
-Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty."
+Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty.
+With consult, \\`C-SPC' previews the session under point."
   (if sessions
       (opencode-open-session
        (opencode--annotated-completion
@@ -138,7 +205,10 @@ Use PROMPT and display NO-SESSIONS-MESSAGE if SESSIONS is empty."
                                   (opencode--time-ago
                                    session 'updated))
                                  (opencode--time-ago
-                                  session 'updated))))))
+                                  session 'updated))))
+        :state (when (require 'consult nil t)
+                 (opencode--session-preview-state))
+        :preview-key "C-SPC"))
     (message no-sessions-message)))
 
 (defun opencode-select-idle ()

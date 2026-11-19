@@ -393,5 +393,31 @@ The server may briefly remove a file while restoring it, as on revert."
         (opencode-test-wait-until result)
         (should (eq 'error (car result)))))))
 
+(ert-deftest opencode-integration-session-preview-test ()
+  "A session that isn't open is previewed with its last reply's text."
+  (skip-unless (require 'consult nil t))
+  (opencode-test-with-session nil
+    (opencode-test-llm-reply '((:reasoning "Thinking") "The answer is 42."))
+    (opencode-test-send "What is the answer?")
+    (let ((session `((id . ,opencode-session-id) (title . "Answer")))
+          (state (opencode--session-preview-state))
+          (kill-buffer-query-functions nil))
+      (kill-buffer (current-buffer))
+      (funcall state 'setup nil)
+      (funcall state 'preview session)
+      (let ((preview (get-buffer opencode--session-preview-buffer-name)))
+        (should (eq preview (window-buffer (selected-window))))
+        (opencode-test-wait-until
+         (with-current-buffer preview
+           (string-search "The answer is 42." (buffer-string))))
+        (with-current-buffer preview
+          (should (derived-mode-p 'markdown-ts-view-mode))
+          (should (string-prefix-p "# Answer" (buffer-string)))
+          (should-not (string-search "Thinking" (buffer-string))))
+        (funcall state 'preview nil)
+        (funcall state 'exit nil)
+        (funcall state 'return nil)
+        (should-not (buffer-live-p preview))))))
+
 (provide 'opencode-integration-test)
 ;;; opencode-integration-test.el ends here

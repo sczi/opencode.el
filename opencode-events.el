@@ -53,22 +53,21 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
     (opencode--show-prompt))
   (opencode--redisplay-session-control-buffers)
   (opencode--maybe-run-files-finished-editing-hook session-id interrupted)
-  (opencode-api-session (session-id)
-      session
-    (opencode--with-session-buffer session-id
-      (unless (or
-               (opencode--buffer-active-p (current-buffer))
-               ;; don't show alert for subagent sessions
-               (alist-get 'parentID session))
-        ;; A background subagent or shell still running will wake the
-        ;; session when it finishes, so alert once that run finishes.
-        (opencode-api-session-running-jobs (session-id)
-            jobs
-          (unless (or jobs (opencode--buffer-active-p (current-buffer)))
-            (opencode--toast-show `((title . "OpenCode Finished")
-                                    (message . ,(opencode--session-title session))
-                                    (variant . "success")))
-            (opencode--alert-session session)))))))
+  (when-let* ((buffer (opencode--session-buffer session-id)))
+    (unless (opencode--buffer-active-p buffer)
+      (opencode-api-session (session-id)
+          session
+        ;; don't show alert for subagent sessions, or once the buffer's killed
+        (unless (or (alist-get 'parentID session) (not (buffer-live-p buffer)))
+          ;; A background subagent or shell still running will wake the
+          ;; session when it finishes, so alert once that run finishes.
+          (opencode-api-session-running-jobs (session-id)
+              jobs
+            (unless (or jobs (not (buffer-live-p buffer)))
+              (opencode--toast-show `((title . "OpenCode Finished")
+                                      (message . ,(opencode--session-title session))
+                                      (variant . "success")))
+              (opencode--alert-session session))))))))
 
 (defun opencode--handle-message (event)
   "Handle decoded EVENT from opencode server."

@@ -164,9 +164,9 @@ Buffer-wide shortcuts:
 |  =v=  | toggle verbose - whether to show subagent sessions, as a tree under their parent |
 |  A  | toggle display of archived sessions                                              |
 
-When a session is busy, you will see a busy indicator (⏳) by it's row in the
+When a session is busy, you will see a busy indicator (⏳) by its row in the
 table. When a session has raised a notification (response finished, form, or
-permission prompt), you'll see a "✦" by it's row until you've visited the
+permission prompt), you'll see a "✦" by its row until you've visited the
 session. These are the same sessions you can visit with =opencode-select-idle=. If
 the session had an error, you'll see a ❌ instead of ✦. A 🗄 will be shown for
 archived sessions, which are not displayed by default (toggle their display with =A=).

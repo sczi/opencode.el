@@ -10,6 +10,7 @@
 (require 'ert)
 (require 'opencode)
 (require 'opencode-integration-test-helpers)
+(require 'opencode-stats)
 
 (defun opencode-integration-test--file (file)
   "Return the contents of FILE in the session's directory, or nil if missing.
@@ -28,6 +29,59 @@ The server may briefly remove a file while restoring it, as on revert."
                                 (car opencode-test-llm-requests))))
     (should (equal "❯ Say hello\n\nHello from the LLM.\n\n❯ "
                    (opencode-test-output)))))
+
+(ert-deftest opencode-integration-stats-test ()
+  "The stats of the session's project show its prompt, steps, model and tools."
+  ;; Projects are identified by their first commit, which is unique only
+  ;; with unique files, so the stats don't include other tests' sessions
+  (opencode-test-with-session `(("a.txt" . "alpha\n") ("unique" . ,(format "%s" (random))))
+    (opencode-test-llm-reply '((:tool "read" ((path . "a.txt")))) "It says alpha.")
+    (opencode-test-send "What's in a.txt?")
+    (opencode-stats t)
+    (with-current-buffer (opencode-stats--buffer opencode-test--connection)
+      (opencode-test-wait-until (and opencode-stats--project opencode-stats--data))
+      (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+        (should-not (plist-get opencode-stats--data :error))
+        (should (string-search "1 session · 1 prompt · 2 steps" text))
+        (should (string-search "100% tool success · 1 active day" text))
+        (should (string-match-p "^  read +1 +0 +0% " text))
+        ;; The chart's bars together have them all
+        (should (equal 2 (apply #'+ (mapcar (lambda (bucket) (alist-get 'steps (cdr bucket)))
+                                            (plist-get opencode-stats--data :buckets)))))))))
+
+(ert-deftest opencode-integration-stats-sessions-test ()
+  "Today's stats list its sessions with their steps, and RET opens one."
+  ;; Projects are identified by their first commit, which is unique only
+  ;; with unique files, so the stats don't include other tests' sessions
+  (opencode-test-with-session `(("a.txt" . "alpha\n") ("unique" . ,(format "%s" (random))))
+    (opencode-test-llm-reply '((:tool "read" ((path . "a.txt")))) "It says alpha.")
+    (opencode-test-send "What's in a.txt?")
+    (let ((first opencode-session-id)
+          (second (with-current-buffer (opencode-test-new-session default-directory)
+                    (opencode-test-llm-reply "Hi.")
+                    (opencode-test-send "Hello")
+                    opencode-session-id))
+          opened)
+      (opencode-stats t)
+      (with-current-buffer (opencode-stats--buffer opencode-test--connection)
+        (opencode-test-wait-until (and opencode-stats--project opencode-stats--data))
+        (opencode-stats-days 1)
+        (opencode-test-wait-until
+         (and opencode-stats--data
+              (not (eq (plist-get opencode-stats--data :sessions) 'loading))))
+        (should-not (plist-get opencode-stats--data :error))
+        (should (equal `((,first . 2) (,second . 1))
+                       (mapcar (lambda (row)
+                                 (cons (alist-get 'id (plist-get row :session))
+                                       (plist-get row :steps)))
+                               (plist-get opencode-stats--data :sessions))))
+        (goto-char (point-min))
+        (search-forward "\nSessions\n")
+        (forward-line 2)
+        (cl-letf (((symbol-function 'opencode--switch-to-buffer)
+                   (lambda (buffer) (setq opened buffer))))
+          (push-button (+ 4 (point))))
+        (should (eq opened (opencode--session-buffer second)))))))
 
 (ert-deftest opencode-integration-title-test ()
   "The buffer is renamed after the title the server generates."

@@ -535,10 +535,7 @@ if it charged for other models."
      ,(lambda (object)
         (let-alist object
           (format "↑%s ↓%s 🧠%s"
-                  (opencode--format-tokens
-                   (+ (or .tokens.input 0)
-                      (or .tokens.cache.read 0)
-                      (or .tokens.cache.write 0)))
+                  (opencode--format-tokens (opencode--input-tokens object))
                   (opencode--format-tokens .tokens.output)
                   (opencode--format-tokens .tokens.reasoning))))
      ,(lambda (object)
@@ -555,14 +552,8 @@ if it charged for other models."
                         "-"
                       (format "%d%%" (round (* 100 ratio))))))
      ,(lambda (object)
-        (let-alist object
-          (let ((total (+ (or .tokens.input 0)
-                          (or .tokens.cache.read 0)
-                          (or .tokens.cache.write 0))))
-            ;; A number rather than "-" keeps the column numerical
-            (if (zerop total)
-                -1
-              (/ (float (or .tokens.cache.read 0)) total)))))))
+        ;; A number rather than "-" keeps the column numerical
+        (or (opencode--cache-rate object) -1))))
   "Alist of (KEY VTABLE-COLUMN-SPEC GETTER [SORT-KEY]) for the session control table.
 GETTER is called with the session object.  If SORT-KEY is given, the
 column is sorted by the number it returns when called with the session

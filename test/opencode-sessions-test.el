@@ -1890,7 +1890,7 @@ MENUS collects their selections.  Timers run immediately."
   "Doom's switch buffer hook runs with the new buffer current.
 Also after a minibuffer read in an async callback leaves `this-command' set."
   (let ((buffer (generate-new-buffer " *opencode-switch-test*"))
-        (opencode-open-session-same-window t)
+        (opencode-open-same-window t)
         seen
         (doom-switch-buffer-hook nil))
     (add-hook 'doom-switch-buffer-hook (lambda () (push (current-buffer) seen)))

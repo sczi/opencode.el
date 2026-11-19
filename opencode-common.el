@@ -94,9 +94,9 @@ for title, message, variant (error/warning/info/success), and duration"
   :type 'function
   :group 'opencode)
 
-(defcustom opencode-open-session-same-window t
-  "If t use `switch-to-buffer' when opening sessions, otherwise use `pop-to-buffer'.
-This also applies to the session control buffer."
+(defcustom opencode-open-same-window t
+  "If t use `switch-to-buffer' to open opencode buffers, else `pop-to-buffer'.
+This applies to sessions, the session control buffer and the stats buffer."
   :type 'boolean
   :group 'opencode)
 
@@ -163,6 +163,22 @@ Returns \"-\" if SECONDS is nil."
   (cl-case value
     ((nil :null :false 0) t)
     (t nil)))
+
+(defun opencode--input-tokens (object)
+  "Return the input tokens of OBJECT, including those read from or written to cache.
+OBJECT is anything with a `tokens' entry, such as a session, message or
+stats usage."
+  (let-alist (alist-get 'tokens object)
+    (+ (or .input 0) (or .cache.read 0) (or .cache.write 0))))
+
+(defun opencode--cache-rate (object)
+  "Return the fraction of OBJECT's input tokens read from cache, or nil if none.
+OBJECT is anything with a `tokens' entry, such as a session, message or
+stats usage."
+  (let ((input (opencode--input-tokens object)))
+    (and (> input 0)
+         (let-alist (alist-get 'tokens object)
+           (/ (or .cache.read 0) (float input))))))
 
 (defun opencode--truncate-at-max-lines (max-lines)
   "Delete the first half of the buffer if we've reached MAX-LINES."
@@ -433,7 +449,7 @@ apply."
 
 (defun opencode--switch-to-buffer (buffer)
   "Display BUFFER and select its window.
-Use `switch-to-buffer' if `opencode-open-session-same-window' is non-nil,
+Use `switch-to-buffer' if `opencode-open-same-window' is non-nil,
 otherwise `pop-to-buffer'.
 
 This is often called from async callbacks, after which Emacs restores the
@@ -443,7 +459,7 @@ to the current workspace, so run its switch buffer hook ourselves.  It
 can't be limited to async calls, as `this-command' is left non-nil by a
 minibuffer read within the callback.  When called from a command Doom runs
 it again on redisplay, which is harmless."
-  (if opencode-open-session-same-window
+  (if opencode-open-same-window
       (switch-to-buffer buffer)
     (pop-to-buffer buffer))
   (when (boundp 'doom-switch-buffer-hook)

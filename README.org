@@ -234,6 +234,14 @@ be notified when the agent has finished. You can visit the session that last
 raised a notification with =opencode-visit-last-idle=, or prompt for all sessions
 that haven't been visited since their last notification with =opencode-select-idle=.
 
+* Usage statistics
+=opencode-stats= shows statistics on model, project, and tool usage, along with a
+heatmap of activity and a graph of token usage over time. You can click on a bar
+in the graph or a square in the heatmap to go to that time period. When the time
+period is one day, it will also show a table with information about sessions
+active during that day, and clicking on a session will open it. A header at the
+top shows the keybindings you can use to change the time period or information shown.
+
 * Commands
 #+begin_src emacs-lisp :results table :colnames '("Command" "Description") :exports results
 (cl-loop for command in '(opencode opencode-connect opencode-disconnect
@@ -243,7 +251,7 @@ that haven't been visited since their last notification with =opencode-select-id
                           opencode-add-file-dwim opencode-add-region opencode-add-defun
                           opencode-add-buffer-dwim opencode-fix-flycheck opencode-reload-locations
                           opencode-unrevert-all opencode-fix-ert opencode-list-connections
-                          opencode-consult-sessions)
+                          opencode-consult-sessions opencode-stats)
          collect (list command
                        (string-join (string-lines (documentation command)) " ")))
 #+end_src
@@ -271,6 +279,7 @@ that haven't been visited since their last notification with =opencode-select-id
 | opencode-fix-ert             | Start a new opencode session to diagnose and fix ERT test failures. Uses all unexpected results in the current ERT results buffer. With a prefix argument AT-POINT, only use the test at point.                                                                                                                                                                                                                     |
 | opencode-list-connections    | List the connections to opencode servers. The default connection is marked with *.                                                                                                                                                                                                                                                                                                                                  |
 | opencode-consult-sessions    | Run ‘consult-line-multi’ across open opencode sessions of the current project. With prefix arg ALL, search all open opencode sessions.                                                                                                                                                                                                                                                                              |
+| opencode-stats               | Show usage statistics of opencode sessions for this year so far. They’re of all projects, or with a prefix argument PROJECT of the project of ‘default-directory’.  See ‘opencode-stats-mode’ for its keys.                                                                                                                                                                                                         |
 
 * Question Tool
 #+CAPTION: Single choice question
@@ -370,8 +379,8 @@ discuss.
   names like =shell= or =edit=, or =shell-non-zero= to show shell tool output only when the
   command failed. Shell commands you run yourself are always shown. Shown outputs
   can still be folded the same way
-- =opencode-open-session-same-window= controls whether to open sessions in a new
-  window or in the current window
+- =opencode-open-same-window= controls whether to open opencode buffers
+  (sessions, session control, stats) in a new window or in the current window
 - =opencode-session-control-table-columns= configures what columns are shown in
   the session management buffer
 - =opencode-mode-line-process=, =opencode-header-line-format=,

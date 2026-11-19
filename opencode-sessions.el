@@ -693,7 +693,7 @@ tool call would give an empty answer.")
                  (format "*OpenCode btw: %s*"
                          (truncate-string-to-width
                           (string-clean-whitespace question) 50 nil nil t))))
-        (opencode-open-session-same-window nil))
+        (opencode-open-same-window nil))
     (with-current-buffer buffer
       (insert "> " (string-replace "\n" "\n> " question) "\n\n" answer "\n")
       (markdown-ts-view-mode)

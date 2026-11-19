@@ -108,10 +108,13 @@ height and depth are logged to align its baseline with the text."
         (tex (car key)))
     (with-temp-file (expand-file-name "math.tex" dir)
       (insert (opencode--latex-document tex (cdr key))))
+    ;; This runs in process sentinels, where an error would keep THEN from
+    ;; ever being called and wedge the render queue.  It can also run while
+    ;; a timed out process is still dying and writing to DIR.
     (let ((finish (lambda (rendering)
                     (unless rendering
-                      (opencode--latex-log-error dir tex))
-                    (delete-directory dir t)
+                      (ignore-errors (opencode--latex-log-error dir tex)))
+                    (ignore-errors (delete-directory dir t))
                     (funcall then (or rendering 'error)))))
       (opencode--latex-run
        "latex" '("-interaction=nonstopmode" "-halt-on-error" "-no-shell-escape"
@@ -127,20 +130,21 @@ height and depth are logged to align its baseline with the text."
               (funcall
                finish
                (when ok
-                 (with-temp-buffer
-                   (insert-file-contents (expand-file-name "math.log" dir))
-                   (when (re-search-forward
-                          "^OPENCODE-BOX \\([0-9.]+\\)pt,\\([0-9.]+\\)pt" nil t)
-                     (let ((height (string-to-number (match-string 1)))
-                           (depth (string-to-number (match-string 2))))
-                       (when (> (+ height depth) 0)
-                         (list :svg (with-temp-buffer
-                                      (set-buffer-multibyte nil)
-                                      (insert-file-contents-literally
-                                       (expand-file-name "math.svg" dir))
-                                      (buffer-string))
-                               :height height
-                               :depth depth)))))))))))))))
+                 (ignore-errors
+                   (with-temp-buffer
+                     (insert-file-contents (expand-file-name "math.log" dir))
+                     (when (re-search-forward
+                            "^OPENCODE-BOX \\([0-9.]+\\)pt,\\([0-9.]+\\)pt" nil t)
+                       (let ((height (string-to-number (match-string 1)))
+                             (depth (string-to-number (match-string 2))))
+                         (when (> (+ height depth) 0)
+                           (list :svg (with-temp-buffer
+                                        (set-buffer-multibyte nil)
+                                        (insert-file-contents-literally
+                                         (expand-file-name "math.svg" dir))
+                                        (buffer-string))
+                                 :height height
+                                 :depth depth))))))))))))))))
 
 (defun opencode--latex-render-next ()
   "Render the next queued formula, if none is being rendered."
@@ -151,16 +155,18 @@ height and depth are logged to align its baseline with the text."
       (opencode--latex-render
        key
        (lambda (rendering)
-         (puthash key rendering opencode--latex-cache)
-         (dolist (range (gethash key opencode--latex-waiting))
-           (when-let* ((buffer (marker-buffer (car range))))
-             (with-current-buffer buffer
-               (font-lock-flush (car range) (cdr range))))
-           (set-marker (car range) nil)
-           (set-marker (cdr range) nil))
-         (remhash key opencode--latex-waiting)
-         (setq opencode--latex-busy nil)
-         (opencode--latex-render-next))))))
+         (unwind-protect
+             (progn
+               (puthash key rendering opencode--latex-cache)
+               (dolist (range (gethash key opencode--latex-waiting))
+                 (when-let* ((buffer (marker-buffer (car range))))
+                   (with-current-buffer buffer
+                     (font-lock-flush (car range) (cdr range))))
+                 (set-marker (car range) nil)
+                 (set-marker (cdr range) nil)))
+           (remhash key opencode--latex-waiting)
+           (setq opencode--latex-busy nil)
+           (opencode--latex-render-next)))))))
 
 (defun opencode--latex-image (rendering)
   "Return an image displaying RENDERING with the current buffer's text."

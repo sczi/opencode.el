@@ -1906,6 +1906,24 @@ Also after a minibuffer read in an async callback leaves `this-command' set."
             (should (equal (list buffer) seen)))
         (kill-buffer buffer)))))
 
+(ert-deftest opencode-in-command-context-test ()
+  "Async callbacks of a command see its `this-command' and setup hooks.
+That's what `vertico-repeat' needs to repeat and restore their reads."
+  (let* (ran
+         (callback (let ((this-command 'some-command))
+                     (minibuffer-with-setup-hook (lambda () (setq ran this-command))
+                       (opencode--in-command-context
+                        (lambda (x)
+                          (run-hooks 'minibuffer-setup-hook)
+                          (list x this-command)))))))
+    (let ((this-command nil))
+      (should (equal '(1 some-command) (funcall callback 1)))
+      (should (eq 'some-command ran))
+      (should-not this-command)))
+  ;; Outside a command the function is used as is
+  (let ((this-command nil))
+    (should (eq #'car (opencode--in-command-context #'car)))))
+
 (defmacro opencode-session-test--with-claude-plan (tier &rest body)
   "Run BODY on Claude plan TIER, with a fixed catalog of API prices."
   (declare (indent 1))

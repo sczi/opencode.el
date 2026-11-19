@@ -180,9 +180,10 @@ allows it.  ON-CONNECT runs with CONNECTION as its current connection."
   (let* ((connection (or connection
                          (opencode-current-connection)
                          (opencode--server-connection opencode-default-server)))
-         (run (lambda ()
-                (let ((opencode--dispatching-connection connection))
-                  (funcall on-connect)))))
+         (run (opencode--in-command-context
+               (lambda ()
+                 (let ((opencode--dispatching-connection connection))
+                   (funcall on-connect))))))
     (opencode--disconnect-if-stream-dead connection)
     (cond
      ((opencode-connection-connected-p connection)

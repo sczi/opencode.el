@@ -56,7 +56,9 @@ and ELSE run with as their current connection too."
   (let* ((buffer (current-buffer))
          (connection (opencode--conn))
          ;; Without it the server uses its default location
-         (directory (opencode--to-server-path default-directory connection)))
+         (directory (opencode--to-server-path default-directory connection))
+         (then (and then (opencode--in-command-context then)))
+         (else (and else (opencode--in-command-context else))))
     (opencode-api--log "REQUEST" path)
     (when body-p
       (opencode-api--log "REQUEST BODY" body))

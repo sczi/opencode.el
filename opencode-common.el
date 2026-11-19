@@ -394,6 +394,22 @@ References to images are displayed as the image, see `opencode-inline-images'."
        (eq buffer (window-buffer (selected-window)))
        (frame-focus-state (window-frame (selected-window)))))
 
+(defun opencode--in-command-context (fn)
+  "Return a function calling FN with the current command's context.
+For callbacks of async calls made by a command, so minibuffer reads in
+them look like they're made by the command.  `this-command' is restored
+for `vertico-repeat' to know what command to repeat, and
+`minibuffer-setup-hook' for `minibuffer-with-setup-hook' around the
+command, which `vertico-repeat' uses to restore the input, to still
+apply."
+  (if-let* ((command this-command))
+      (let ((setup-hook minibuffer-setup-hook))
+        (lambda (&rest args)
+          (let ((this-command command)
+                (minibuffer-setup-hook setup-hook))
+            (apply fn args))))
+    fn))
+
 (defvar doom-switch-buffer-hook)
 
 (defun opencode--switch-to-buffer (buffer)

@@ -31,7 +31,8 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
     "session.agent.selected" "session.model.selected"
     "session.execution.started" "session.execution.succeeded"
     "session.execution.failed" "session.execution.interrupted"
-    "session.step.started" "session.step.ended" "session.step.failed"
+    "session.step.started" "session.step.first-token" "session.step.streamed"
+    "session.step.ended" "session.step.failed"
     "session.text.delta" "session.text.ended"
     "session.reasoning.delta" "session.reasoning.ended"
     "session.tool.input.started" "session.tool.called"
@@ -52,6 +53,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
   ;; show it with the status change, so pending input is never left
   ;; without its separator or a prompt
   (opencode--with-session-buffer session-id
+    (opencode--end-turn (opencode--now-ms))
     (opencode--show-prompt)
     (opencode-sidebar-session-changed :diff :branch))
   (opencode--redisplay-session-control-buffers)
@@ -75,7 +77,9 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
 (defun opencode--handle-message (event)
   "Handle decoded EVENT from opencode server."
   (let ((type (intern (alist-get 'type event)))
-        (data (alist-get 'data event)))
+        (data (alist-get 'data event))
+        ;; in ms, as the server records the times of messages
+        (created (or (alist-get 'created event) (opencode--now-ms))))
     (opencode--log-event "MESSAGE" event)
     (let-alist data
       (let ((block-key (list (if (memq type '(session.text.delta session.text.ended))
@@ -91,7 +95,9 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            ;; a session can be woken after showing its prompt, like by
            ;; a background subagent finishing, so output goes before it
            (opencode--with-session-buffer .sessionID
-             (opencode--retract-prompt))
+             (opencode--retract-prompt)
+             (opencode--start-turn created)
+             (opencode-sidebar-session-changed))
            (opencode--redisplay-session-control-buffers))
           (session.execution.succeeded (opencode--session-finished .sessionID))
           (session.execution.interrupted
@@ -111,11 +117,24 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            (opencode--with-session-buffer .sessionID
              ;; Keys are only unique within a step, so forget the last block.
              (setq opencode--current-block nil
-                   opencode--blocks-with-output nil)))
+                   opencode--blocks-with-output nil
+                   opencode--output-message .assistantMessageID)
+             (opencode--add-message .assistantMessageID .agent .model .started)
+             (opencode-sidebar-session-changed)))
+          ((session.step.first-token session.step.streamed)
+           (opencode--with-session-buffer .sessionID
+             (opencode--update-message .assistantMessageID
+                                       (if (eq type 'session.step.first-token)
+                                           :first-token
+                                         :streamed)
+                                       created)
+             (opencode-sidebar-session-changed)))
           (session.step.ended
            (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID
              (opencode--finish-text-lines t)
+             (setq opencode--output-message nil)
+             (opencode--update-message .assistantMessageID :completed created :tokens .tokens)
              (setq opencode-session-tokens (opencode--tokens-total .tokens))
              (setq opencode-session-cost (+ opencode-session-cost (or .cost 0)))
              (force-mode-line-update)
@@ -123,7 +142,11 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           (session.step.failed
            (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID
-             (opencode--finish-text-lines t)))
+             (opencode--finish-text-lines t)
+             (setq opencode--output-message nil)
+             (apply #'opencode--update-message .assistantMessageID :completed created
+                    (when .tokens (list :tokens .tokens)))
+             (opencode-sidebar-session-changed)))
           (session.retry.scheduled
            (opencode-api-session (.sessionID)
                session

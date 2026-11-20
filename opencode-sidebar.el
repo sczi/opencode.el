@@ -5,9 +5,10 @@
 ;;; Commentary:
 
 ;; A side window showing information about a session, like the TUI's
-;; sidebar: its context usage and cost, todo list, the files it changed,
-;; the MCP servers and its directory and branch.  There's one per frame,
-;; which follows the session buffer last selected in it.
+;; sidebar: the agent, model and timing of the step at point, its context
+;; usage and cost, todo list, the files it changed, the MCP servers and
+;; its directory and branch.  There's one per frame, which follows the
+;; session buffer last selected in it.
 ;;
 ;; partially inspired by https://github.com/michaelmjhhhh/pi-atelier
 
@@ -68,6 +69,15 @@ The keys are :diff, :mcps and :branch.  A missing key hasn't been fetched.")
 
 (defvar opencode-sidebar--timer nil
   "Timer of the pending redraw of the sidebars.")
+
+(defvar opencode-sidebar--tick-timer nil
+  "Timer redrawing the sidebars showing a running turn, as its time counts up.")
+
+(defvar-local opencode-sidebar--running nil
+  "Non-nil if the sidebar shows a running turn.")
+
+(defvar-local opencode-sidebar--step nil
+  "The (TURN . MESSAGE-ID) at point in a session buffer, last time it was looked up.")
 
 ;;; Buffers and windows
 
@@ -292,6 +302,21 @@ may be another session's."
 
 (add-hook 'opencode-session-loaded-functions #'opencode-sidebar--session-loaded)
 
+(defun opencode-sidebar--point-moved ()
+  "Redraw the sidebar if point moved onto another step of the session.
+For a session buffer's `post-command-hook'."
+  (let ((step (opencode--message-at (point))))
+    (unless (and (eq (car step) (car opencode-sidebar--step))
+                 (equal (cdr step) (cdr opencode-sidebar--step)))
+      (setq opencode-sidebar--step step)
+      (opencode-sidebar-session-changed))))
+
+(defun opencode-sidebar--track-point ()
+  "Make the sidebar of the current session buffer follow its point."
+  (add-hook 'post-command-hook #'opencode-sidebar--point-moved nil t))
+
+(add-hook 'opencode-session-mode-hook #'opencode-sidebar--track-point)
+
 ;; for the share of the 5h budget in the cost
 (add-hook 'opencode-claude-plan-tier-hook #'opencode-sidebar--schedule-redraw)
 
@@ -335,6 +360,99 @@ Lines it wraps onto are indented to the TEXT."
   (let ((prefix (make-string (+ 3 (string-width marker)) ?\s)))
     (insert (propertize (concat " " marker " " (propertize text 'font-lock-face face) "\n")
                         'wrap-prefix prefix))))
+
+(defun opencode-sidebar--step ()
+  "Return a plist of the step at point in the current session buffer.
+It has the :turn and the plist about its assistant :message, and the
+:agent, Model.Ref :model and its Model.Info :model-info, which are those
+selected in the session when it has no step.  :status is the session's,
+if it's of the last turn."
+  (pcase-let* ((`(,turn . ,id) (opencode--message-at (point)))
+               (message (and id (opencode--message-info id)))
+               (agent (plist-get message :agent))
+               (model (if agent
+                          (plist-get message :model)
+                        (alist-get 'model opencode-session-agent))))
+    (list :turn turn
+          :message message
+          :agent (if agent
+                     (or (seq-find (lambda (candidate)
+                                     (equal agent (alist-get 'id candidate)))
+                                   opencode-session-agents)
+                         `((id . ,agent)))
+                   opencode-session-agent)
+          :model model
+          :model-info (and model (opencode--find-model model))
+          :status (and (or (not turn) (eq turn (car opencode--turns)))
+                       opencode-session-status))))
+
+(defun opencode-sidebar--insert-agent (step)
+  "Insert the agent section of STEP, from `opencode-sidebar--step'."
+  (when-let* ((agent (plist-get step :agent)))
+    (magit-insert-section (opencode-sidebar-agent)
+      (opencode-sidebar--heading "Agent")
+      (let ((status (plist-get step :status)))
+        (insert " " (opencode--agent-label agent)
+                (if status
+                    (concat " · " (opencode--status-icon status) " " status)
+                  "")
+                "\n"))
+      (when-let* ((model (plist-get step :model)))
+        (let-alist model
+          (when .providerID
+            (insert " " .providerID "\n"))
+          (insert " " (or (alist-get 'name (plist-get step :model-info)) .id "-")
+                  (if (and .variant (not (equal .variant "default")))
+                      (concat " " .variant)
+                    "")
+                  "\n")))
+      (insert "\n"))))
+
+(defun opencode-sidebar--duration (ms)
+  "Return the duration MS in ms, like 2.5s, 42s or 3m 5s."
+  (let ((seconds (/ (max 0 ms) 1000.0)))
+    (cond ((< seconds 10) (format "%.1fs" seconds))
+          ((< seconds 60) (format "%ds" seconds))
+          ((< seconds 3600) (format "%dm %ds" (/ seconds 60) (mod seconds 60)))
+          (t (format "%dh %dm" (/ seconds 3600) (mod (/ seconds 60) 60))))))
+
+(defun opencode-sidebar--speed (message)
+  "Return the time to first token and tokens per second of MESSAGE, or nil.
+MESSAGE is a plist about an assistant message, from `opencode--message-info'.
+Tokens per second are of the output and reasoning tokens, from the first
+one until the response was streamed, as the TUI measures it."
+  (cl-destructuring-bind (&key created first-token streamed completed tokens
+                               &allow-other-keys)
+      message
+    (let* ((start (or first-token created))
+           (end (or streamed completed))
+           (generated (and tokens (+ (or (alist-get 'output tokens) 0)
+                                     (or (alist-get 'reasoning tokens) 0))))
+           (seconds (and start end (/ (- end start) 1000.0)))
+           (rate (and generated seconds (plusp generated) (plusp seconds)
+                      (/ generated seconds)))
+           (parts (delq nil (list (and created first-token
+                                       (concat "TTFT " (opencode-sidebar--duration
+                                                        (- first-token created))))
+                                  (and rate (format "%.0f tok/s" rate))))))
+      (when parts
+        (string-join parts " · ")))))
+
+(defun opencode-sidebar--insert-activity (step)
+  "Insert the activity section of STEP, from `opencode-sidebar--step'.
+A running turn's time counts up, by redrawing the sidebar every second."
+  (when-let* ((turn (plist-get step :turn)))
+    (magit-insert-section (opencode-sidebar-activity)
+      (opencode-sidebar--heading "Activity")
+      (let ((ended (opencode--turn-ended turn)))
+        (setq opencode-sidebar--running (not ended))
+        (insert (format " turn %d · %s\n"
+                        (opencode--turn-number turn)
+                        (opencode-sidebar--duration
+                         (- (or ended (opencode--now-ms)) (opencode--turn-created turn))))))
+      (when-let* ((speed (opencode-sidebar--speed (plist-get step :message))))
+        (insert " " speed "\n"))
+      (insert "\n"))))
 
 (defun opencode-sidebar--insert-context (tokens model)
   "Insert the context section for TOKENS, with MODEL's limit."
@@ -474,14 +592,17 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
 
 (defun opencode-sidebar--insert (session)
   "Insert the sidebar of SESSION buffer."
-  (pcase-let ((`(,title ,tokens ,model ,todos ,data ,directory ,rate-limit)
+  (pcase-let ((`(,title ,step ,tokens ,model ,todos ,data ,directory ,rate-limit)
                (with-current-buffer session
-                 (list opencode-session-title opencode-session-tokens
+                 (list opencode-session-title (opencode-sidebar--step)
+                       opencode-session-tokens
                        (opencode--current-model)
                        opencode-session-todos opencode-sidebar--data
                        default-directory (cdr (opencode--claude-rate-limit))))))
     (insert (propertize (or title "") 'font-lock-face 'opencode-sidebar-title)
             "\n\n")
+    (opencode-sidebar--insert-agent step)
+    (opencode-sidebar--insert-activity step)
     (opencode-sidebar--insert-context tokens model)
     (opencode-sidebar--insert-usage (plist-get data :session) rate-limit)
     (opencode-sidebar--insert-todos todos)
@@ -497,11 +618,33 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
            (session opencode-sidebar--session))
        (opencode-sidebar--remember-visibility)
        (erase-buffer)
-       (setq magit-root-section nil)
+       (setq magit-root-section nil
+             opencode-sidebar--running nil)
        (magit-insert-section (opencode-sidebar-root)
          (if (buffer-live-p session)
              (opencode-sidebar--insert session)
-           (insert (propertize "No session" 'font-lock-face 'shadow) "\n")))))))
+           (insert (propertize "No session" 'font-lock-face 'shadow) "\n"))))))
+  (opencode-sidebar--update-tick))
+
+(defun opencode-sidebar--update-tick ()
+  "Redraw the visible sidebars showing a running turn every second, if any."
+  (let ((running (seq-some (lambda (sidebar)
+                             (buffer-local-value 'opencode-sidebar--running sidebar))
+                           (opencode-sidebar--sidebars))))
+    (cond ((and running (not (timerp opencode-sidebar--tick-timer)))
+           (setq opencode-sidebar--tick-timer
+                 (run-with-timer 1 1 #'opencode-sidebar--tick)))
+          ((and (not running) (timerp opencode-sidebar--tick-timer))
+           (cancel-timer opencode-sidebar--tick-timer)
+           (setq opencode-sidebar--tick-timer nil)))))
+
+(defun opencode-sidebar--tick ()
+  "Redraw the visible sidebars showing a running turn."
+  (dolist (sidebar (opencode-sidebar--sidebars))
+    (when (buffer-local-value 'opencode-sidebar--running sidebar)
+      (with-current-buffer sidebar
+        (opencode-sidebar--redraw))))
+  (opencode-sidebar--update-tick))
 
 ;;; Mode
 

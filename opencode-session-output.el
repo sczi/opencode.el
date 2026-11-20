@@ -119,6 +119,31 @@ Their blocks had output in the replay, without this client seeing any delta.")
 (defvar-local opencode-last-response-start nil
   "Position of the start of the latest assistant text block.")
 
+(cl-defstruct (opencode--turn (:constructor opencode--make-turn)
+                              (:copier nil))
+  "A turn of a session: its prompt, and the steps until it was idle again.
+NUMBER counts the turns from 1.  START is a marker at its prompt, or its
+output if it has none.  CREATED and ENDED are times in ms, and ENDED is
+nil while it runs.  MESSAGES are the ids of its assistant messages,
+newest first."
+  number start created ended messages)
+
+(defvar-local opencode--turns nil
+  "The `opencode--turn's displayed in the buffer, newest first.")
+
+(defvar-local opencode--messages nil
+  "Hash table of the displayed assistant messages' ids to plists about them.
+They have :turn, :agent, the Model.Ref :model, the times in ms :created,
+:first-token, :streamed and :completed, and the TokenUsage.Info :tokens.")
+
+(defvar-local opencode--output-message nil
+  "Id of the assistant message whose output is being displayed, or nil.
+The output is marked with it in the `opencode-message' text property.")
+
+(defvar opencode--replaying-legacy nil
+  "Non-nil while replaying messages with no idle markers, from before them.
+A turn of those ends at the next prompt.")
+
 (defvar opencode-code-block-languages-without-background '(diff)
   "Fenced code block languages whose background overlay face is removed.
 Use for blocks whose own faces draw backgrounds, like diff line faces.")
@@ -228,8 +253,14 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
   (opencode--output (opencode--block-spacing (opencode--session-process-position))))
 
 (defun opencode--output (string)
-  "Output STRING as comint output."
-  (comint-output-filter (get-buffer-process (current-buffer)) string)
+  "Output STRING as comint output.
+It's marked as the output of `opencode--output-message', if any."
+  (let ((start (and opencode--output-message (opencode--session-process-position))))
+    (comint-output-filter (get-buffer-process (current-buffer)) string)
+    (when start
+      (with-silent-modifications
+        (put-text-property start (opencode--session-process-position)
+                           'opencode-message opencode--output-message))))
   (opencode--update-pending-input))
 
 (defun opencode--start-text-lines ()
@@ -795,6 +826,108 @@ Return the plist of the call, from `opencode--tool-calls'."
         (opencode--output (format "→ Skill \"%s\"\n%s\n" .name (string-trim .text)))
         (opencode--fold start)))))
 
+;;; Turns and the messages of their steps
+
+(defun opencode--reset-turns ()
+  "Forget the buffer's turns and messages, for displaying it anew."
+  (dolist (turn opencode--turns)
+    (set-marker (opencode--turn-start turn) nil))
+  (setq opencode--turns nil
+        opencode--messages nil
+        opencode--output-message nil))
+
+(defun opencode--message-info (id)
+  "Return the plist about the displayed assistant message ID, or nil."
+  (and opencode--messages (gethash id opencode--messages)))
+
+(defun opencode--update-message (id &rest properties)
+  "Set PROPERTIES of the plist about the assistant message ID."
+  (unless opencode--messages
+    (setq opencode--messages (make-hash-table :test 'equal)))
+  (let ((info (gethash id opencode--messages)))
+    (while properties
+      (setq info (plist-put info (pop properties) (pop properties))))
+    (puthash id info opencode--messages)))
+
+(defun opencode--running-turn ()
+  "Return the turn still running, or nil."
+  (when-let* ((turn (car opencode--turns)))
+    (unless (opencode--turn-ended turn)
+      turn)))
+
+(defun opencode--end-turn (&optional ended)
+  "End the running turn, at ENDED in ms.
+ENDED defaults to when its last step completed."
+  (when-let* ((turn (opencode--running-turn)))
+    (setf (opencode--turn-ended turn)
+          (or ended
+              (plist-get (opencode--message-info (car (opencode--turn-messages turn)))
+                         :completed)
+              (opencode--turn-created turn)))))
+
+(defun opencode--start-turn (created)
+  "Start a turn at CREATED in ms, ending the running one.
+It starts at the last input, unless that's of an earlier turn, as when
+the session is woken by a background job finishing."
+  (opencode--end-turn)
+  (let* ((previous (car opencode--turns))
+         (pmark (opencode--session-process-position))
+         (input (and (markerp comint-last-input-start)
+                     (marker-position comint-last-input-start)))
+         (start (if (and input (<= input pmark)
+                         (or (not previous) (> input (opencode--turn-start previous))))
+                    input
+                  pmark)))
+    (push (opencode--make-turn :number (1+ (length opencode--turns))
+                               :start (copy-marker start)
+                               :created created)
+          opencode--turns)))
+
+(defun opencode--add-message (id agent model created)
+  "Record the step of assistant message ID, by AGENT with MODEL from CREATED.
+It's a step of the running turn, or a new one if none is.  A step that's
+retried starts anew, forgetting when it was streamed."
+  (unless (opencode--running-turn)
+    (opencode--start-turn created))
+  (let ((turn (car opencode--turns)))
+    (unless (member id (opencode--turn-messages turn))
+      (push id (opencode--turn-messages turn)))
+    (opencode--update-message id :turn turn :agent agent :model model :created created
+                              :first-token nil :streamed nil :completed nil)))
+
+(defun opencode--now-ms ()
+  "Return the current time in ms."
+  (* 1000 (float-time)))
+
+(defun opencode--turn-at (pos)
+  "Return the turn displayed at POS, or the last one if POS is before them."
+  (or (seq-find (lambda (turn) (<= (opencode--turn-start turn) pos))
+                opencode--turns)
+      (car opencode--turns)))
+
+(defun opencode--marked-message-before (pos limit)
+  "Return the message the output at or before POS is of, back to LIMIT."
+  (or (and (< pos (point-max))
+           (get-text-property pos 'opencode-message))
+      (let (found)
+        (while (and (not found) (> pos limit))
+          (unless (setq found (get-text-property (1- pos) 'opencode-message))
+            (setq pos (previous-single-property-change pos 'opencode-message nil limit))))
+        found)))
+
+(defun opencode--message-at (pos)
+  "Return (TURN . MESSAGE-ID) of the step displayed at POS, or nil.
+Output not of a step, like a tool's, is of the step before it.  The
+prompt of a turn is of its first step, and anywhere before the first
+turn is of the last step.  MESSAGE-ID is nil for a turn with no steps yet."
+  (when-let* ((turn (opencode--turn-at pos)))
+    (let ((start (opencode--turn-start turn)))
+      (cons turn
+            (if (< pos start)
+                (car (opencode--turn-messages turn))
+              (or (opencode--marked-message-before pos start)
+                  (car (last (opencode--turn-messages turn)))))))))
+
 (defun opencode--margin-string (face)
   "Return a string displaying the margin bar with FACE in the left margin."
   (propertize " " 'display `((margin left-margin) ,(propertize "▎" 'face face))))
@@ -817,8 +950,11 @@ Return the plist of the call, from `opencode--tool-calls'."
   (opencode--output "\n"))
 
 (defun opencode--replay-user-request (message)
-  "Replay a user request MESSAGE."
+  "Replay a user request MESSAGE.
+It starts a turn, unless it was queued while one ran."
   (opencode--replay-input (alist-get 'text message))
+  (when (or opencode--replaying-legacy (not (opencode--running-turn)))
+    (opencode--start-turn (map-nested-elt message '(time created))))
   (opencode--insert-skills (alist-get 'skills message)))
 
 (defun opencode--insert-block-with-margin (text face)
@@ -1066,22 +1202,28 @@ Calls not yet finished are recorded so that later events finish them."
   (let-alist message
     (unless .time.completed
       (push .id opencode--replayed-unfinished-messages))
+    (opencode--add-message .id .agent .model .time.created)
+    (opencode--update-message .id :first-token .time.firstToken :streamed .time.streamed
+                              :completed .time.completed :tokens .tokens)
     ;; like a new step, it starts a new response
     (setq opencode--current-block nil)
-    (seq-do-indexed
-     (lambda (item index)
-       (let ((type (alist-get 'type item))
-             (text (string-trim (or (alist-get 'text item) ""))))
-         (cond
-          ((string= type "tool") (opencode--replay-tool .id item))
-          ((and (member type '("text" "reasoning"))
-                (not (string-empty-p text)))
-           (let ((type (intern type)))
-             (opencode-session--start-block type (list type .id index))
-             (if (eq type 'reasoning)
-                 (opencode--insert-reasoning-block text)
-               (opencode--output text)))))))
-     .content)
+    (setq opencode--output-message .id)
+    (unwind-protect
+        (seq-do-indexed
+         (lambda (item index)
+           (let ((type (alist-get 'type item))
+                 (text (string-trim (or (alist-get 'text item) ""))))
+             (cond
+              ((string= type "tool") (opencode--replay-tool .id item))
+              ((and (member type '("text" "reasoning"))
+                    (not (string-empty-p text)))
+               (let ((type (intern type)))
+                 (opencode-session--start-block type (list type .id index))
+                 (if (eq type 'reasoning)
+                     (opencode--insert-reasoning-block text)
+                   (opencode--output text)))))))
+         .content)
+      (setq opencode--output-message nil))
     (when .tokens
       (setq opencode-session-tokens (opencode--tokens-total .tokens)))))
 
@@ -1101,6 +1243,7 @@ Calls not yet finished are recorded so that later events finish them."
          ("completed" (opencode--insert-compaction-summary .summary))
          ("failed" (opencode--insert-error .error.message))))
       ("idle"
+       (opencode--end-turn .time.created)
        (pcase .outcome
          ("failed" (opencode--insert-error (or .error.message "Session failed")))
          ("interrupted" (opencode--insert-error "Interrupted")))))))
@@ -1113,7 +1256,10 @@ Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
         (gc-cons-threshold most-positive-fixnum)
         (comint-output-filter-functions
          (remove #'comint-postoutput-scroll-to-bottom
-                 comint-output-filter-functions)))
+                 comint-output-filter-functions))
+        (opencode--replaying-legacy
+         (not (seq-some (lambda (message) (equal "idle" (alist-get 'type message)))
+                        messages))))
     ;; Run the change hooks, like jit-lock's, once for the whole replay
     ;; rather than for every insertion.
     (combine-change-calls (point-min) (point-max)

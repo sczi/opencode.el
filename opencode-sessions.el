@@ -353,6 +353,19 @@ other mode line and header line options."
   "Return VALUE, or the result of calling it if it's a function."
   (if (functionp value) (funcall value) value))
 
+(defun opencode--status-icon (status)
+  "Return the icon of a session with STATUS, busy or idle."
+  (pcase status
+    ("busy" "⏳")
+    ("idle" "🚀")))
+
+(defun opencode--agent-label (agent)
+  "Return the name shown for AGENT, an Agent.Info."
+  (let-alist agent
+    (pcase (or .name .id "-")
+      ("Planner-Sisyphus" "Planner")
+      (name name))))
+
 (defun opencode--format-specs (&optional face)
   "Return the `format-spec' specs for the current session's mode line.
 FACE is the face of the line they're shown in, for the background of the
@@ -379,13 +392,9 @@ Values that are expensive to compute are functions, called only when used."
          (cons char (if (functionp value)
                         (lambda () (funcall mark (funcall value)))
                       (funcall mark value))))
-       `((?I . ,(pcase opencode-session-status
-                  ("busy" "⏳")
-                  ("idle" "🚀")))
+       `((?I . ,(opencode--status-icon opencode-session-status))
          (?i . ,opencode-session-status)
-         (?a . ,(pcase (or .name .id "-")
-                  ("Planner-Sisyphus" "Planner")
-                  (name name)))
+         (?a . ,(opencode--agent-label opencode-session-agent))
          (?m . ,(alist-get 'name model))
          (?v . ,(when (and .model.variant
                            (not (equal .model.variant "default")))
@@ -876,6 +885,7 @@ If CALLBACK is given, it will be called with SESSION afterwards."
   (let-alist session
     (opencode-api-all-messages (.id)
         messages
+      (opencode--reset-turns)
       (setq opencode--replayed-unfinished-messages nil
             opencode-session-todos nil
             opencode-session-cost (or .cost 0)
@@ -898,6 +908,8 @@ If CALLBACK is given, it will be called with SESSION afterwards."
         (if (assq (intern .id) active)
             (setq opencode-session-status "busy")
           (setq opencode-session-status "idle")
+          ;; like one from before idle markers, or that failed to record one
+          (opencode--end-turn)
           (opencode--show-prompt))
         (force-mode-line-update)
         (run-hook-with-args 'opencode-session-loaded-functions .id)

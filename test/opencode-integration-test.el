@@ -500,6 +500,89 @@ They're shown again when the session is reloaded."
                (string-search "Usage\n ↑1k ↓200 🧠0\n" (sidebar-text)))))
         (kill-buffer sidebar)))))
 
+(ert-deftest opencode-integration-sidebar-activity-test ()
+  "The sidebar shows the agent and activity of the step at point.
+The times of steps recorded from events are those the server records,
+and are the same once the session is reloaded."
+  (opencode-test-with-session '(("a.txt" . "alpha\n"))
+    (opencode-test-llm-reply
+     '((:reasoning "Let me look") (:tool "read" ((path . "a.txt"))))
+     '("It says alpha." (:raw ((id . "usage") (object . "chat.completion.chunk")
+                               (choices . [])
+                               (usage (prompt_tokens . 1000) (completion_tokens . 200)
+                                      (total_tokens . 1200)))))
+     "Second answer.")
+    (opencode-test-send "What's in a.txt?")
+    (opencode-test-send "And now?")
+    (let ((session (current-buffer))
+          (sidebar (generate-new-buffer " *opencode-sidebar-test*"))
+          (live (mapcar (lambda (turn)
+                          (mapcar (lambda (id)
+                                    (cons id (opencode--message-info id)))
+                                  (reverse (opencode--turn-messages turn))))
+                        (reverse opencode--turns))))
+      (unwind-protect
+          (cl-flet ((sidebar-text ()
+                      (with-current-buffer sidebar
+                        (opencode-sidebar--redraw)
+                        (buffer-substring-no-properties (point-min) (point-max))))
+                    (times (info)
+                      (list (plist-get info :created) (plist-get info :first-token)
+                            (plist-get info :streamed) (plist-get info :completed)
+                            (plist-get info :tokens))))
+            ;; the tool call's step and the answer's, then the second answer's
+            (should (equal '(2 1) (mapcar #'length live)))
+            (should (equal '(1 2) (mapcar #'opencode--turn-number (reverse opencode--turns))))
+            (should-not (opencode--running-turn))
+            (pcase-dolist (`(,_id . ,info) (apply #'append live))
+              (should (plist-get info :first-token))
+              (should (plist-get info :streamed))
+              (should (plist-get info :completed)))
+            (let (messages)
+              (opencode-api-all-messages (opencode-session-id)
+                  result
+                (setq messages result))
+              (opencode-test-wait-until messages)
+              (pcase-dolist (`(,id . ,info) (apply #'append live))
+                (let-alist (seq-find (lambda (message) (equal id (alist-get 'id message)))
+                                     messages)
+                  (should (equal (list .time.created .time.firstToken .time.streamed
+                                       .time.completed .tokens)
+                                 (times info))))))
+            (with-current-buffer sidebar
+              (opencode-sidebar-mode))
+            (opencode-sidebar--set-session sidebar session)
+            (goto-char (point-min))
+            (search-forward "It says alpha")
+            (should (string-match-p
+                     (rx "Agent\n " (+ nonl) "\n " (+ nonl) "\n " (+ nonl) "\n\n"
+                         "Activity\n turn 1 · " (+ (any "0-9.ms ")) "\n"
+                         " TTFT " (+ (any "0-9.ms ")) " · " (+ digit) " tok/s\n")
+                     (sidebar-text)))
+            ;; the prompt of the second turn is of its step
+            (search-forward "And now?")
+            (should (string-search "Activity\n turn 2 · " (sidebar-text)))
+            (should (equal (car (opencode--turn-messages (car opencode--turns)))
+                           (cdr (opencode--message-at (point)))))
+            ;; at the prompt, the last turn's, with the session's status
+            (goto-char (point-max))
+            (should (string-search "· 🚀 idle\n" (sidebar-text)))
+            (search-backward "It says alpha")
+            (should-not (string-search "idle" (sidebar-text)))
+            (let (loaded)
+              (add-hook 'opencode-session-loaded-functions
+                        (lambda (_id) (setq loaded t)) nil t)
+              (opencode--reload-session)
+              (opencode-test-wait-until loaded))
+            (should (equal (mapcar (lambda (turn)
+                                     (mapcar (lambda (step) (times (cdr step))) turn))
+                                   live)
+                           (mapcar (lambda (turn)
+                                     (mapcar (lambda (id) (times (opencode--message-info id)))
+                                             (reverse (opencode--turn-messages turn))))
+                                   (reverse opencode--turns)))))
+        (kill-buffer sidebar)))))
+
 (ert-deftest opencode-integration-kill-session-test ()
   "Killing a session deletes it on the server, and kills its buffer."
   (opencode-test-with-session nil

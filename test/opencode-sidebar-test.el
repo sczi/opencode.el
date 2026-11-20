@@ -84,6 +84,84 @@ bound to `session'."
     (should (equal "boom" (get-text-property (point) 'help-echo)))
     (should (eq 'opencode-sidebar-toggle-mcp (key-binding (kbd "RET"))))))
 
+(defvar opencode-sidebar-test--messages
+  '(((type . "user") (id . "u1") (text . "hello") (time (created . 1000)))
+    ((type . "assistant") (id . "a1") (agent . "build")
+     (model (id . "m1") (providerID . "prov") (variant . "high"))
+     (time (created . 1500) (firstToken . 2000) (streamed . 4000) (completed . 4100))
+     (tokens (input . 10) (output . 80) (reasoning . 20) (cache (read . 0) (write . 0)))
+     (content ((type . "text") (text . "first answer"))))
+    ((type . "assistant") (id . "a2") (agent . "build")
+     (model (id . "m1") (providerID . "prov"))
+     (time (created . 4200) (firstToken . 4300) (streamed . 5300) (completed . 5400))
+     (tokens (input . 10) (output . 50) (reasoning . 0) (cache (read . 0) (write . 0)))
+     (content ((type . "text") (text . "second answer"))))
+    ((type . "idle") (id . "i1") (outcome . "succeeded") (time (created . 6000)))
+    ((type . "user") (id . "u2") (text . "again") (time (created . 7000)))
+    ((type . "assistant") (id . "a3") (agent . "plan")
+     (model (id . "m2") (providerID . "prov"))
+     (time (created . 7100) (firstToken . 7600) (streamed . 8600) (completed . 8600))
+     (tokens (input . 10) (output . 30) (reasoning . 0) (cache (read . 0) (write . 0)))
+     (content ((type . "text") (text . "third answer"))))
+    ((type . "idle") (id . "i2") (outcome . "succeeded") (time (created . 72000))))
+  "Messages of two turns, the first of two steps.")
+
+(defun opencode-sidebar-test--step-sections ()
+  "Return the agent and activity sections of the current sidebar's text."
+  (let ((text (opencode-sidebar-test--text)))
+    (substring text (string-search "Agent" text) (string-search "Context" text))))
+
+(ert-deftest opencode-sidebar-step-test ()
+  "The sidebar shows the agent and activity of the step at point."
+  (opencode-sidebar-test--with-sidebar
+    (with-current-buffer session
+      (setq opencode-session-agents '(((id . "build") (name . "Build")))
+            opencode-session-agent '((id . "build") (name . "Build")
+                                     (model (id . "m1") (providerID . "prov")))
+            opencode-session-status "idle")
+      (opencode--replay-session-messages opencode-sidebar-test--messages)
+      (opencode--show-prompt))
+    (cl-flet ((sections-at (text)
+                (with-current-buffer session
+                  (goto-char (point-min))
+                  (search-forward text))
+                (opencode-sidebar--redraw)
+                (opencode-sidebar-test--step-sections)))
+      (should (equal (concat "Agent\n Build\n prov\n m1 high\n\n"
+                             "Activity\n turn 1 · 5.0s\n TTFT 0.5s · 50 tok/s\n\n")
+                     (sections-at "first")))
+      ;; the prompt is of its turn's first step
+      (should (equal (sections-at "hello") (sections-at "first")))
+      (should (equal (concat "Agent\n Build\n prov\n m1\n\n"
+                             "Activity\n turn 1 · 5.0s\n TTFT 0.1s · 50 tok/s\n\n")
+                     (sections-at "second")))
+      ;; an agent that isn't listed is shown by its id, and the last turn
+      ;; has the session's status
+      (should (equal (concat "Agent\n plan · 🚀 idle\n prov\n m2\n\n"
+                             "Activity\n turn 2 · 1m 5s\n TTFT 0.5s · 30 tok/s\n\n")
+                     (sections-at "third"))))))
+
+(ert-deftest opencode-sidebar-running-turn-test ()
+  "A running turn's time is how long it's run, and its step's agent is shown.
+With no step yet, the session's selected agent is shown."
+  (opencode-sidebar-test--with-sidebar
+    (with-current-buffer session
+      (setq opencode-session-agent '((id . "build") (name . "Build")
+                                     (model (id . "m1") (providerID . "prov")))
+            opencode-session-status "busy")
+      (opencode--start-turn (- (opencode--now-ms) 3000)))
+    (opencode-sidebar--redraw)
+    (should (string-match-p (rx "Agent\n Build · ⏳ busy\n prov\n m1\n\n"
+                                "Activity\n turn 1 · 3." digit "s\n\n")
+                            (opencode-sidebar-test--step-sections)))
+    (should opencode-sidebar--running)
+    (with-current-buffer session
+      (opencode--add-message "a1" "plan" '((id . "m2") (providerID . "prov"))
+                             (opencode--now-ms)))
+    (opencode-sidebar--redraw)
+    (should (string-prefix-p "Agent\n plan · ⏳ busy\n prov\n m2\n\n"
+                             (opencode-sidebar-test--step-sections)))))
+
 (ert-deftest opencode-sidebar-empty-sections-test ()
   "Sections with nothing to show are omitted."
   (opencode-sidebar-test--with-sidebar

@@ -21,36 +21,39 @@ The server may briefly remove a file while restoring it, as on revert."
       (buffer-string))))
 
 (ert-deftest opencode-integration-text-response-test ()
-  "A prompt is sent to the LLM, and its streamed answer shown before a prompt."
+  "A prompt is sent to the LLM, and its streamed answer shown before a prompt.
+The buffer is renamed after the title the server generates.  Text of a step
+the server continues is spaced from the next step's.  An error from the LLM
+provider is shown, then a prompt."
   (opencode-test-with-session nil
     (opencode-test-llm-reply '("Hello" " from the" " LLM."))
     (opencode-test-send "Say hello")
     (should (equal "Say hello" (opencode-test-llm-user-text
                                 (car opencode-test-llm-requests))))
     (should (equal "❯ Say hello\n\nHello from the LLM.\n\n❯ "
-                   (opencode-test-output)))))
+                   (opencode-test-output)))
+    ;; the title
+    (opencode-test-wait-until (equal opencode-session-title opencode-test-title))
+    (should (equal (format "*OpenCode: %s*" opencode-test-title) (buffer-name)))
+    ;; a continued step
+    (opencode-test-llm-reply '("Cut off" (:finish "length"))
+                             "Next text")
+    (opencode-test-send "Go on")
+    (should (string-suffix-p "❯ Go on\n\nCut off\n\nNext text\n\n❯ "
+                             (opencode-test-output)))
+    ;; a provider error
+    (opencode-test-llm-reply
+     '((:raw ((error . ((message . "Bad request from provider")
+                        (type . "invalid_request_error")))))
+       (:finish nil)))
+    (opencode-test-send "Fail")
+    (should (string-suffix-p "❯ Fail\n\nBad request from provider\n\n❯ "
+                             (opencode-test-output)))
+    (should (opencode-test-error-p "Bad request from provider"))))
 
 (ert-deftest opencode-integration-stats-test ()
-  "The stats of the session's project show its prompt, steps, model and tools."
-  ;; Projects are identified by their first commit, which is unique only
-  ;; with unique files, so the stats don't include other tests' sessions
-  (opencode-test-with-session `(("a.txt" . "alpha\n") ("unique" . ,(format "%s" (random))))
-    (opencode-test-llm-reply '((:tool "read" ((path . "a.txt")))) "It says alpha.")
-    (opencode-test-send "What's in a.txt?")
-    (opencode-stats t)
-    (with-current-buffer (opencode-stats--buffer opencode-test--connection)
-      (opencode-test-wait-until (and opencode-stats--project opencode-stats--data))
-      (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-        (should-not (plist-get opencode-stats--data :error))
-        (should (string-search "1 session · 1 prompt · 2 steps" text))
-        (should (string-search "100% tool success · 1 active day" text))
-        (should (string-match-p "^  read +1 +0 +0% " text))
-        ;; The chart's bars together have them all
-        (should (equal 2 (apply #'+ (mapcar (lambda (bucket) (alist-get 'steps (cdr bucket)))
-                                            (plist-get opencode-stats--data :buckets)))))))))
-
-(ert-deftest opencode-integration-stats-sessions-test ()
-  "Today's stats list its sessions with their steps, and RET opens one."
+  "The stats of the session's project show its prompts, steps, model and tools.
+Today's stats list its sessions with their steps, and RET opens one."
   ;; Projects are identified by their first commit, which is unique only
   ;; with unique files, so the stats don't include other tests' sessions
   (opencode-test-with-session `(("a.txt" . "alpha\n") ("unique" . ,(format "%s" (random))))
@@ -65,6 +68,16 @@ The server may briefly remove a file while restoring it, as on revert."
       (opencode-stats t)
       (with-current-buffer (opencode-stats--buffer opencode-test--connection)
         (opencode-test-wait-until (and opencode-stats--project opencode-stats--data))
+        ;; the project's stats
+        (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+          (should-not (plist-get opencode-stats--data :error))
+          (should (string-search "2 sessions · 2 prompts · 3 steps" text))
+          (should (string-search "100% tool success · 1 active day" text))
+          (should (string-match-p "^  read +1 +0 +0% " text))
+          ;; The chart's bars together have them all
+          (should (equal 3 (apply #'+ (mapcar (lambda (bucket) (alist-get 'steps (cdr bucket)))
+                                              (plist-get opencode-stats--data :buckets))))))
+        ;; today's sessions
         (opencode-stats-days 1)
         (opencode-test-wait-until
          (and opencode-stats--data
@@ -82,33 +95,6 @@ The server may briefly remove a file while restoring it, as on revert."
                    (lambda (buffer) (setq opened buffer))))
           (push-button (+ 4 (point))))
         (should (eq opened (opencode--session-buffer second)))))))
-
-(ert-deftest opencode-integration-title-test ()
-  "The buffer is renamed after the title the server generates."
-  (opencode-test-with-session nil
-    (opencode-test-llm-reply "Hi.")
-    (opencode-test-send "Hello")
-    (opencode-test-wait-until (equal opencode-session-title opencode-test-title))
-    (should (equal (format "*OpenCode: %s*" opencode-test-title) (buffer-name)))))
-
-(ert-deftest opencode-integration-reasoning-and-tool-test ()
-  "Reasoning and a read's output are folded, and the result goes back to the LLM."
-  (opencode-test-with-session '(("a.txt" . "alpha\nbeta\n"))
-    (opencode-test-llm-reply
-     '((:reasoning "Let me read it\nto see") (:tool "read" ((path . "a.txt"))))
-     "It says alpha.")
-    (opencode-test-send "What's in a.txt?")
-    (should (equal (concat "❯ What's in a.txt?\n\n"
-                           "Let me read it\nto see\n\n"
-                           "read a.txt\n```text\nRead file a.txt, lines 1-2\n1: alpha\n2: beta\n```\n\n"
-                           "It says alpha.\n\n❯ ")
-                   (opencode-test-output)))
-    (should (opencode-test-folded-p "Let me read it"))
-    (should (opencode-test-folded-p "read a.txt"))
-    (should (opencode-test-visible-p "It says alpha."))
-    (let ((tool-result (car (last (alist-get 'messages (cadr opencode-test-llm-requests))))))
-      (should (equal "tool" (alist-get 'role tool-result)))
-      (should (string-search "1: alpha" (format "%s" (alist-get 'content tool-result)))))))
 
 (ert-deftest opencode-integration-read-image-test ()
   "A read of an image shows the image instead of its text."
@@ -131,69 +117,9 @@ The server may briefly remove a file while restoring it, as on revert."
     (search-forward "read pixel.png\n```text\n")
     (should (eq (car-safe (get-text-property (point) 'display)) 'image))))
 
-(ert-deftest opencode-integration-parallel-tools-test ()
-  "Parallel tool calls each have their output after them."
-  (opencode-test-with-session '(("a.txt" . "alpha\n") ("b.txt" . "gamma\n"))
-    (opencode-test-llm-reply
-     '((:tool "grep" ((pattern . "alpha"))) (:tool "grep" ((pattern . "gamma"))))
-     "Found both.")
-    (opencode-test-send "Find them")
-    (should (string-match-p
-             (concat "🔍 grep `alpha`\n```text\nFound 1 matches\n.*/a\\.txt:\n  Line 1: alpha\n```\n\n"
-                     "🔍 grep `gamma`\n```text\nFound 1 matches\n.*/b\\.txt:\n  Line 1: gamma\n```\n\n"
-                     "Found both\\.")
-             (opencode-test-output)))
-    (should (zerop (hash-table-count opencode--tool-calls)))))
-
-(ert-deftest opencode-integration-edit-test ()
-  "An edit changes the file, and its diff is shown."
-  (opencode-test-with-session '(("a.txt" . "alpha\nbeta\n"))
-    (opencode-test-llm-reply
-     '((:tool "edit" ((path . "a.txt") (oldString . "beta") (newString . "BETA"))))
-     "Edited.")
-    (opencode-test-send "Shout beta")
-    (should (equal "alpha\nBETA\n" (opencode-integration-test--file "a.txt")))
-    (should (string-search "✏ edit a.txt:\n```diff\n@@ -1 +1 @@\n-beta\n+BETA\n```\n\nEdited."
-                           (opencode-test-output)))
-    (should (opencode-test-visible-p "+BETA"))))
-
-(ert-deftest opencode-integration-tool-error-test ()
-  "A tool that fails shows its error."
-  (opencode-test-with-session nil
-    (opencode-test-llm-reply '((:tool "read" ((path . "missing.txt")))) "No file.")
-    (opencode-test-send "Read it")
-    (should (string-search "read missing.txt\n```text\nFile not found: missing.txt\n```"
-                           (opencode-test-output)))
-    (should (opencode-test-error-p "File not found"))
-    (should (opencode-test-visible-p "File not found"))))
-
-(ert-deftest opencode-integration-shell-tool-test ()
-  "A shell command's output is shown if it fails, and folded otherwise."
-  (opencode-test-with-session nil
-    (opencode-test-llm-reply '((:tool "shell" ((command . "echo fine"))))
-                             '((:tool "shell" ((command . "echo oops; exit 3"))))
-                             "Done.")
-    (opencode-test-send "Run them")
-    (should (string-search "```bash\necho oops; exit 3\n```\n```text\noops\n\nExit code: 3\n```"
-                           (opencode-test-output)))
-    (should (opencode-test-visible-p "Exit code: 3"))
-    (should (opencode-test-folded-p "echo fine"))))
-
-(ert-deftest opencode-integration-user-shell-test ()
-  "A user's shell command shows its output, as an error if it fails."
-  (opencode-test-with-session nil
-    (opencode-test-send "!echo ok")
-    (should (string-suffix-p "❯ !echo ok\n\n```text\nok\n```\n\n❯ " (opencode-test-output)))
-    (should-not (opencode-test-error-p "ok"))
-    (opencode-test-send "!echo bad; exit 2")
-    (should (string-suffix-p "❯ !echo bad; exit 2\n\n```text\nbad\n```\n\n❯ "
-                             (opencode-test-output)))
-    (should (opencode-test-error-p "bad"))
-    (should (opencode-test-visible-p "bad"))
-    (should-not opencode-test-llm-requests)))
-
 (ert-deftest opencode-integration-abort-test ()
-  "Aborting while the LLM's answering shows it was interrupted, then a prompt."
+  "Aborting while the LLM's answering shows it was interrupted, then a prompt.
+Aborting with a prefix argument also aborts the session's subagents."
   (opencode-test-with-session nil
     (opencode-test-llm-reply '("Partial answer" (:hold)))
     (let ((since (length opencode-test-events)))
@@ -203,11 +129,9 @@ The server may briefly remove a file while restoring it, as on revert."
       (opencode-abort-session)
       (opencode-test-wait-finished since))
     (should (opencode-test-error-p "Interrupted"))
-    (should (string-suffix-p "Partial answer\n\nInterrupted\n\n❯ " (opencode-test-output)))))
-
-(ert-deftest opencode-integration-abort-subagents-test ()
-  "Aborting with a prefix argument also aborts the session's subagents."
-  (opencode-test-with-session nil
+    (should (string-suffix-p "Partial answer\n\nInterrupted\n\n❯ " (opencode-test-output)))
+    ;; with subagents; the aborted request is no longer held
+    (setq opencode-test-llm-held nil)
     (let ((reply (lambda (body)
                    (if (string-search "You are a subagent"
                                       (opencode-test-llm-user-text body))
@@ -274,46 +198,90 @@ The server may briefly remove a file while restoring it, as on revert."
         (should (equal 1 (length opencode-alerted-sessions)))
         (should (string-search "It went." (opencode-test-output)))))))
 
-(ert-deftest opencode-integration-continued-step-test ()
-  "Text of a step the server continues is spaced from the next step's."
-  (opencode-test-with-session nil
-    (opencode-test-llm-reply '("Cut off" (:finish "length"))
-                             "Next text")
-    (opencode-test-send "Go on")
-    (should (string-suffix-p "❯ Go on\n\nCut off\n\nNext text\n\n❯ "
-                             (opencode-test-output)))))
-
-(ert-deftest opencode-integration-provider-error-test ()
-  "An error from the LLM provider is shown, then a prompt."
-  (opencode-test-with-session nil
-    (opencode-test-llm-reply
-     '((:raw ((error . ((message . "Bad request from provider")
-                        (type . "invalid_request_error")))))
-       (:finish nil)))
-    (opencode-test-send "Fail")
-    (should (string-suffix-p "❯ Fail\n\nBad request from provider\n\n❯ "
-                             (opencode-test-output)))
-    (should (opencode-test-error-p "Bad request from provider"))))
-
 (ert-deftest opencode-integration-replay-test ()
-  "A session is shown the same when reloaded from the server as it was live."
-  (opencode-test-with-session '(("a.txt" . "alpha\nbeta\n"))
+  "Tools' and shell commands' output is shown, and the same once reloaded.
+Reasoning and a read's output are folded, and the result goes back to the
+LLM.  Parallel tool calls each have their output after them.  An edit
+changes the file, and its diff is shown.  A tool that fails shows its
+error.  A shell command's output is shown if it fails, and folded
+otherwise.  A user's shell command shows its output, as an error if it
+fails, and isn't sent to the LLM.  The session is shown the same when
+reloaded from the server as it was live."
+  (opencode-test-with-session '(("a.txt" . "alpha\nbeta\n") ("b.txt" . "gamma\n"))
+    ;; reasoning and a read
     (opencode-test-llm-reply
-     '((:reasoning "Thinking\nmore thoughts") (:tool "grep" ((pattern . "alpha"))))
+     '((:reasoning "Let me read it\nto see") (:tool "read" ((path . "a.txt"))))
+     "It says alpha.")
+    (opencode-test-send "What's in a.txt?")
+    (should (equal (concat "❯ What's in a.txt?\n\n"
+                           "Let me read it\nto see\n\n"
+                           "read a.txt\n```text\nRead file a.txt, lines 1-2\n1: alpha\n2: beta\n```\n\n"
+                           "It says alpha.\n\n❯ ")
+                   (opencode-test-output)))
+    (should (opencode-test-folded-p "Let me read it"))
+    (should (opencode-test-folded-p "read a.txt"))
+    (should (opencode-test-visible-p "It says alpha."))
+    (let ((tool-result (car (last (alist-get 'messages (cadr opencode-test-llm-requests))))))
+      (should (equal "tool" (alist-get 'role tool-result)))
+      (should (string-search "1: alpha" (format "%s" (alist-get 'content tool-result)))))
+    ;; parallel tool calls
+    (opencode-test-llm-reply
+     '((:tool "grep" ((pattern . "alpha"))) (:tool "grep" ((pattern . "gamma"))))
+     "Found both.")
+    (opencode-test-send "Find them")
+    (should (string-match-p
+             (concat "🔍 grep `alpha`\n```text\nFound 1 matches\n.*/a\\.txt:\n  Line 1: alpha\n```\n\n"
+                     "🔍 grep `gamma`\n```text\nFound 1 matches\n.*/b\\.txt:\n  Line 1: gamma\n```\n\n"
+                     "Found both\\.")
+             (opencode-test-output)))
+    (should (zerop (hash-table-count opencode--tool-calls)))
+    ;; an edit
+    (opencode-test-llm-reply
      '((:tool "edit" ((path . "a.txt") (oldString . "beta") (newString . "BETA"))))
-     '((:tool "read" ((path . "missing.txt"))))
-     '((:tool "shell" ((command . "echo oops; exit 3"))))
-     "All done.")
-    (opencode-test-send "Do things")
-    (opencode-test-send "!echo hi; exit 2")
+     "Edited.")
+    (opencode-test-send "Shout beta")
+    (should (equal "alpha\nBETA\n" (opencode-integration-test--file "a.txt")))
+    (should (string-search "✏ edit a.txt:\n```diff\n@@ -1 +1 @@\n-beta\n+BETA\n```\n\nEdited."
+                           (opencode-test-output)))
+    (should (opencode-test-visible-p "+BETA"))
+    ;; a tool error
+    (opencode-test-llm-reply '((:tool "read" ((path . "missing.txt")))) "No file.")
+    (opencode-test-send "Read it")
+    (should (string-search "read missing.txt\n```text\nFile not found: missing.txt\n```"
+                           (opencode-test-output)))
+    (should (opencode-test-error-p "File not found"))
+    (should (opencode-test-visible-p "File not found"))
+    ;; shell tools
+    (opencode-test-llm-reply '((:tool "shell" ((command . "echo fine"))))
+                             '((:tool "shell" ((command . "echo oops; exit 3"))))
+                             "Done.")
+    (opencode-test-send "Run them")
+    (should (string-search "```bash\necho oops; exit 3\n```\n```text\noops\n\nExit code: 3\n```"
+                           (opencode-test-output)))
+    (should (opencode-test-visible-p "Exit code: 3"))
+    (should (opencode-test-folded-p "echo fine"))
+    ;; the user's shell commands
+    (let ((requests (length opencode-test-llm-requests)))
+      (opencode-test-send "!echo ok")
+      (should (string-suffix-p "❯ !echo ok\n\n```text\nok\n```\n\n❯ " (opencode-test-output)))
+      (should-not (opencode-test-error-p "ok"))
+      (opencode-test-send "!echo bad; exit 2")
+      (should (string-suffix-p "❯ !echo bad; exit 2\n\n```text\nbad\n```\n\n❯ "
+                               (opencode-test-output)))
+      (should (opencode-test-error-p "bad"))
+      (should (opencode-test-visible-p "bad"))
+      (should (equal requests (length opencode-test-llm-requests))))
+    ;; all the same once reloaded
     (let ((live (opencode-test-output)))
       (opencode--reload-session)
       (opencode-test-wait-until (and (opencode-test-at-prompt-p)
-                                     (string-search "❯ !echo" (opencode-test-output))))
+                                     (string-search "❯ !echo bad" (opencode-test-output))))
       (should (equal live (opencode-test-output)))
-      (should (opencode-test-folded-p "Thinking"))
+      (should (opencode-test-folded-p "Let me read it"))
+      (should (opencode-test-folded-p "echo fine"))
       (should (opencode-test-visible-p "+BETA"))
-      (should (opencode-test-error-p "File not found")))))
+      (should (opencode-test-error-p "File not found"))
+      (should (opencode-test-error-p "bad")))))
 
 (ert-deftest opencode-integration-question-test ()
   "Questions from the LLM are asked in menus, and their answers shown unfolded."
@@ -352,7 +320,8 @@ The server may briefly remove a file while restoring it, as on revert."
         (should (string-search "Blue" (format "%s" (alist-get 'content (car (last (alist-get 'messages (cadr opencode-test-llm-requests))))))))))))
 
 (ert-deftest opencode-integration-permission-test ()
-  "A tool that needs permission waits for it, and is labeled with the answer."
+  "A tool that needs permission waits for it, and is labeled with the answer.
+A denied tool isn't run."
   (opencode-test-with-session
       '(("opencode.json"
          . "{\"permissions\": [{\"action\": \"shell\", \"resource\": \"*\", \"effect\": \"ask\"}]}"))
@@ -373,22 +342,16 @@ The server may briefly remove a file while restoring it, as on revert."
           (opencode-test-wait-finished since))
         (should (string-search "Shell command: echo allowed [accepted]" (opencode-test-output)))
         (should (string-search "```text\nallowed\n```" (opencode-test-output)))
-        (should-not opencode-session-pending-permission)))))
-
-(ert-deftest opencode-integration-permission-denied-test ()
-  "A denied tool isn't run."
-  (opencode-test-with-session
-      '(("opencode.json"
-         . "{\"permissions\": [{\"action\": \"shell\", \"resource\": \"*\", \"effect\": \"ask\"}]}"))
-    (cl-letf (((symbol-function 'opencode-permission--prompt) #'ignore))
-      (opencode-test-llm-reply '((:tool "shell" ((command . "touch ran")))))
-      (let ((since (length opencode-test-events)))
-        (opencode-test-send "Run it" t)
-        (opencode-test-wait-until opencode-session-pending-permission)
-        (opencode--send-permission-response "reject")
-        (opencode-test-wait-finished since))
-      (should (string-search "Shell command: touch ran [denied]" (opencode-test-output)))
-      (should-not (file-exists-p "ran")))))
+        (should-not opencode-session-pending-permission)
+        ;; denied
+        (opencode-test-llm-reply '((:tool "shell" ((command . "touch ran")))))
+        (let ((since (length opencode-test-events)))
+          (opencode-test-send "Run that" t)
+          (opencode-test-wait-until opencode-session-pending-permission)
+          (opencode--send-permission-response "reject")
+          (opencode-test-wait-finished since))
+        (should (string-search "Shell command: touch ran [denied]" (opencode-test-output)))
+        (should-not (file-exists-p "ran"))))))
 
 (ert-deftest opencode-integration-revert-test ()
   "Reverting a message undoes its edits, and puts its text back in the prompt."

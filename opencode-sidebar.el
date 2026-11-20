@@ -106,6 +106,122 @@ So docs about tests, like TESTING.md, aren't counted as tests."
 (defvar-local opencode-sidebar--session nil
   "The session buffer the sidebar shows.")
 
+;;; Sections
+
+(defvar opencode-sidebar--sections nil
+  "Alist of the names of the sidebar's sections and their definitions.
+A definition is a plist of :function, :fetch and :join, as given to
+`opencode-sidebar-define-section'.")
+
+(defcustom opencode-sidebar
+  '(title last-updated agent activity changes context usage todos mcp location)
+  "Sections of the sidebar, in order.
+Each is the name of a section defined with `opencode-sidebar-define-section'.
+The built-in ones are:
+
+  title         the session's title
+  last-updated  when an idle session was last updated, see
+                `opencode-sidebar-updated-after'
+  agent         the agent and model of the step at point
+  activity      the turn of the step at point, its time and speed
+  changes       how many files the session changed
+  context       the context's tokens, and the share of the model's limit
+  usage         the session's tokens, cache rate and cost
+  todos         the session's todo list
+  mcp           the MCP servers, RET on one connects or disconnects it
+  location      the session's directory and git branch
+
+Only the data the sections shown use is fetched from the server."
+  :type '(repeat (choice (const title) (const last-updated) (const agent)
+                         (const activity) (const changes) (const context)
+                         (const usage) (const todos) (const mcp) (const location)
+                         (symbol :tag "Other section")))
+  :initialize #'custom-initialize-default
+  :set (lambda (symbol value)
+         (set-default-toplevel-value symbol value)
+         (opencode-sidebar--sections-changed))
+  :group 'opencode-sidebar)
+
+(defmacro opencode-sidebar-define-section (name docstring &rest body)
+  "Define a sidebar section NAME, for `opencode-sidebar'.
+BODY inserts it into the sidebar buffer, where it's run.  It's inserted
+within a magit section of type opencode-sidebar-NAME, so BODY can begin
+with `magit-insert-heading' to make it collapsible.  A blank line is
+inserted after it, and if BODY inserts nothing the section isn't shown.
+It can get what it shows with `opencode-sidebar-session',
+`opencode-sidebar-with-session', `opencode-sidebar-step' and
+`opencode-sidebar-data'.  It's also defined as a function,
+opencode-sidebar-insert-NAME, documented by DOCSTRING.
+
+BODY can begin with keyword arguments:
+
+:fetch ALIST  An alist of keys of data fetched for the section, and the
+              functions fetching them, which are called in the session
+              buffer and store what they fetch with
+              `opencode-sidebar-store'.  It's not evaluated.  Data is
+              fetched when the sidebar first shows a session, and
+              refetched by `opencode-sidebar-refresh' or
+              `opencode-sidebar-session-changed'.
+:join BOOL    Whether the section continues the one before it, with no
+              blank line between them."
+  (declare (indent defun) (doc-string 2)
+           (debug (&define name stringp [&rest keywordp sexp] def-body)))
+  (let (fetch join)
+    (while (keywordp (car body))
+      (pcase (pop body)
+        (:fetch (setq fetch (pop body)))
+        (:join (setq join (pop body)))
+        (keyword (error "Unknown keyword %s" keyword))))
+    (let ((function (intern (format "opencode-sidebar-insert-%s" name))))
+      `(progn
+         (defun ,function ()
+           ,docstring
+           ,@body)
+         (setf (alist-get ',name opencode-sidebar--sections)
+               (list :function #',function :fetch ',fetch :join ,join))
+         ',name))))
+
+(defun opencode-sidebar--section (name &optional noerror)
+  "Return the definition of the section NAME.
+Signal an error if there's none, unless NOERROR."
+  (or (alist-get name opencode-sidebar--sections)
+      (unless noerror
+        (error "No sidebar section %s is defined, see `opencode-sidebar'" name))))
+
+(defvar opencode-sidebar--drawn nil
+  "The session buffer whose sidebar is being drawn.")
+
+(defvar opencode-sidebar--step-cache nil
+  "While drawing a sidebar, a cons of whether its step is known, and the step.")
+
+(defun opencode-sidebar-session ()
+  "Return the session buffer whose sidebar is being drawn, or shown."
+  (or opencode-sidebar--drawn opencode-sidebar--session))
+
+(defmacro opencode-sidebar-with-session (&rest body)
+  "Run BODY in the session buffer whose sidebar is being drawn."
+  (declare (indent 0) (debug t))
+  `(with-current-buffer (opencode-sidebar-session)
+     ,@body))
+
+(defun opencode-sidebar-data (key)
+  "Return the data of KEY fetched for the sidebar of the session.
+KEY is one of those of a section's :fetch, see
+`opencode-sidebar-define-section'.  The built-in ones are :session, its
+Session.Info, :diff, its diffstat from `opencode-sidebar--diffstat',
+:mcps, its MCP servers, and :branch, its git branch."
+  (plist-get (buffer-local-value 'opencode-sidebar--data (opencode-sidebar-session))
+             key))
+
+(defun opencode-sidebar-step ()
+  "Return a plist of the step at point in the session, see `opencode-sidebar--step'.
+It's found once per redraw."
+  (let ((cache opencode-sidebar--step-cache))
+    (cond ((not cache) (opencode-sidebar-with-session (opencode-sidebar--step)))
+          ((car cache) (cdr cache))
+          (t (setcar cache t)
+             (setcdr cache (opencode-sidebar-with-session (opencode-sidebar--step)))))))
+
 (defvar-local opencode-sidebar--visibility nil
   "Alist of the sidebar's section types and whether they're hidden.
 It's kept across redraws, and for every session the sidebar shows.")
@@ -276,8 +392,9 @@ selected."
               (eq (buffer-local-value 'opencode-sidebar--session sidebar) session))
             (opencode-sidebar--sidebars)))
 
-(defun opencode-sidebar--store (key value)
-  "Set KEY of the current session buffer's sidebar data to VALUE, and redraw."
+(defun opencode-sidebar-store (key value)
+  "Set KEY of the current session buffer's sidebar data to VALUE, and redraw.
+For the fetchers of sections, see `opencode-sidebar-define-section'."
   (setq opencode-sidebar--data (plist-put opencode-sidebar--data key value))
   (opencode-sidebar--schedule-redraw))
 
@@ -313,7 +430,7 @@ three."
         (fail (lambda (message)
                 ;; like when its turns span a change of location
                 (opencode--log-event "WARNING SIDEBAR" (format "Session diff failed: %s" message))
-                (opencode-sidebar--store :diff nil))))
+                (opencode-sidebar-store :diff nil))))
     (opencode-api-first-user-message (id)
         first
       :else fail
@@ -321,12 +438,12 @@ three."
           last
         :else fail
         (if (not (and first last))
-            (opencode-sidebar--store :diff nil)
+            (opencode-sidebar-store :diff nil)
           (opencode-api-session-range-diff (id (alist-get 'id (car first))
                                                (alist-get 'id (car last)))
               diff
             :else fail
-            (opencode-sidebar--store :diff (opencode-sidebar--diffstat diff))))))))
+            (opencode-sidebar-store :diff (opencode-sidebar--diffstat diff))))))))
 
 (defun opencode-sidebar--fetch-session ()
   "Fetch the current buffer's session, for its total tokens and cost."
@@ -334,32 +451,35 @@ three."
       session
     :else (lambda (message)
             (opencode--log-event "WARNING SIDEBAR" (format "Session fetch failed: %s" message))
-            (opencode-sidebar--store :session nil))
-    (opencode-sidebar--store :session session)))
+            (opencode-sidebar-store :session nil))
+    (opencode-sidebar-store :session session)))
 
 (defun opencode-sidebar--fetch-mcps ()
   "Fetch the MCP servers of the current session buffer's directory."
   (opencode-api-mcps mcps
     :else (lambda (message)
             (opencode--log-event "WARNING SIDEBAR" (format "MCP list failed: %s" message))
-            (opencode-sidebar--store :mcps nil))
-    (opencode-sidebar--store :mcps mcps)))
+            (opencode-sidebar-store :mcps nil))
+    (opencode-sidebar-store :mcps mcps)))
 
 (defun opencode-sidebar--fetch-branch ()
   "Find the git branch of the current session buffer's directory.
 Not over Tramp, as it's slow and can be run from a process filter."
-  (opencode-sidebar--store
+  (opencode-sidebar-store
    :branch (unless (file-remote-p default-directory)
              (ignore-errors (magit-get-current-branch)))))
 
-(defconst opencode-sidebar--fetchers
-  '((:session . opencode-sidebar--fetch-session)
-    (:diff . opencode-sidebar--fetch-diff)
-    (:mcps . opencode-sidebar--fetch-mcps)
-    (:branch . opencode-sidebar--fetch-branch))
-  "Alist of the keys of the sidebar's data and the functions fetching them.
-They're called in the session buffer, and store what they fetch with
-`opencode-sidebar--store'.")
+(defun opencode-sidebar--fetchers ()
+  "Return an alist of the keys of the sidebar's data and the functions fetching them.
+Of the sections in `opencode-sidebar', from their :fetch, see
+`opencode-sidebar-define-section'.  Undefined sections are left to
+`opencode-sidebar--redraw' to complain about."
+  (let (fetchers)
+    (dolist (name opencode-sidebar)
+      (pcase-dolist (`(,key . ,fetch) (plist-get (opencode-sidebar--section name t) :fetch))
+        (unless (assq key fetchers)
+          (push (cons key fetch) fetchers))))
+    (nreverse fetchers)))
 
 (defun opencode-sidebar--fetch (session &optional refetch)
   "Fetch what the sidebar shows for SESSION buffer that it doesn't have yet.
@@ -370,7 +490,7 @@ until the new ones arrive."
       ;; for the share of the 5h budget in the cost
       (when (opencode-claude-subscription-p)
         (opencode--fetch-claude-plan-tier))
-      (pcase-dolist (`(,key . ,fetch) opencode-sidebar--fetchers)
+      (pcase-dolist (`(,key . ,fetch) (opencode-sidebar--fetchers))
         (when (or (memq key refetch)
                   (not (plist-member opencode-sidebar--data key)))
           ;; so it's fetched once while the request is pending
@@ -381,16 +501,29 @@ until the new ones arrive."
 (defun opencode-sidebar--invalidate (session &rest keys)
   "Refetch KEYS of SESSION buffer's sidebar data if it's shown, else forget them.
 With no KEYS, all of it.  While it's refetched the old values are shown,
-so sections don't disappear until the new ones arrive."
-  (let ((keys (or keys (mapcar #'car opencode-sidebar--fetchers))))
-    (if (opencode-sidebar--shown-p session)
-        ;; storing what's fetched redraws it
-        (opencode-sidebar--fetch session keys)
-      (with-current-buffer session
-        (setq opencode-sidebar--data
-              (map-into (map-remove (lambda (key _) (memq key keys))
-                                    opencode-sidebar--data)
-                        'plist))))))
+so sections don't disappear until the new ones arrive.  Only keys of
+sections in `opencode-sidebar' are refetched, others are forgotten."
+  (let* ((enabled (mapcar #'car (opencode-sidebar--fetchers)))
+         (keys (or keys enabled))
+         (shown (opencode-sidebar--shown-p session))
+         (forget (if shown (seq-difference keys enabled) keys)))
+    (with-current-buffer session
+      (setq opencode-sidebar--data
+            (map-into (map-remove (lambda (key _) (memq key forget))
+                                  opencode-sidebar--data)
+                      'plist)))
+    (when shown
+      ;; storing what's fetched redraws it
+      (opencode-sidebar--fetch session keys))))
+
+(defun opencode-sidebar--sections-changed ()
+  "Fetch what's missing for the sections of the visible sidebars, and redraw them.
+For when `opencode-sidebar' is changed."
+  (dolist (sidebar (opencode-sidebar--sidebars))
+    (with-current-buffer sidebar
+      (when (buffer-live-p opencode-sidebar--session)
+        (opencode-sidebar--fetch opencode-sidebar--session))
+      (opencode-sidebar--redraw))))
 
 (defun opencode-sidebar-session-changed (&rest keys)
   "Update the sidebar for a change to the current session buffer.
@@ -497,10 +630,28 @@ selected in the session when it has no step.  :status is the session's."
           :model-info (and model (opencode--find-model model))
           :status opencode-session-status)))
 
-(defun opencode-sidebar--insert-agent (step)
-  "Insert the agent section of STEP, from `opencode-sidebar--step'."
-  (when-let* ((agent (plist-get step :agent)))
-    (magit-insert-section (opencode-sidebar-agent)
+(opencode-sidebar-define-section title
+  "Insert the session's title, wrapped to the sidebar's width."
+  (insert (propertize (string-fill (or (opencode-sidebar-with-session opencode-session-title)
+                                       "")
+                                   (if-let* ((window (get-buffer-window)))
+                                       (window-body-width window)
+                                     opencode-sidebar-width))
+                      'font-lock-face 'opencode-sidebar-title)
+          "\n"))
+
+(opencode-sidebar-define-section last-updated
+  "Insert when the session was last updated, see `opencode-sidebar--updated'."
+  :join t
+  :fetch ((:session . opencode-sidebar--fetch-session))
+  (when-let* ((updated (opencode-sidebar--updated (opencode-sidebar-data :session)
+                                                  (plist-get (opencode-sidebar-step) :status))))
+    (insert (propertize updated 'font-lock-face 'shadow) "\n")))
+
+(opencode-sidebar-define-section agent
+  "Insert the agent and model of the step at point."
+  (let ((step (opencode-sidebar-step)))
+    (when-let* ((agent (plist-get step :agent)))
       (opencode-sidebar--heading "Agent")
       (let ((status (plist-get step :status)))
         (insert " " (opencode--agent-label agent)
@@ -516,8 +667,7 @@ selected in the session when it has no step.  :status is the session's."
                   (if (and .variant (not (equal .variant "default")))
                       (concat " " .variant)
                     "")
-                  "\n")))
-      (insert "\n"))))
+                  "\n"))))))
 
 (defun opencode-sidebar--duration (ms &optional whole)
   "Return the duration MS in ms, like 2.5s, 42s or 3m 5s.
@@ -554,11 +704,11 @@ response was streamed, from when `opencode-sidebar-speed-start' says."
       (when parts
         (string-join parts " · ")))))
 
-(defun opencode-sidebar--insert-activity (step)
-  "Insert the activity section of STEP, from `opencode-sidebar--step'.
+(opencode-sidebar-define-section activity
+  "Insert the turn of the step at point, its time and speed.
 A running turn's time counts up, by redrawing the sidebar every second."
-  (when-let* ((turn (plist-get step :turn)))
-    (magit-insert-section (opencode-sidebar-activity)
+  (let ((step (opencode-sidebar-step)))
+    (when-let* ((turn (plist-get step :turn)))
       (opencode-sidebar--heading "Activity")
       (let ((ended (opencode--turn-ended turn)))
         (setq opencode-sidebar--running (not ended))
@@ -568,25 +718,26 @@ A running turn's time counts up, by redrawing the sidebar every second."
                          (- (or ended (opencode--now-ms)) (opencode--turn-created turn))
                          (not ended)))))
       (when-let* ((speed (opencode-sidebar--speed (plist-get step :message))))
-        (insert " " speed "\n"))
-      (insert "\n"))))
+        (insert " " speed "\n")))))
 
-(defun opencode-sidebar--insert-context (tokens model)
-  "Insert the context section for TOKENS, with MODEL's limit."
-  (when (plusp tokens)
-    (magit-insert-section (opencode-sidebar-context)
+(opencode-sidebar-define-section context
+  "Insert the context's tokens, and the share of the model's limit."
+  (pcase-let ((`(,tokens . ,model) (opencode-sidebar-with-session
+                                     (cons opencode-session-tokens
+                                           (opencode--current-model)))))
+    (when (plusp tokens)
       (opencode-sidebar--heading "Context")
       (insert (format " %s tokens\n" (opencode--format-tokens tokens)))
       (let ((limit (map-nested-elt model '(limit context))))
         (when (and (numberp limit) (plusp limit))
-          (insert (format " %.0f%% used\n" (* 100 (/ (float tokens) limit))))))
-      (insert "\n"))))
+          (insert (format " %.0f%% used\n" (* 100 (/ (float tokens) limit)))))))))
 
-(defun opencode-sidebar--insert-usage (session rate-limit)
-  "Insert the usage section for SESSION, a Session.Info.
-RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
-  (when session
-    (magit-insert-section (opencode-sidebar-usage)
+(opencode-sidebar-define-section usage
+  "Insert the session's tokens, cache rate and cost.
+And for claude-agent sessions, the Claude rate limit windows."
+  :fetch ((:session . opencode-sidebar--fetch-session))
+  (when-let* ((session (opencode-sidebar-data :session)))
+    (let ((rate-limit (opencode-sidebar-with-session (cdr (opencode--claude-rate-limit)))))
       (opencode-sidebar--heading "Usage")
       (insert " " (opencode--format-session-tokens session) "\n")
       (when-let* ((rate (opencode--cache-rate session)))
@@ -605,8 +756,7 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
             (when-let* ((reset (opencode--claude-window-reset-text window)))
               (insert (opencode-sidebar--centered
                        reset (+ 2 width (/ opencode--usage-bar-width 2.0)))
-                      "\n")))))
-      (insert "\n"))))
+                      "\n"))))))))
 
 (defun opencode-sidebar--centered (text column)
   "Return TEXT preceded by space that centers it on COLUMN."
@@ -620,27 +770,25 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
     ("in_progress" 'warning)
     ((or "completed" "cancelled") 'shadow)))
 
-(defun opencode-sidebar--insert-todos (todos)
-  "Insert the todo section for TODOS."
-  (when todos
-    (magit-insert-section (opencode-sidebar-todos)
-      (opencode-sidebar--heading
-       "Todo" (format "(%d remaining)"
-                      (seq-count (lambda (todo)
-                                   (member (alist-get 'status todo)
-                                           '("pending" "in_progress")))
-                                 todos)))
-      (dolist (todo todos)
-        (let-alist todo
-          (magit-insert-section (opencode-sidebar-todo todo)
-            (opencode-sidebar--item (pcase .status
-                                      ("completed" "[✓]")
-                                      ("in_progress" "[•]")
-                                      ("cancelled" "[-]")
-                                      (_ "[ ]"))
-                                    .content
-                                    (opencode-sidebar--todo-face .status)))))
-      (insert "\n"))))
+(opencode-sidebar-define-section todos
+  "Insert the session's todo list."
+  (when-let* ((todos (opencode-sidebar-with-session opencode-session-todos)))
+    (opencode-sidebar--heading
+     "Todo" (format "(%d remaining)"
+                    (seq-count (lambda (todo)
+                                 (member (alist-get 'status todo)
+                                         '("pending" "in_progress")))
+                               todos)))
+    (dolist (todo todos)
+      (let-alist todo
+        (magit-insert-section (opencode-sidebar-todo todo)
+          (opencode-sidebar--item (pcase .status
+                                    ("completed" "[✓]")
+                                    ("in_progress" "[•]")
+                                    ("cancelled" "[-]")
+                                    (_ "[ ]"))
+                                  .content
+                                  (opencode-sidebar--todo-face .status)))))))
 
 (defun opencode-sidebar--diffstat-line (count noun additions deletions)
   "Return a line of COUNT NOUNs changed, with ADDITIONS and DELETIONS."
@@ -650,25 +798,24 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
           (propertize (format "-%d" deletions) 'font-lock-face 'magit-diffstat-removed)
           "\n"))
 
-(defun opencode-sidebar--insert-changes (diff)
-  "Insert the changes section for DIFF, from `opencode-sidebar--diffstat'.
+(opencode-sidebar-define-section changes
+  "Insert how many files the session changed, from `opencode-sidebar--diffstat'.
 Test files are counted apart from other files.  If only one kind changed,
 it's counted on the heading's line, else each on its own line under it."
-  (pcase diff
+  :fetch ((:diff . opencode-sidebar--fetch-diff))
+  (pcase (opencode-sidebar-data :diff)
     (`(,files ,additions ,deletions ,tests ,test-additions ,test-deletions)
      (when (plusp (+ files tests))
-       (magit-insert-section (opencode-sidebar-changes diff)
-         (insert (propertize "Changed" 'font-lock-face 'opencode-sidebar-heading))
-         (let ((lines (append (when (plusp files)
-                                (list (opencode-sidebar--diffstat-line
-                                       files "file" additions deletions)))
-                              (when (plusp tests)
-                                (list (opencode-sidebar--diffstat-line
-                                       tests "test" test-additions test-deletions))))))
-           (if (cdr lines)
-               (insert "\n" (mapconcat (lambda (line) (concat " " line)) lines))
-             (insert " " (car lines))))
-         (insert "\n"))))))
+       (insert (propertize "Changed" 'font-lock-face 'opencode-sidebar-heading))
+       (let ((lines (append (when (plusp files)
+                              (list (opencode-sidebar--diffstat-line
+                                     files "file" additions deletions)))
+                            (when (plusp tests)
+                              (list (opencode-sidebar--diffstat-line
+                                     tests "test" test-additions test-deletions))))))
+         (if (cdr lines)
+             (insert "\n" (mapconcat (lambda (line) (concat " " line)) lines))
+           (insert " " (car lines))))))))
 
 (defun opencode-sidebar--mcp-status (mcp)
   "Return the status of MCP, a Mcp.Server."
@@ -687,36 +834,37 @@ it's counted on the heading's line, else each on its own line under it."
   "<remap> <magit-visit-thing>" #'opencode-sidebar-toggle-mcp
   "RET" #'opencode-sidebar-toggle-mcp)
 
-(defun opencode-sidebar--insert-mcps (mcps)
-  "Insert the MCP section for MCPS."
-  (when mcps
-    (magit-insert-section (opencode-sidebar-mcps)
-      (opencode-sidebar--heading
-       "MCP" (let ((errors (seq-count (lambda (mcp)
-                                        (equal (opencode-sidebar--mcp-status mcp) "failed"))
-                                      mcps)))
-               (format "(%d active, %d %s)"
-                       (seq-count (lambda (mcp)
-                                    (equal (opencode-sidebar--mcp-status mcp) "connected"))
-                                  mcps)
-                       errors
-                       (ngettext "error" "errors" errors))))
-      (dolist (mcp mcps)
-        (let ((status (opencode-sidebar--mcp-status mcp)))
-          (magit-insert-section section (opencode-sidebar-mcp mcp)
-                                (oset section keymap 'opencode-sidebar-mcp-map)
-                                (opencode-sidebar--item
-                                 (propertize "●" 'font-lock-face (opencode-sidebar--mcp-face status))
-                                 (concat (alist-get 'name mcp)
-                                         (propertize (concat " " (string-replace "_" " " status))
-                                                     'font-lock-face 'shadow)))
-                                (when-let* ((error (map-nested-elt mcp '(status error))))
-                                  (put-text-property (oref section start) (point) 'help-echo error)))))
-      (insert "\n"))))
+(opencode-sidebar-define-section mcp
+  "Insert the MCP servers, which RET on connects or disconnects."
+  :fetch ((:mcps . opencode-sidebar--fetch-mcps))
+  (when-let* ((mcps (opencode-sidebar-data :mcps)))
+    (opencode-sidebar--heading
+     "MCP" (let ((errors (seq-count (lambda (mcp)
+                                      (equal (opencode-sidebar--mcp-status mcp) "failed"))
+                                    mcps)))
+             (format "(%d active, %d %s)"
+                     (seq-count (lambda (mcp)
+                                  (equal (opencode-sidebar--mcp-status mcp) "connected"))
+                                mcps)
+                     errors
+                     (ngettext "error" "errors" errors))))
+    (dolist (mcp mcps)
+      (let ((status (opencode-sidebar--mcp-status mcp)))
+        (magit-insert-section section (opencode-sidebar-mcp-server mcp)
+          (oset section keymap 'opencode-sidebar-mcp-map)
+          (opencode-sidebar--item
+           (propertize "●" 'font-lock-face (opencode-sidebar--mcp-face status))
+           (concat (alist-get 'name mcp)
+                   (propertize (concat " " (string-replace "_" " " status))
+                               'font-lock-face 'shadow)))
+          (when-let* ((error (map-nested-elt mcp '(status error))))
+            (put-text-property (oref section start) (point) 'help-echo error)))))))
 
-(defun opencode-sidebar--insert-location (directory branch)
-  "Insert the DIRECTORY and git BRANCH of the session."
-  (magit-insert-section (opencode-sidebar-location)
+(opencode-sidebar-define-section location
+  "Insert the directory and git branch of the session."
+  :fetch ((:branch . opencode-sidebar--fetch-branch))
+  (let ((directory (opencode-sidebar-with-session default-directory))
+        (branch (opencode-sidebar-data :branch)))
     (insert (propertize (concat (abbreviate-file-name (directory-file-name directory))
                                 (when branch (concat ":" branch)))
                         'font-lock-face 'shadow)
@@ -734,33 +882,45 @@ STATUS is busy, as SESSION is only refetched once a step ends.  Sets
     (when (>= seconds (* 60 opencode-sidebar-updated-after))
       (concat "updated " (opencode--format-time-ago seconds) " ago"))))
 
+(defun opencode-sidebar--insert-section (name)
+  "Insert the section NAME, returning whether it inserted anything.
+An error in it is logged, and it's left out."
+  (let ((start (point)))
+    (condition-case err
+        (funcall (plist-get (opencode-sidebar--section name) :function))
+      (error
+       (opencode--log-event "WARNING SIDEBAR"
+                            (format "Section %s failed: %s" name (error-message-string err)))
+       (delete-region start (point))
+       (oset magit-insert-section--current children nil)
+       (oset magit-insert-section--current content nil)))
+    (> (point) start)))
+
 (defun opencode-sidebar--insert (session)
-  "Insert the sidebar of SESSION buffer."
-  (pcase-let ((`(,title ,step ,tokens ,model ,todos ,data ,directory ,rate-limit)
-               (with-current-buffer session
-                 (list opencode-session-title (opencode-sidebar--step)
-                       opencode-session-tokens
-                       (opencode--current-model)
-                       opencode-session-todos opencode-sidebar--data
-                       default-directory (cdr (opencode--claude-rate-limit))))))
-    (insert (propertize (string-fill (or title "")
-                                     (if-let* ((window (get-buffer-window)))
-                                         (window-body-width window)
-                                       opencode-sidebar-width))
-                        'font-lock-face 'opencode-sidebar-title)
-            "\n")
-    (when-let* ((updated (opencode-sidebar--updated (plist-get data :session)
-                                                    (plist-get step :status))))
-      (insert (propertize updated 'font-lock-face 'shadow) "\n"))
-    (insert "\n")
-    (opencode-sidebar--insert-agent step)
-    (opencode-sidebar--insert-activity step)
-    (opencode-sidebar--insert-changes (plist-get data :diff))
-    (opencode-sidebar--insert-context tokens model)
-    (opencode-sidebar--insert-usage (plist-get data :session) rate-limit)
-    (opencode-sidebar--insert-todos todos)
-    (opencode-sidebar--insert-mcps (plist-get data :mcps))
-    (opencode-sidebar--insert-location directory (plist-get data :branch))))
+  "Insert the sidebar of SESSION buffer, with the sections of `opencode-sidebar'.
+Each is followed by a blank line, within it so it's hidden when it's
+collapsed, except before a :join section, which it's moved after.  If
+that's empty, it's inserted in its place."
+  (let ((opencode-sidebar--drawn session)
+        (opencode-sidebar--step-cache (cons nil nil))
+        (names opencode-sidebar)
+        owed)
+    ;; signal undefined sections before inserting any
+    (mapc #'opencode-sidebar--section names)
+    (while names
+      (let* ((name (pop names))
+             (next-joins (and names
+                              (plist-get (opencode-sidebar--section (car names)) :join))))
+        (magit-insert-section ((eval (intern (format "opencode-sidebar-%s" name))))
+          (if (not (or (opencode-sidebar--insert-section name) owed))
+              (magit-cancel-section)
+            (setq owed next-joins)
+            (unless owed
+              (insert "\n"))))))
+    ;; the last section's blank line
+    (when (and (> (point) (1+ (point-min)))
+               (equal (buffer-substring (- (point) 2) (point)) "\n\n"))
+      (delete-char -1))))
 
 (defun opencode-sidebar--redraw ()
   "Redraw the current sidebar buffer."

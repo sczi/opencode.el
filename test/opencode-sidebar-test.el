@@ -522,5 +522,92 @@ So `opencode-sidebar-auto' doesn't show it again right away."
         (should (equal opencode-sidebar-test--mcps
                        (plist-get opencode-sidebar--data :mcps)))))))
 
+(defmacro opencode-sidebar-test--with-sections (sections &rest body)
+  "Run BODY with the sidebar sections defined by SECTIONS.
+Each is a list of the arguments of `opencode-sidebar-define-section'.
+They're undefined afterwards."
+  (declare (indent 1) (debug t))
+  `(let ((opencode-sidebar--sections opencode-sidebar--sections))
+     (unwind-protect
+         (progn
+           ,@(mapcar (lambda (section) `(opencode-sidebar-define-section ,@section))
+                     sections)
+           ,@body)
+       ,@(mapcar (lambda (section)
+                   `(fmakunbound ',(intern (format "opencode-sidebar-insert-%s"
+                                                   (car section)))))
+                 sections))))
+
+(ert-deftest opencode-sidebar-sections-test ()
+  "The sidebar shows the sections of `opencode-sidebar' in order, including user ones.
+Each is followed by a blank line, except before a :join section, and at
+the end.  Empty sections are left out."
+  (opencode-sidebar-test--with-sections
+      ((test-greeting "Insert a greeting." (insert "hello\n"))
+       (test-empty "Insert nothing." nil)
+       (test-joined "Insert a line joined to the last section." :join t
+                    (insert "joined\n")))
+    (opencode-sidebar-test--with-sidebar
+      (cl-flet ((text (sections)
+                  (let ((opencode-sidebar sections))
+                    (opencode-sidebar--redraw)
+                    (opencode-sidebar-test--text))))
+        (should (equal "hello\n\nContext\n 12k tokens\n\nSession title\n"
+                       (text '(test-greeting test-empty context title))))
+        (should (equal "Session title\njoined\n\nhello\n"
+                       (text '(title test-joined test-empty test-greeting))))
+        ;; an empty :join section keeps the blank line it was moved after
+        (should (equal "Session title\n\nContext\n 12k tokens\n"
+                       (text '(title last-updated context))))
+        (should (equal "Session title\n" (text '(title last-updated))))
+        (should (equal "Session title\n\nContext\n 12k tokens\n"
+                       (text '(title context))))
+        ;; its magit section is of its name
+        (text '(test-greeting context))
+        (should (eq 'opencode-sidebar-test-greeting
+                    (oref (opencode-sidebar-test--section-at "hello") type)))))))
+
+(ert-deftest opencode-sidebar-section-error-test ()
+  "A section that signals an error is left out, and an undefined one is an error."
+  (opencode-sidebar-test--with-sections
+      ((test-broken "Insert part of a section, then fail."
+                    (insert "partial\n")
+                    (error "Broken")))
+    (opencode-sidebar-test--with-sidebar
+      (let ((opencode-sidebar '(title test-broken context)))
+        (opencode-sidebar--redraw)
+        (should (equal "Session title\n\nContext\n 12k tokens\n"
+                       (opencode-sidebar-test--text))))
+      (let ((opencode-sidebar '(title no-such-section)))
+        (should-error (opencode-sidebar--redraw))))))
+
+(defun opencode-sidebar-test--fetch-greeting ()
+  "Fetch the greeting of the test section."
+  (opencode-sidebar-store :test-greeting "fetched hello"))
+
+(ert-deftest opencode-sidebar-section-fetch-test ()
+  "Only the data of the sections in `opencode-sidebar' is fetched."
+  (opencode-sidebar-test--with-sections
+      ((test-fetched "Insert the fetched greeting."
+                     :fetch ((:test-greeting . opencode-sidebar-test--fetch-greeting))
+                     (insert (opencode-sidebar-data :test-greeting) "\n")))
+    (opencode-sidebar-test--with-sidebar
+      (let ((opencode-sidebar '(test-fetched location))
+            fetched)
+        (cl-letf (((symbol-function 'opencode-sidebar--fetch-diff)
+                   (lambda () (push 'diff fetched)))
+                  ((symbol-function 'opencode-sidebar--fetch-session)
+                   (lambda () (push 'session fetched)))
+                  ((symbol-function 'opencode-sidebar--fetch-mcps)
+                   (lambda () (push 'mcps fetched)))
+                  ((symbol-function 'opencode-sidebar--fetch-branch)
+                   (lambda () (push 'branch fetched))))
+          (with-current-buffer session
+            (setq opencode-sidebar--data nil))
+          (opencode-sidebar--fetch session)
+          (should (equal '(branch) fetched))
+          (opencode-sidebar--redraw)
+          (should (string-prefix-p "fetched hello\n\n" (opencode-sidebar-test--text))))))))
+
 (provide 'opencode-sidebar-test)
 ;;; opencode-sidebar-test.el ends here

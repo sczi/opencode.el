@@ -439,10 +439,13 @@ if it's of the last turn."
                   "\n")))
       (insert "\n"))))
 
-(defun opencode-sidebar--duration (ms)
-  "Return the duration MS in ms, like 2.5s, 42s or 3m 5s."
+(defun opencode-sidebar--duration (ms &optional whole)
+  "Return the duration MS in ms, like 2.5s, 42s or 3m 5s.
+With WHOLE, round to the nearest second, like 3s."
   (let ((seconds (/ (max 0 ms) 1000.0)))
-    (cond ((< seconds 10) (format "%.1fs" seconds))
+    (when whole
+      (setq seconds (round seconds)))
+    (cond ((and (not whole) (< seconds 10)) (format "%.1fs" seconds))
           ((< seconds 60) (format "%ds" seconds))
           ((< seconds 3600) (format "%dm %ds" (/ seconds 60) (mod seconds 60)))
           (t (format "%dh %dm" (/ seconds 3600) (mod (/ seconds 60) 60))))))
@@ -480,7 +483,8 @@ A running turn's time counts up, by redrawing the sidebar every second."
         (insert (format " turn %d · %s\n"
                         (opencode--turn-number turn)
                         (opencode-sidebar--duration
-                         (- (or ended (opencode--now-ms)) (opencode--turn-created turn))))))
+                         (- (or ended (opencode--now-ms)) (opencode--turn-created turn))
+                         (not ended)))))
       (when-let* ((speed (opencode-sidebar--speed (plist-get step :message))))
         (insert " " speed "\n"))
       (insert "\n"))))

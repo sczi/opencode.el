@@ -165,7 +165,7 @@ With no step yet, the session's selected agent is shown."
       (opencode--start-turn (- (opencode--now-ms) 3000)))
     (opencode-sidebar--redraw)
     (should (string-match-p (rx "Agent\n Build · ⏳ busy\n prov\n m1\n\n"
-                                "Activity\n turn 1 · 3." digit "s\n\n")
+                                "Activity\n turn 1 · 3s\n\n")
                             (opencode-sidebar-test--step-sections)))
     (should opencode-sidebar--running)
     (with-current-buffer session
@@ -174,6 +174,14 @@ With no step yet, the session's selected agent is shown."
     (opencode-sidebar--redraw)
     (should (string-prefix-p "Agent\n plan · ⏳ busy\n prov\n m2\n\n"
                              (opencode-sidebar-test--step-sections)))))
+
+(ert-deftest opencode-sidebar-duration-test ()
+  "Durations show tenths under 10s, or whole seconds rounded with WHOLE."
+  (should (equal "3.6s" (opencode-sidebar--duration 3600)))
+  (should (equal "4s" (opencode-sidebar--duration 3600 t)))
+  (should (equal "42s" (opencode-sidebar--duration 42000)))
+  (should (equal "1m 0s" (opencode-sidebar--duration 59600 t)))
+  (should (equal "3m 5s" (opencode-sidebar--duration 185000))))
 
 (ert-deftest opencode-sidebar-empty-sections-test ()
   "Sections with nothing to show are omitted."

@@ -265,8 +265,19 @@ An alias of a model family, such as opus, uses the family's newest model."
                (or (alist-get 'cache_write price) 0)))
          1e6))))
 
+(defvar opencode-claude-plan-tier-hook nil
+  "Hook run when the Claude plan has been found by `opencode--fetch-claude-plan-tier'.")
+
+(defun opencode--redraw-all-session-control-buffers ()
+  "Redraw the session control buffers of every connection."
+  (dolist (connection opencode-connections)
+    (let ((opencode--dispatching-connection connection))
+      (opencode--redraw-session-control-buffers))))
+
+(add-hook 'opencode-claude-plan-tier-hook #'opencode--redraw-all-session-control-buffers)
+
 (defun opencode--fetch-claude-plan-tier ()
-  "Find the Claude plan, once, then refresh the session control buffers."
+  "Find the Claude plan, once, then run `opencode-claude-plan-tier-hook'."
   (when (eq opencode--claude-plan-tier 'unfetched)
     (setq opencode--claude-plan-tier nil)
     (when (executable-find "claude")
@@ -293,9 +304,7 @@ An alias of a model family, such as opus, uses the family's newest model."
                       nil)))
              (kill-buffer buffer)
              (when opencode--claude-plan-tier
-               (dolist (connection opencode-connections)
-                 (let ((opencode--dispatching-connection connection))
-                   (opencode--redraw-session-control-buffers)))))))))))
+               (run-hooks 'opencode-claude-plan-tier-hook)))))))))
 
 (defconst opencode--claude-usage-window-names
   '((five_hour . "5h") (seven_day . "week"))
@@ -352,6 +361,25 @@ It's done once per connection.  Only claude-agent sessions are considered."
   "Levels of detail of Claude usage in the mode line, most detailed first.
 See `opencode--format-claude-usage'.")
 
+(defun opencode--claude-window-name (name)
+  "Return the name to show for the Claude rate limit window NAME, a symbol."
+  (or (alist-get name opencode--claude-usage-window-names)
+      (string-replace "_" " " (symbol-name name))))
+
+(defun opencode--format-claude-window (name window &optional face no-reset name-width)
+  "Return the usage of Claude rate limit WINDOW called NAME, a symbol.
+Like \"5h ━━── 9% resets 14:00\", without when it resets if NO-RESET.
+FACE is the face it's shown in, for the background of the usage bar.
+The name is padded to NAME-WIDTH, so the bars of windows line up."
+  (let ((utilization (opencode--claude-window-utilization window))
+        (reset (unless no-reset (opencode--claude-window-reset-text window))))
+    (concat (string-pad (opencode--claude-window-name name) (or name-width 0))
+            " "
+            (opencode--usage-bar utilization face)
+            " "
+            (format "%d%%" (round (* 100 utilization)))
+            (when reset (concat " " reset)))))
+
 (defun opencode--format-claude-usage (rate-limit &optional level face)
   "Return a line describing Claude usage from RATE-LIMIT, or nil if unknown.
 LEVEL is `all' or nil to show every usage window, `five-hour' to show
@@ -363,19 +391,8 @@ the usage bars."
           (mapcan
            (pcase-lambda (`(,name . ,window))
              (when (or (not five-hour) (eq name 'five_hour))
-               (let ((utilization (opencode--claude-window-utilization window))
-                     (reset (and (not (eq level 'five-hour-no-reset))
-                                 (opencode--claude-window-reset window))))
-                 (list
-                  (concat
-                   (or (alist-get name opencode--claude-usage-window-names)
-                       (string-replace "_" " " (symbol-name name)))
-                   " "
-                   (opencode--usage-bar utilization face)
-                   " "
-                   (format "%d%%" (round (* 100 utilization)))
-                   (when reset
-                     (format " (resets %s)" reset)))))))
+               (list (opencode--format-claude-window
+                      name window face (eq level 'five-hour-no-reset)))))
            (alist-get 'unifiedWindows rate-limit))))
     (when windows
       (string-join windows " · "))))
@@ -472,8 +489,8 @@ shown, right-aligned by itself."
           (list (opencode--right-align-space (list usage) 'mode-line) usage)
         (concat usage " ")))))
 
-(defun opencode--session-control-cost (session)
-  "Return the text of the cost column for SESSION.
+(defun opencode--format-session-cost (session)
+  "Return the text of SESSION's cost, as in the session control table.
 Claude subscription sessions show what their tokens would cost at API
 prices, as ~$N, and the share of the 5h budget, after the server's cost
 if it charged for other models."
@@ -490,6 +507,20 @@ if it charged for other models."
           ((or real estimate))
           ((opencode-claude-subscription-p session) "-")
           (t "$0.00"))))
+
+(defun opencode--format-session-tokens (session)
+  "Return the text of SESSION's input, output and reasoning tokens."
+  (let-alist session
+    (format "↑%s ↓%s 🧠%s"
+            (opencode--format-tokens (opencode--input-tokens session))
+            (opencode--format-tokens .tokens.output)
+            (opencode--format-tokens .tokens.reasoning))))
+
+(defun opencode--format-cache-rate (rate)
+  "Return the text of cache hit RATE, a fraction, or \"-\" if nil or negative."
+  (if (and rate (>= rate 0))
+      (format "%d%%" (round (* 100 rate)))
+    "-"))
 
 (defconst opencode--session-control-columns
   `((title
@@ -527,17 +558,12 @@ if it charged for other models."
      ,(lambda (object) (opencode--time-ago object 'created)))
     (cost
      (:name "Cost" :min-width 8 :align right)
-     ,#'opencode--session-control-cost
+     ,#'opencode--format-session-cost
      ;; Only what the server charged, not subscription estimates
      ,(lambda (object) (or (alist-get 'cost object) 0)))
     (tokens
      (:name "Tokens")
-     ,(lambda (object)
-        (let-alist object
-          (format "↑%s ↓%s 🧠%s"
-                  (opencode--format-tokens (opencode--input-tokens object))
-                  (opencode--format-tokens .tokens.output)
-                  (opencode--format-tokens .tokens.reasoning))))
+     ,#'opencode--format-session-tokens
      ,(lambda (object)
         (let-alist object
           (+ (or .tokens.input 0)
@@ -547,10 +573,7 @@ if it charged for other models."
              (or .tokens.cache.write 0)))))
     (cache
      (:name "Cache" :width 6 :align right
-      :formatter ,(lambda (ratio)
-                    (if (< ratio 0)
-                        "-"
-                      (format "%d%%" (round (* 100 ratio))))))
+      :formatter opencode--format-cache-rate)
      ,(lambda (object)
         ;; A number rather than "-" keeps the column numerical
         (or (opencode--cache-rate object) -1))))

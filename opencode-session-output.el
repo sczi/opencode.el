@@ -54,6 +54,34 @@ Shown outputs can still be folded manually with `hs-toggle-hiding'."
 (defvar-local opencode-session-cost 0
   "Cost of the current session in dollars, as reported by the server.")
 
+(defvar-local opencode-session-todos nil
+  "The current session's todo list, as of its last todowrite tool call.
+A list of alists with a content and a status.")
+
+(defun opencode--parse-todos (todos)
+  "Return the todos of TODOS, the todos input of a todowrite tool call.
+Models sometimes send it as a JSON string.  Malformed todos are dropped."
+  (let ((todos (if (stringp todos)
+                   (ignore-errors (json-parse-string todos :object-type 'alist
+                                                     :array-type 'list))
+                 todos)))
+    (cl-loop for todo in (and (listp todos) todos)
+             for content = (and (consp todo) (alist-get 'content todo))
+             when (and (stringp content) (not (string-empty-p content)))
+             collect `((content . ,content)
+                       (status . ,(let ((status (alist-get 'status todo)))
+                                    (if (member status '("pending" "in_progress"
+                                                         "completed" "cancelled"))
+                                        status
+                                      "pending")))))))
+
+(defun opencode--record-todos (tool input)
+  "Record the todo list of a completed call of TOOL with INPUT, if it's todowrite.
+Return non-nil if it was."
+  (when (equal tool "todowrite")
+    (setq opencode-session-todos (opencode--parse-todos (alist-get 'todos input)))
+    t))
+
 (defvar-local opencode--table-scan-marker nil
   "Marker at the unprocessed Markdown in the current assistant text part.")
 
@@ -1028,6 +1056,8 @@ Calls not yet finished are recorded so that later events finish them."
          (puthash key (list :name name :input input) opencode--tool-calls)
          (opencode-session--display-tool-call key))
         (_ (opencode-session--start-block 'tool key)
+           (when (equal .state.status "completed")
+             (opencode--record-todos name input))
            (opencode--maybe-insert-tool-output
             name .state (opencode--insert-tool-block name input)))))))
 

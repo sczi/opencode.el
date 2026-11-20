@@ -16,6 +16,7 @@
 (require 'opencode-permission)
 (require 'opencode-session-control)
 (require 'opencode-sessions)
+(require 'opencode-sidebar)
 (require 'plz-event-source)
 
 (defcustom opencode-session-deleted-functions nil
@@ -40,6 +41,7 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
     "session.compaction.failed"
     "permission.asked" "permission.replied"
     "form.created" "form.replied" "form.cancelled" "tui.toast.show"
+    "mcp.status.changed"
     "command.updated" "skill.updated")
   "Types of the events to subscribe to.")
 
@@ -50,7 +52,8 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
   ;; show it with the status change, so pending input is never left
   ;; without its separator or a prompt
   (opencode--with-session-buffer session-id
-    (opencode--show-prompt))
+    (opencode--show-prompt)
+    (opencode-sidebar-session-changed :diff :branch))
   (opencode--redisplay-session-control-buffers)
   (opencode--maybe-run-files-finished-editing-hook session-id interrupted)
   (when-let* ((buffer (opencode--session-buffer session-id)))
@@ -115,7 +118,8 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
              (opencode--finish-text-lines t)
              (setq opencode-session-tokens (opencode--tokens-total .tokens))
              (setq opencode-session-cost (+ opencode-session-cost (or .cost 0)))
-             (force-mode-line-update)))
+             (force-mode-line-update)
+             (opencode-sidebar-session-changed :session)))
           (session.step.failed
            (opencode--update-claude-rate-limit .native.rateLimit)
            (opencode--with-session-buffer .sessionID
@@ -130,7 +134,8 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           (session.renamed
            (opencode--with-session-buffer .sessionID
              (setq opencode-session-title .title)
-             (rename-buffer (format "*OpenCode: %s*" .title) t))
+             (rename-buffer (format "*OpenCode: %s*" .title) t)
+             (opencode-sidebar-session-changed))
            (opencode--redisplay-session-control-buffers))
           (session.deleted
            (run-hook-with-args 'opencode-session-deleted-functions .sessionID)
@@ -167,6 +172,9 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
                         `((status . ,(if (eq type 'session.tool.success) "completed" "error"))
                           (error . ,.error) (content . ,.content) (metadata . ,.metadata)))))
              (when (eq type 'session.tool.success)
+               (opencode--with-session-buffer .sessionID
+                 (when (opencode--record-todos (plist-get call :name) (plist-get call :input))
+                   (opencode-sidebar-session-changed)))
                (opencode--maybe-run-file-edited-hook
                 (plist-get call :name) (plist-get call :input) .metadata))))
           (session.shell.ended
@@ -181,7 +189,9 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
              (opencode--insert-compaction-started)))
           (session.compaction.ended
            (opencode--with-session-buffer .sessionID
-             (opencode--insert-compaction-summary .text)))
+             (opencode--insert-compaction-summary .text)
+             (opencode-sidebar-session-changed)))
+          (mcp.status.changed (opencode-sidebar-mcps-changed))
           (session.compaction.failed
            (opencode-session--display-error .sessionID .error.message))
           (permission.asked

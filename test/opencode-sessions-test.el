@@ -1994,7 +1994,7 @@ claude-agent."
                   ("max_20x" . "~$2.00 0.7%")))
     (opencode-session-test--with-claude-plan (car case)
       (should (equal (cdr case)
-                     (opencode--session-control-cost
+                     (opencode--format-session-cost
                       (opencode-session-test--claude-session
                        "claude-opus-5-5")))))))
 
@@ -2003,7 +2003,7 @@ claude-agent."
   (dolist (tier '("other" "max_other" nil unfetched))
     (opencode-session-test--with-claude-plan tier
       (should (equal "~$2.00"
-                     (opencode--session-control-cost
+                     (opencode--format-session-cost
                       (opencode-session-test--claude-session
                        "claude-opus-5-5")))))))
 
@@ -2012,18 +2012,18 @@ claude-agent."
   (opencode-session-test--with-claude-plan "pro"
     (dolist (model '("opus" "opus[1m]" "claude-opus-5-5[1m]"))
       (should (equal "~$2.00 10.0%"
-                     (opencode--session-control-cost
+                     (opencode--format-session-cost
                       (opencode-session-test--claude-session model)))))))
 
 (ert-deftest opencode-session-control-cost-without-price ()
   "A model with no known price shows no cost."
   (opencode-session-test--with-claude-plan "pro"
     (should (equal "-"
-                   (opencode--session-control-cost
+                   (opencode--format-session-cost
                     (opencode-session-test--claude-session "claude-fable-5-2"))))
     (let ((opencode--claude-catalog nil))
       (should (equal "-"
-                     (opencode--session-control-cost
+                     (opencode--format-session-cost
                       (opencode-session-test--claude-session "opus")))))))
 
 (ert-deftest opencode-session-control-cost-real-dollars ()
@@ -2031,17 +2031,17 @@ claude-agent."
 Other providers show only the server's cost."
   (opencode-session-test--with-claude-plan "pro"
     (should (equal "$3.21 + ~$2.00 10.0%"
-                   (opencode--session-control-cost
+                   (opencode--format-session-cost
                     (opencode-session-test--claude-session "opus" 3.21))))
     (should (equal "$3.21"
-                   (opencode--session-control-cost
+                   (opencode--format-session-cost
                     (opencode-session-test--claude-session
                      "claude-fable-5-2" 3.21))))
     (should (equal "$3.21"
-                   (opencode--session-control-cost
+                   (opencode--format-session-cost
                     (opencode-session-test--claude-session "gpt-5" 3.21 "openai"))))
     (should (equal "$0.00"
-                   (opencode--session-control-cost
+                   (opencode--format-session-cost
                     (opencode-session-test--claude-session
                      "gpt-5" 0 "openai"))))))
 
@@ -2061,10 +2061,10 @@ Windows past their reset show as 0% without a reset time."
                  (opencode-session-test--rate-limit now))))
     (should (string-match-p
              (rx bos "5h " (= 2 "━") (= 18 "─")
-                 " 9% (resets " (+ (not ")")) ") · "
+                 " 9% resets " (+ (not "·")) " · "
                  "week " (= 20 "─") " 0% · "
                  "seven day sonnet " (= 17 "━") (= 3 "─")
-                 " 85% (resets " (+ (not ")")) ")" eos)
+                 " 85% resets " (+ nonl) eos)
              usage))
     (should (eq 'success (get-text-property (string-search "━" usage)
                                             'face usage)))
@@ -2080,7 +2080,7 @@ Windows past their reset show as 0% without a reset time."
     (should (equal (opencode--format-claude-usage rate-limit)
                    (opencode--format-claude-usage rate-limit 'all)))
     (should (string-match-p
-             (rx bos "5h " (+ (any "━─")) " 9% (resets " (+ (not ")")) ")" eos)
+             (rx bos "5h " (+ (any "━─")) " 9% resets " (+ nonl) eos)
              (opencode--format-claude-usage rate-limit 'five-hour)))
     (should (string-match-p
              (rx bos "5h " (+ (any "━─")) " 9%" eos)
@@ -2088,6 +2088,21 @@ Windows past their reset show as 0% without a reset time."
     (should-not (opencode--format-claude-usage
                  '((unifiedWindows (seven_day (utilization . 0.1))))
                  'five-hour))))
+
+(ert-deftest opencode-claude-window-reset-day ()
+  "A reset time has its day unless it's today, and none once it's passed."
+  (let* ((now (float-time))
+         (tomorrow (+ now 86400))
+         (midnight (float-time (encode-time
+                                (append '(0 0 0) (seq-subseq (decode-time now) 3)))))
+         (end-of-today (+ midnight 86400 -1)))
+    (should (equal (format-time-string "%a %H:%M" tomorrow)
+                   (opencode--claude-window-reset `((resetsAt . ,tomorrow)))))
+    (when (> end-of-today now)
+      (should (equal (format-time-string "%H:%M" end-of-today)
+                     (opencode--claude-window-reset `((resetsAt . ,end-of-today))))))
+    (should-not (opencode--claude-window-reset `((resetsAt . ,(- now 60)))))
+    (should-not (opencode--claude-window-reset nil))))
 
 (ert-deftest opencode-claude-usage-bar-face ()
   "Usage bars are green below 60%, warning below 85% and error above."
@@ -2174,7 +2189,7 @@ The latest report is used, not an older one reported after it."
                               "%U" (opencode--format-specs 'header-line))))
         (should (equal '(0.09 header-line) bar-args))
         (should (equal (format " resets %s"
-                               (format-time-string "%H:%M" (+ now 3600)))
+                               (opencode--claude-window-reset `((resetsAt . ,(+ now 3600)))))
                        (opencode--mode-line-expand "%r")))
         ;; Past its reset nothing has been used, and there's no reset time
         (setf (opencode-connection-claude-rate-limit (opencode--conn))

@@ -135,9 +135,9 @@ show all columns."
   '(("pro" . 13) ("max_5x" . 125) ("max_20x" . 294))
   "Estimated usage in a 5 hour window of each Claude plan, in API priced dollars.
 An alist from the planTier reported by `claude auth status' to dollars.  The
-cost column of the session control table shows sessions on these plans as a
-percentage of the budget as well as dollars, and sessions on other plans as
-dollars only."
+cost column of the session control table and the sidebar's usage show
+sessions on these plans as a percentage of the budget as well as dollars,
+and sessions on other plans as dollars only."
   :type '(alist :key-type string :value-type number)
   :group 'opencode)
 
@@ -626,13 +626,21 @@ has reset this is 0."
 
 (defun opencode--claude-window-reset (window)
   "Return when Claude rate limit WINDOW resets as a short time.
-It is nil if WINDOW has no reset time or it has passed."
+It has the day too unless it's today.  It is nil if WINDOW has no reset
+time or it has passed."
   (when-let* ((resets-at (alist-get 'resetsAt window))
               ((> resets-at (float-time))))
-    (format-time-string (if (< (- resets-at (float-time)) (* 20 3600))
+    (format-time-string (if (equal (format-time-string "%F" resets-at)
+                                   (format-time-string "%F"))
                             "%H:%M"
                           "%a %H:%M")
                         resets-at)))
+
+(defun opencode--claude-window-reset-text (window)
+  "Return \"resets TIME\" for Claude rate limit WINDOW.
+It is nil if WINDOW has no reset time or it has passed."
+  (when-let* ((reset (opencode--claude-window-reset window)))
+    (concat "resets " reset)))
 
 (defun opencode--claude-five-hour-window ()
   "Return the Claude 5h usage limit window, nil if unknown."

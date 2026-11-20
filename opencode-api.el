@@ -221,7 +221,10 @@ may start with :else HANDLER to handle errors."
   "/api/session/%s/message?type=assistant&order=desc&limit=50")
  (last-assistant-message
   "/api/session/%s/message?type=assistant&order=desc&limit=1")
+ (first-user-message "/api/session/%s/message?type=user&order=asc&limit=1")
+ (last-user-message "/api/session/%s/message?type=user&order=desc&limit=1")
  (session-diff "/api/session/%s/diff?context=0")
+ (session-range-diff "/api/session/%s/diff?from=%s&to=%s&context=0")
  ;; Without context the patches cover the whole files
  (turn-diff "/api/session/%s/diff?from=%s")
  (post revert-message "/api/session/%s/revert/stage")

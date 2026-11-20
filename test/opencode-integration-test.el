@@ -431,6 +431,75 @@ The server may briefly remove a file while restoring it, as on revert."
         (should (equal '("one\n" . "two\n")
                        (opencode--patch-sides (alist-get 'patch diff))))))))
 
+(ert-deftest opencode-integration-sidebar-test ()
+  "The sidebar shows the session's todos and the files changed over all its turns.
+They're shown again when the session is reloaded."
+  (opencode-test-with-session '(("a.txt" . "one\n"))
+    (opencode-test-llm-reply
+     '((:tool "todowrite" ((todos . [((content . "Edit a.txt") (status . "completed"))
+                                     ((content . "Write b.txt") (status . "pending"))]))))
+     '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
+     "Edited."
+     '((:tool "write" ((path . "b.txt") (content . "new\nfile\n"))))
+     "Wrote.")
+    (opencode-test-send "Edit it")
+    (opencode-test-send "Write it")
+    (let ((session (current-buffer))
+          (sidebar (generate-new-buffer " *opencode-sidebar-test*")))
+      (unwind-protect
+          (cl-flet ((sidebar-text ()
+                      (with-current-buffer sidebar
+                        (opencode-sidebar--redraw)
+                        (buffer-substring-no-properties (point-min) (point-max)))))
+            (with-current-buffer sidebar
+              (opencode-sidebar-mode))
+            (cl-letf (((symbol-function 'opencode-sidebar--shown-p)
+                       (lambda (buffer) (eq buffer session))))
+              (opencode-sidebar--set-session sidebar session)
+              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
+              (should (string-search "Todo (1 remaining)\n [✓] Edit a.txt\n [ ] Write b.txt\n"
+                                     (sidebar-text)))
+              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
+              (setq opencode-session-todos nil
+                    opencode-sidebar--data nil)
+              (let (loaded)
+                (add-hook 'opencode-session-loaded-functions
+                          (lambda (_id) (setq loaded t)) nil t)
+                (opencode--reload-session)
+                (opencode-test-wait-until loaded))
+              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
+              (should (string-search "Todo (1 remaining)\n" (sidebar-text)))
+              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))))
+        (kill-buffer sidebar)))))
+
+(ert-deftest opencode-integration-sidebar-usage-test ()
+  "The sidebar's usage is the session's, refetched when a step ends."
+  (opencode-test-with-session nil
+    (opencode-test-llm-reply
+     "First."
+     '("Second." (:raw ((id . "usage") (object . "chat.completion.chunk")
+                        (choices . [])
+                        (usage (prompt_tokens . 1000) (completion_tokens . 200)
+                               (total_tokens . 1200))))))
+    (opencode-test-send "One")
+    (let ((session (current-buffer))
+          (sidebar (generate-new-buffer " *opencode-sidebar-test*")))
+      (unwind-protect
+          (cl-flet ((sidebar-text ()
+                      (with-current-buffer sidebar
+                        (opencode-sidebar--redraw)
+                        (buffer-substring-no-properties (point-min) (point-max)))))
+            (with-current-buffer sidebar
+              (opencode-sidebar-mode))
+            (cl-letf (((symbol-function 'opencode-sidebar--shown-p)
+                       (lambda (buffer) (eq buffer session))))
+              (opencode-sidebar--set-session sidebar session)
+              (opencode-test-wait-until (string-search "Usage\n" (sidebar-text)))
+              (opencode-test-send "Two")
+              (opencode-test-wait-until
+               (string-search "Usage\n ↑1k ↓200 🧠0\n" (sidebar-text)))))
+        (kill-buffer sidebar)))))
+
 (ert-deftest opencode-integration-kill-session-test ()
   "Killing a session deletes it on the server, and kills its buffer."
   (opencode-test-with-session nil

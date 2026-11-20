@@ -108,6 +108,8 @@ Those to generate a session title aren't included.")
       ("OPENCODE_DRIVE" . ,opencode-test--drive-instance)
       ("OPENCODE_DISABLE_AUTOUPDATE" . "1")
       ("OPENCODE_DISABLE_CLAUDE_CODE" . "1")
+      ;; The todowrite tool is experimental
+      ("OPENCODE_FLAGS" . "todo")
       ("GIT_AUTHOR_NAME" . "opencode-test")
       ("GIT_AUTHOR_EMAIL" . "opencode-test@example.com")
       ("GIT_COMMITTER_NAME" . "opencode-test")

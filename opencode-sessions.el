@@ -62,6 +62,7 @@
     "M-S-<tab>" 'opencode-cycle-variant-backwards
     "ESC <backtab>" 'opencode-cycle-variant-backwards
     "C-c M" 'opencode-toggle-mcp
+    "C-c s" 'opencode-sidebar-toggle
     "C-c F" 'opencode-fork-session
     "C-c r" 'opencode-revert-message
     "C-c e" 'opencode-ediff-turn
@@ -367,7 +368,7 @@ Values that are expensive to compute are functions, called only when used."
            ;; Only claude-agent reports it, it'd be misleading for others
            (claude (opencode-claude-subscription-p))
            (usage (and claude (opencode--claude-five-hour-utilization)))
-           (reset (and claude (opencode--claude-window-reset
+           (reset (and claude (opencode--claude-window-reset-text
                                (opencode--claude-five-hour-window))))
            (mark (lambda (value)
                    (let ((value (copy-sequence (or value ""))))
@@ -399,7 +400,7 @@ Values that are expensive to compute are functions, called only when used."
          (?C . ,(lambda () (opencode--usage-bar (/ context 100) face)))
          (?u . ,(when usage (format "%d%%" (round (* 100 usage)))))
          (?U . ,(lambda () (when usage (opencode--usage-bar usage face))))
-         (?r . ,(when reset (format " resets %s" reset)))
+         (?r . ,(when reset (concat " " reset)))
          (?T . ,(opencode--format-tokens opencode-session-tokens))
          (?o . ,(when (plusp opencode-session-cost)
                   (format "$%.2f" opencode-session-cost)))
@@ -876,6 +877,7 @@ If CALLBACK is given, it will be called with SESSION afterwards."
     (opencode-api-all-messages (.id)
         messages
       (setq opencode--replayed-unfinished-messages nil
+            opencode-session-todos nil
             opencode-session-cost (or .cost 0)
             opencode--server-agent
             (or .agent

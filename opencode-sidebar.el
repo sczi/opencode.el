@@ -829,6 +829,11 @@ And those showing when an idle session was last updated, every minute."
   "g" #'opencode-sidebar-refresh
   "q" #'opencode-sidebar-toggle)
 
+(with-eval-after-load 'evil
+  (declare-function evil-define-key* "evil-core")
+  (evil-define-key* 'normal opencode-sidebar-mode-map
+    "gr" #'opencode-sidebar-refresh))
+
 (define-derived-mode opencode-sidebar-mode magit-section-mode "OpenCode Sidebar"
   "Major mode of the opencode session sidebar."
   :interactive nil

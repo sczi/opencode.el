@@ -27,12 +27,6 @@
   "Usage statistics of opencode sessions."
   :group 'opencode)
 
-(defcustom opencode-stats-timezone nil
-  "IANA time zone the server groups activity by day in, like \"Europe/Paris\".
-nil means Emacs's local time zone, from TZ or /etc/localtime, else UTC."
-  :type '(choice (const :tag "Local" nil) string)
-  :group 'opencode-stats)
-
 (defcustom opencode-stats-colors
   '("#4e79a7" "#f28e2b" "#e15759" "#76b7b2" "#59a14f"
     "#edc948" "#b07aa1" "#ff9da7")
@@ -195,9 +189,9 @@ They're of UNIT, aligned to it but clipped to FROM and TO."
 ;;; Requests
 
 (defun opencode-stats--timezone ()
-  "Return the IANA time zone to group activity by day in."
-  (or opencode-stats-timezone
-      (let ((tz (string-remove-prefix ":" (or (getenv "TZ") ""))))
+  "Return the IANA name of Emacs's local time zone, else UTC.
+The server groups activity by day in it, as the heatmap is drawn in it."
+  (or (let ((tz (string-remove-prefix ":" (or (getenv "TZ") ""))))
         (and (string-search "/" tz) (not (file-name-absolute-p tz)) tz))
       (let ((file (file-truename "/etc/localtime")))
         (when (string-match "zoneinfo/\\(.+\\)\\'" file)
@@ -223,7 +217,8 @@ They're of UNIT, aligned to it but clipped to FROM and TO."
   "Run TASKS, `opencode-stats--max-concurrent' at a time, then call THEN.
 Each task is a function called with a function to call with its result, and
 one to call with an error message.  THEN is called with their results in
-order, or if any fail with the error message of one."
+order, or if any fail with the error message of one, once those already
+started have finished.  No more are started after one fails."
   (let ((results (make-vector (length tasks) nil))
         (queue (seq-map-indexed #'cons tasks))
         (pending (length tasks))
@@ -239,8 +234,10 @@ order, or if any fail with the error message of one."
                                (next)
                                (finish))
                              (lambda (message)
-                               (setq failed message)
-                               (next)
+                               ;; Don't start the rest, their results are unused
+                               (setq failed message
+                                     pending (- pending (length queue))
+                                     queue nil)
                                (finish))))))
       (if (null tasks)
           (funcall then nil)

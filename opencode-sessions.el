@@ -581,11 +581,19 @@ Return the symbol `cancelled' if input arrives before every server replies."
      (seq-mapcat
       (lambda (server)
         (when (plist-get (eglot--capabilities server) :workspaceSymbolProvider)
-          (let ((symbols (eglot--request server :workspace/symbol
-                                         `(:query ,prefix)
-                                         :immediate t
-                                         :cancel-on-input t
-                                         :cancel-on-input-retval 'cancelled)))
+          ;; A server that errors, times out or has died contributes
+          ;; nothing, rather than aborting the other servers and capfs.
+          (let ((symbols (condition-case err
+                             (eglot--request server :workspace/symbol
+                                             `(:query ,prefix)
+                                             :immediate t
+                                             :cancel-on-input t
+                                             :cancel-on-input-retval 'cancelled)
+                           (error
+                            (opencode--log-event
+                             "WARNING eglot"
+                             (format "workspace/symbol failed: %S" err))
+                            nil))))
             (when (eq symbols 'cancelled)
               (throw 'cancelled 'cancelled))
             (mapcar (lambda (symbol) (plist-get symbol :name)) symbols))))

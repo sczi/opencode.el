@@ -597,6 +597,9 @@ and are the same once the session is reloaded."
               (should (equal (cons (car opencode--turns)
                                    (car (opencode--turn-messages (car opencode--turns))))
                              (opencode--message-at (line-beginning-position)))))
+            ;; before the first prompt is of the first turn
+            (goto-char (point-min))
+            (should (string-search "Activity\n turn 1 · " (sidebar-text)))
             ;; every turn has the session's status
             (goto-char (point-max))
             (should (string-search "· 🚀 idle\n" (sidebar-text)))

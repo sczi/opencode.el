@@ -909,11 +909,11 @@ onto it is only moved past it after `post-command-hook'."
       (line-beginning-position))))
 
 (defun opencode--turn-at (pos)
-  "Return the turn displayed at POS, or the last one if POS is before them.
+  "Return the turn displayed at POS, or the first one if POS is before them.
 The prompt of a turn is of it."
   (or (seq-find (lambda (turn) (<= (opencode--turn-prompt-start turn) pos))
                 opencode--turns)
-      (car opencode--turns)))
+      (car (last opencode--turns))))
 
 (defun opencode--marked-message-before (pos limit)
   "Return the message the output at or before POS is of, back to LIMIT."
@@ -928,8 +928,8 @@ The prompt of a turn is of it."
 (defun opencode--message-at (pos)
   "Return (TURN . MESSAGE-ID) of the step displayed at POS, or nil.
 Output not of a step, like a tool's, is of the step before it.  The
-prompt of a turn is of its first step, and anywhere before the first
-turn is of the last step.  MESSAGE-ID is nil for a turn with no steps yet."
+prompt of a turn, and anywhere before the first turn, is of the turn's
+first step.  MESSAGE-ID is nil for a turn with no steps yet."
   (when-let* ((turn (opencode--turn-at pos)))
     (let ((start (opencode--turn-start turn)))
       (cons turn

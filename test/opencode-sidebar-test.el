@@ -380,7 +380,8 @@ which would take precedence over the sidebar's side window action."
          (kill-buffer buffer))
        (set-frame-parameter nil 'opencode-sidebar nil)
        (set-frame-parameter nil 'opencode-sidebar-dismissed nil)
-       (set-frame-parameter nil 'opencode-sidebar-suspended nil))))
+       (set-frame-parameter nil 'opencode-sidebar-suspended nil)
+       (set-frame-parameter nil 'opencode-sidebar-shown nil))))
 
 (ert-deftest opencode-sidebar-toggle-test ()
   "Toggling shows the session's sidebar in a side window, then hides it."
@@ -480,6 +481,29 @@ Unless the frame is too narrow, or it was hidden."
           (opencode-sidebar-toggle)
           (opencode-sidebar--follow (selected-frame))
           (should-not (opencode-sidebar--window)))))))
+
+(ert-deftest opencode-sidebar-quit-window-test ()
+  "Closing the sidebar's window other than with the toggle dismisses it too.
+So `opencode-sidebar-auto' doesn't show it again right away."
+  (opencode-sidebar-test--with-frame-state
+    (with-opencode-session-test-buffer
+      (opencode-sidebar-test--fill-session)
+      (save-window-excursion
+        (switch-to-buffer (current-buffer))
+        (let ((opencode-sidebar-auto t))
+          (opencode-sidebar--follow (selected-frame))
+          (should (opencode-sidebar--window))
+          (quit-window nil (opencode-sidebar--window))
+          (opencode-sidebar--follow (selected-frame))
+          (should-not (opencode-sidebar--window))
+          (should (frame-parameter nil 'opencode-sidebar-dismissed))
+          (opencode-sidebar--follow (selected-frame))
+          (should-not (opencode-sidebar--window))
+          ;; the toggle shows it again, and then it follows
+          (opencode-sidebar-toggle)
+          (should (opencode-sidebar--window))
+          (opencode-sidebar--follow (selected-frame))
+          (should (opencode-sidebar--window)))))))
 
 (ert-deftest opencode-sidebar-invalidate-test ()
   "Invalidating keys forgets only them, and refetches them if it's shown."

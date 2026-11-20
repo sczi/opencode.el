@@ -40,7 +40,8 @@
   "Whether to show the sidebar on selecting a session buffer.
 Nil means only `opencode-sidebar-toggle' shows it, t means always, and a
 number means when the frame is at least that many columns wide.  It's not
-shown in a frame where it was hidden with `opencode-sidebar-toggle'."
+shown in a frame where it was closed, with `opencode-sidebar-toggle' or
+otherwise, until it's shown there again with `opencode-sidebar-toggle'."
   :type '(choice (const :tag "Only with `opencode-sidebar-toggle'" nil)
           (const :tag "Always" t)
           (natnum :tag "When the frame is at least this wide"))
@@ -199,6 +200,7 @@ FRAME defaults to the selected frame."
   (with-selected-frame (or frame (selected-frame))
     (let ((sidebar (opencode-sidebar--buffer nil t)))
       (opencode-sidebar--display sidebar)
+      (set-frame-parameter nil 'opencode-sidebar-shown t)
       (opencode-sidebar--set-session sidebar session t))))
 
 ;;;###autoload
@@ -211,6 +213,7 @@ shows the selected one, or else one in another window."
       (progn
         (set-frame-parameter nil 'opencode-sidebar-dismissed t)
         (set-frame-parameter nil 'opencode-sidebar-suspended nil)
+        (set-frame-parameter nil 'opencode-sidebar-shown nil)
         (delete-window window))
     (if-let* ((session (opencode-sidebar--visible-session)))
         (progn
@@ -228,7 +231,9 @@ shows the selected one, or else one in another window."
 (defun opencode-sidebar--follow (&optional frame)
   "Make FRAME's sidebar show the session buffer visible in it.
 See `opencode-sidebar--visible-session'.  With none visible, the sidebar
-is hidden until one is.  For `window-selection-change-functions' and
+is hidden until one is.  If its window was closed some other way, like
+with `quit-window', it's dismissed as if by `opencode-sidebar-toggle'.
+For `window-selection-change-functions' and
 `window-buffer-change-functions', which also run for frames that aren't
 selected."
   (let* ((frame (if (framep frame) frame (selected-frame)))
@@ -240,6 +245,10 @@ selected."
              (delete-window window)))
           (window
            (opencode-sidebar--set-session (window-buffer window) session))
+          ((and (frame-parameter frame 'opencode-sidebar-shown)
+                (not (frame-parameter frame 'opencode-sidebar-suspended)))
+           (set-frame-parameter frame 'opencode-sidebar-shown nil)
+           (set-frame-parameter frame 'opencode-sidebar-dismissed t))
           ((or (frame-parameter frame 'opencode-sidebar-suspended)
                (and (eq frame (selected-frame))
                     (opencode-sidebar--auto-p)))
@@ -832,7 +841,8 @@ And those showing when an idle session was last updated, every minute."
 (with-eval-after-load 'evil
   (declare-function evil-define-key* "evil-core")
   (evil-define-key* 'normal opencode-sidebar-mode-map
-    "gr" #'opencode-sidebar-refresh))
+    "gr" #'opencode-sidebar-refresh
+    "q" #'opencode-sidebar-toggle))
 
 (define-derived-mode opencode-sidebar-mode magit-section-mode "OpenCode Sidebar"
   "Major mode of the opencode session sidebar."

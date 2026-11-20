@@ -33,7 +33,7 @@ The data's all there, so the sidebar doesn't fetch any."
                                   ((content . "doing") (status . "in_progress"))
                                   ((content . "to do") (status . "pending"))))
         opencode-sidebar--data (list :session opencode-sidebar-test--session
-                                     :diff '(3 10 4)
+                                     :diff '(3 10 4 0 0 0)
                                      :mcps opencode-sidebar-test--mcps
                                      :branch "main")))
 
@@ -83,6 +83,54 @@ bound to `session'."
     (search-forward "broken")
     (should (equal "boom" (get-text-property (point) 'help-echo)))
     (should (eq 'opencode-sidebar-toggle-mcp (key-binding (kbd "RET"))))))
+
+(ert-deftest opencode-sidebar-test-file-p-test ()
+  "Paths with the word test, as in camelCase too, are test files.
+So are files in testdata and e2e directories, conftest.py, and test
+frameworks' spec files, but not other specs.  Docs are test files only
+if they're in a test directory."
+  (dolist (path '("test/foo.el" "pkg/tests/a.py" "foo-test.el" "foo_test.go"
+                  "test_foo.py" "testing/x.c" "FooTest.java" "TestFoo.java"
+                  "UITests.swift" "Test/a.c" "TEST_a.c" "src/__tests__/a.js"
+                  "a.spec.ts" "src/Button.spec.jsx" "spec/a_spec.rb"
+                  "spec/spec_helper.rb" "spec/support/x.rb" "spec/FooSpec.hs"
+                  "test/Spec.hs" "src/test/kotlin/FooSpec.kt" "FooTests/BarSpec.swift"
+                  "pkg/testdata/in.txt" "testdata/in.txt" "testdata/out.txt"
+                  "test/fixtures/a.md" "e2e/login.ts" "conftest.py" "pkg/conftest.py"))
+    (should (opencode-sidebar--test-file-p path)))
+  (dolist (path '("latest.el" "src/contest.el" "attest.c" "LATEST.C"
+                  "Testament.el" "testament.el" "protester.el"
+                  "special.el" "Specification.el" "inspect.py"
+                  "mytestdata/a.c" "be2e/a.c" "e2e.md" "myconftest.py"
+                  "specs/design.md" "spec/api.yaml" "docs/spec.md"
+                  "openapi-spec.json" "foo.spec" "lib/foo_spec.rb"
+                  "src/OpenApiSpec.kt" "JsonSpec.swift" "FooSpec.scala"
+                  "TESTING.md" "docs/testing.md" "test-plan.md" "test-plan.txt"))
+    (should-not (opencode-sidebar--test-file-p path))))
+
+(ert-deftest opencode-sidebar-changes-test ()
+  "Changes to test files are counted apart from other files'."
+  (opencode-sidebar-test--with-sidebar
+    (cl-flet ((changes (files)
+                (with-current-buffer session
+                  (setq opencode-sidebar--data
+                        (plist-put opencode-sidebar--data :diff
+                                   (opencode-sidebar--diffstat
+                                    (mapcar (pcase-lambda (`(,file ,additions ,deletions))
+                                              `((file . ,file) (additions . ,additions)
+                                                (deletions . ,deletions)))
+                                            files)))))
+                (opencode-sidebar--redraw)
+                (let ((text (opencode-sidebar-test--text)))
+                  (when-let* ((start (string-search "Changed" text)))
+                    (substring text start (string-search "\n\n" text start))))))
+      (should (equal "Changed\n 2 files +30 -4\n 1 test +5 -1"
+                     (changes '(("a.el" 10 4) ("b.el" 20 0) ("test/a-test.el" 5 1)))))
+      (should (equal "Changed 1 file +10 -4"
+                     (changes '(("a.el" 10 4)))))
+      (should (equal "Changed 2 tests +7 -1"
+                     (changes '(("test/a-test.el" 5 1) ("test/b-test.el" 2 0)))))
+      (should-not (changes nil)))))
 
 (ert-deftest opencode-sidebar-title-wrap-test ()
   "A long session title is wrapped to the sidebar width."
@@ -219,7 +267,7 @@ With no step yet, the session's selected agent is shown."
       (setq opencode-session-tokens 0
             opencode-session-cost 0
             opencode-session-todos nil
-            opencode-sidebar--data '(:session nil :diff (0 0 0) :mcps nil :branch nil)))
+            opencode-sidebar--data '(:session nil :diff (0 0 0 0 0 0) :mcps nil :branch nil)))
     (opencode-sidebar--redraw)
     (should (equal (concat "Session title\n\n"
                            (abbreviate-file-name

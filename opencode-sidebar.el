@@ -65,6 +65,33 @@ It's shown under the title, while the session is idle.  Nil means never."
           (natnum :tag "Minutes"))
   :group 'opencode-sidebar)
 
+(defcustom opencode-sidebar-test-file-regexp
+  (rx (or (seq (or (seq (or bos (not alpha)) (or "test" "TEST"))
+                   ;; a camelCase word
+                   "Test")
+               (? (or "s" "ing"))
+               (or eos (not lower)))
+          (seq (or bos "/") (or "testdata" "e2e") "/")
+          (seq (or bos "/") "conftest.py" eos)
+          ;; Jest, Vitest, Jasmine
+          (seq ".spec." (or "js" "jsx" "ts" "tsx" "mjs" "cjs" "mts" "cts") eos)
+          ;; RSpec, Hspec
+          (seq (or bos "/") "spec/" (* nonl) "." (or "rb" "hs") eos)))
+  "Regexp matching the paths of test files.
+The sidebar counts changes to them separately from other files.  It's
+matched case-sensitively.  The default matches the word test, plural or
+with -ing, lowercase, capitalized, as in camelCase, or uppercase; files in
+testdata and e2e directories; pytest's conftest.py; and spec files of
+test frameworks, but not other specs, like design docs."
+  :type 'regexp
+  :group 'opencode-sidebar)
+
+(defcustom opencode-sidebar-doc-extensions '("md" "markdown" "rst" "org" "adoc" "txt")
+  "Extensions of doc files, which are test files only if in a test directory.
+So docs about tests, like TESTING.md, aren't counted as tests."
+  :type '(repeat string)
+  :group 'opencode-sidebar)
+
 (defface opencode-sidebar-title
   '((t :inherit bold))
   "Face of the session title in the sidebar."
@@ -245,11 +272,31 @@ selected."
   (setq opencode-sidebar--data (plist-put opencode-sidebar--data key value))
   (opencode-sidebar--schedule-redraw))
 
+(defun opencode-sidebar--test-file-p (path)
+  "Return non-nil if PATH is a test file, per `opencode-sidebar-test-file-regexp'.
+A doc file, per `opencode-sidebar-doc-extensions', is one only if its
+directory matches, so docs about tests, like TESTING.md, aren't."
+  (let ((case-fold-search nil))
+    (string-match-p opencode-sidebar-test-file-regexp
+                    (if (member (file-name-extension path) opencode-sidebar-doc-extensions)
+                        (or (file-name-directory path) "")
+                      path))))
+
 (defun opencode-sidebar--diffstat (diff)
-  "Return (FILES ADDITIONS DELETIONS) of DIFF, a list of FileDiff.Info."
-  (list (length diff)
-        (cl-loop for file in diff sum (or (alist-get 'additions file) 0))
-        (cl-loop for file in diff sum (or (alist-get 'deletions file) 0))))
+  "Return the diffstat of DIFF, a list of FileDiff.Info.
+It's (FILES ADDITIONS DELETIONS TESTS TEST-ADDITIONS TEST-DELETIONS), with
+test files, per `opencode-sidebar--test-file-p', counted only in the last
+three."
+  (cl-loop for file in diff
+           for add = (or (alist-get 'additions file) 0)
+           for del = (or (alist-get 'deletions file) 0)
+           if (opencode-sidebar--test-file-p (or (alist-get 'file file) ""))
+           count t into tests and sum add into test-additions
+           and sum del into test-deletions
+           else count t into files and sum add into additions
+           and sum del into deletions
+           finally return (list files additions deletions
+                                tests test-additions test-deletions)))
 
 (defun opencode-sidebar--fetch-diff ()
   "Fetch the files the current buffer's session changed, over all its turns."
@@ -586,18 +633,33 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
                                     (opencode-sidebar--todo-face .status)))))
       (insert "\n"))))
 
+(defun opencode-sidebar--diffstat-line (count noun additions deletions)
+  "Return a line of COUNT NOUNs changed, with ADDITIONS and DELETIONS."
+  (concat (format "%d %s%s " count noun (if (= count 1) "" "s"))
+          (propertize (format "+%d" additions) 'font-lock-face 'magit-diffstat-added)
+          " "
+          (propertize (format "-%d" deletions) 'font-lock-face 'magit-diffstat-removed)
+          "\n"))
+
 (defun opencode-sidebar--insert-changes (diff)
-  "Insert the changes section for DIFF, as (FILES ADDITIONS DELETIONS)."
+  "Insert the changes section for DIFF, from `opencode-sidebar--diffstat'.
+Test files are counted apart from other files.  If only one kind changed,
+it's counted on the heading's line, else each on its own line under it."
   (pcase diff
-    (`(,files ,additions ,deletions)
-     (when (plusp files)
+    (`(,files ,additions ,deletions ,tests ,test-additions ,test-deletions)
+     (when (plusp (+ files tests))
        (magit-insert-section (opencode-sidebar-changes diff)
-         (insert (propertize "Changed" 'font-lock-face 'opencode-sidebar-heading)
-                 (format " %d file%s " files (if (= files 1) "" "s"))
-                 (propertize (format "+%d" additions) 'font-lock-face 'magit-diffstat-added)
-                 " "
-                 (propertize (format "-%d" deletions) 'font-lock-face 'magit-diffstat-removed)
-                 "\n\n"))))))
+         (insert (propertize "Changed" 'font-lock-face 'opencode-sidebar-heading))
+         (let ((lines (append (when (plusp files)
+                                (list (opencode-sidebar--diffstat-line
+                                       files "file" additions deletions)))
+                              (when (plusp tests)
+                                (list (opencode-sidebar--diffstat-line
+                                       tests "test" test-additions test-deletions))))))
+           (if (cdr lines)
+               (insert "\n" (mapconcat (lambda (line) (concat " " line)) lines))
+             (insert " " (car lines))))
+         (insert "\n"))))))
 
 (defun opencode-sidebar--mcp-status (mcp)
   "Return the status of MCP, a Mcp.Server."

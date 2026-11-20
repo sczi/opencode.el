@@ -96,6 +96,33 @@ bound to `session'."
         (dolist (line (seq-take lines 3))
           (should (<= (string-width line) opencode-sidebar-width)))))))
 
+(ert-deftest opencode-sidebar-updated-test ()
+  "When an idle session was last updated is shown under the title, once it's long ago."
+  (opencode-sidebar-test--with-sidebar
+    (cl-flet ((updated-line (minutes-ago &optional status)
+                (with-current-buffer session
+                  (setq opencode-session-status status)
+                  (setq opencode-sidebar--data
+                        (plist-put opencode-sidebar--data :session
+                                   `(,@opencode-sidebar-test--session
+                                     (time (updated . ,(- (opencode--now-ms)
+                                                          (* minutes-ago 60000))))))))
+                (opencode-sidebar--redraw)
+                (cadr (split-string (opencode-sidebar-test--text) "\n"))))
+      (should (equal "updated 30.00m ago" (updated-line 30)))
+      (should (equal "updated 30.00m ago" (updated-line 30 "idle")))
+      (should (eq 'shadow (get-text-property (pos-bol 2) 'font-lock-face)))
+      ;; redrawn every minute, so it's shown once it's long enough ago
+      (should (equal "" (updated-line 5)))
+      (should opencode-sidebar--aging)
+      ;; the session is stale while it's busy
+      (should (equal "" (updated-line 30 "busy")))
+      (should-not opencode-sidebar--aging)
+      (let ((opencode-sidebar-updated-after nil))
+        (should (equal "" (updated-line 30))))
+      (let ((opencode-sidebar-updated-after 60))
+        (should (equal "" (updated-line 30)))))))
+
 (defvar opencode-sidebar-test--messages
   '(((type . "user") (id . "u1") (text . "hello") (time (created . 1000)))
     ((type . "assistant") (id . "a1") (agent . "build")

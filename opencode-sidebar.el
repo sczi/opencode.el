@@ -58,6 +58,13 @@ high."
           (const :tag "The first token" first-token))
   :group 'opencode-sidebar)
 
+(defcustom opencode-sidebar-updated-after 20
+  "Minutes since a session was last updated before the sidebar shows when it was.
+It's shown under the title, while the session is idle.  Nil means never."
+  :type '(choice (const :tag "Never" nil)
+          (natnum :tag "Minutes"))
+  :group 'opencode-sidebar)
+
 (defface opencode-sidebar-title
   '((t :inherit bold))
   "Face of the session title in the sidebar."
@@ -87,6 +94,13 @@ The keys are :diff, :mcps and :branch.  A missing key hasn't been fetched.")
 
 (defvar-local opencode-sidebar--running nil
   "Non-nil if the sidebar shows a running turn.")
+
+(defvar opencode-sidebar--age-timer nil
+  "Timer redrawing the sidebars of idle sessions, as their last update ages.")
+
+(defvar-local opencode-sidebar--aging nil
+  "Non-nil if the sidebar shows an idle session, with when it was last updated.
+Whether that's shown depends on how long ago it was, so it's redrawn as it ages.")
 
 (defvar-local opencode-sidebar--step nil
   "The (TURN . MESSAGE-ID) at point in a session buffer, last time it was looked up.")
@@ -637,6 +651,18 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
                         'font-lock-face 'shadow)
             "\n")))
 
+(defun opencode-sidebar--updated (session status)
+  "Return when SESSION, a Session.Info, was last updated, or nil to not show it.
+It's shown once it's `opencode-sidebar-updated-after' minutes ago, unless
+STATUS is busy, as SESSION is only refetched once a step ends.  Sets
+`opencode-sidebar--aging' if it may be shown later."
+  (when-let* ((opencode-sidebar-updated-after)
+              ((not (equal status "busy")))
+              (seconds (opencode--time-ago session 'updated)))
+    (setq opencode-sidebar--aging t)
+    (when (>= seconds (* 60 opencode-sidebar-updated-after))
+      (concat "updated " (opencode--format-time-ago seconds) " ago"))))
+
 (defun opencode-sidebar--insert (session)
   "Insert the sidebar of SESSION buffer."
   (pcase-let ((`(,title ,step ,tokens ,model ,todos ,data ,directory ,rate-limit)
@@ -651,7 +677,11 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
                                          (window-body-width window)
                                        opencode-sidebar-width))
                         'font-lock-face 'opencode-sidebar-title)
-            "\n\n")
+            "\n")
+    (when-let* ((updated (opencode-sidebar--updated (plist-get data :session)
+                                                    (plist-get step :status))))
+      (insert (propertize updated 'font-lock-face 'shadow) "\n"))
+    (insert "\n")
     (opencode-sidebar--insert-agent step)
     (opencode-sidebar--insert-activity step)
     (opencode-sidebar--insert-changes (plist-get data :diff))
@@ -670,29 +700,35 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
        (opencode-sidebar--remember-visibility)
        (erase-buffer)
        (setq magit-root-section nil
-             opencode-sidebar--running nil)
+             opencode-sidebar--running nil
+             opencode-sidebar--aging nil)
        (magit-insert-section (opencode-sidebar-root)
          (if (buffer-live-p session)
              (opencode-sidebar--insert session)
            (insert (propertize "No session" 'font-lock-face 'shadow) "\n"))))))
   (opencode-sidebar--update-tick))
 
-(defun opencode-sidebar--update-tick ()
-  "Redraw the visible sidebars showing a running turn every second, if any."
-  (let ((running (seq-some (lambda (sidebar)
-                             (buffer-local-value 'opencode-sidebar--running sidebar))
+(defmacro opencode-sidebar--update-timer (timer flag seconds)
+  "Run TIMER every SECONDS while a visible sidebar has FLAG set, redrawing those."
+  `(let ((needed (seq-some (lambda (sidebar) (buffer-local-value ',flag sidebar))
                            (opencode-sidebar--sidebars))))
-    (cond ((and running (not (timerp opencode-sidebar--tick-timer)))
-           (setq opencode-sidebar--tick-timer
-                 (run-with-timer 1 1 #'opencode-sidebar--tick)))
-          ((and (not running) (timerp opencode-sidebar--tick-timer))
-           (cancel-timer opencode-sidebar--tick-timer)
-           (setq opencode-sidebar--tick-timer nil)))))
+     (cond ((and needed (not (timerp ,timer)))
+            (setq ,timer (run-with-timer ,seconds ,seconds
+                                         #'opencode-sidebar--redraw-flagged ',flag)))
+           ((and (not needed) (timerp ,timer))
+            (cancel-timer ,timer)
+            (setq ,timer nil)))))
 
-(defun opencode-sidebar--tick ()
-  "Redraw the visible sidebars showing a running turn."
+(defun opencode-sidebar--update-tick ()
+  "Redraw the visible sidebars showing a running turn every second, if any.
+And those showing when an idle session was last updated, every minute."
+  (opencode-sidebar--update-timer opencode-sidebar--tick-timer opencode-sidebar--running 1)
+  (opencode-sidebar--update-timer opencode-sidebar--age-timer opencode-sidebar--aging 60))
+
+(defun opencode-sidebar--redraw-flagged (flag)
+  "Redraw the visible sidebars with the buffer-local variable FLAG set."
   (dolist (sidebar (opencode-sidebar--sidebars))
-    (when (buffer-local-value 'opencode-sidebar--running sidebar)
+    (when (buffer-local-value flag sidebar)
       (with-current-buffer sidebar
         (opencode-sidebar--redraw))))
   (opencode-sidebar--update-tick))

@@ -46,6 +46,18 @@ shown in a frame where it was hidden with `opencode-sidebar-toggle'."
           (natnum :tag "When the frame is at least this wide"))
   :group 'opencode-sidebar)
 
+(defcustom opencode-sidebar-speed-start 'created
+  "When a step's tokens per second count from.
+`created' counts from the request, so the rate includes the time to first token.
+`first-token' counts from the first streamed token, as the TUI does, but
+providers may buffer output, like the input of a tool call, or anthropic
+buffering reasoning before outputting its reasoning summary, so most of it can
+arrive in a burst just after the first token, and the rate is then far too
+high."
+  :type '(choice (const :tag "The request" created)
+          (const :tag "The first token" first-token))
+  :group 'opencode-sidebar)
+
 (defface opencode-sidebar-title
   '((t :inherit bold))
   "Face of the session title in the sidebar."
@@ -451,12 +463,14 @@ With WHOLE, round to the nearest second, like 3s."
 (defun opencode-sidebar--speed (message)
   "Return the time to first token and tokens per second of MESSAGE, or nil.
 MESSAGE is a plist about an assistant message, from `opencode--message-info'.
-Tokens per second are of the output and reasoning tokens, from the first
-one until the response was streamed, as the TUI measures it."
+Tokens per second are of the output and reasoning tokens, until the
+response was streamed, from when `opencode-sidebar-speed-start' says."
   (cl-destructuring-bind (&key created first-token streamed completed tokens
                                &allow-other-keys)
       message
-    (let* ((start (or first-token created))
+    (let* ((start (if (eq opencode-sidebar-speed-start 'first-token)
+                      (or first-token created)
+                    created))
            (end (or streamed completed))
            (generated (and tokens (+ (or (alist-get 'output tokens) 0)
                                      (or (alist-get 'reasoning tokens) 0))))

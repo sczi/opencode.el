@@ -68,10 +68,10 @@ bound to `session'."
   "The sidebar shows the session's title, context, usage, todos, changes, MCPs and branch."
   (opencode-sidebar-test--with-sidebar
     (should (equal (concat "Session title\n\n"
+                           "Changed 3 files +10 -4\n\n"
                            "Context\n 12k tokens\n\n"
                            "Usage\n ↑4k ↓200 🧠50\n 75% cache\n $1.50\n\n"
                            "Todo (2 remaining)\n [✓] done\n [•] doing\n [ ] to do\n\n"
-                           "Changed 3 files +10 -4\n\n"
                            "MCP (1 active, 1 error)\n ● docs connected\n ● broken failed\n\n"
                            (abbreviate-file-name
                             (directory-file-name
@@ -109,7 +109,8 @@ bound to `session'."
 (defun opencode-sidebar-test--step-sections ()
   "Return the agent and activity sections of the current sidebar's text."
   (let ((text (opencode-sidebar-test--text)))
-    (substring text (string-search "Agent" text) (string-search "Context" text))))
+    (substring text (string-search "Agent" text)
+               (string-match (rx bol (or "Changed" "Context")) text))))
 
 (ert-deftest opencode-sidebar-step-test ()
   "The sidebar shows the agent and activity of the step at point."

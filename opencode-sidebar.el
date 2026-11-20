@@ -603,10 +603,10 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
             "\n\n")
     (opencode-sidebar--insert-agent step)
     (opencode-sidebar--insert-activity step)
+    (opencode-sidebar--insert-changes (plist-get data :diff))
     (opencode-sidebar--insert-context tokens model)
     (opencode-sidebar--insert-usage (plist-get data :session) rate-limit)
     (opencode-sidebar--insert-todos todos)
-    (opencode-sidebar--insert-changes (plist-get data :diff))
     (opencode-sidebar--insert-mcps (plist-get data :mcps))
     (opencode-sidebar--insert-location directory (plist-get data :branch))))
 

@@ -53,7 +53,10 @@
     "C-c b" 'opencode-btw
     "C-c B" 'opencode-add-buffer-dwim
     "C-c m" 'opencode-select-model
-    "M-TAB" 'opencode-cycle-variant
+    "M-<tab>" 'opencode-cycle-variant
+    ;; only bind in terminals that can't receive M-<tab>
+    "C-M-i" '(menu-item "" opencode-cycle-variant
+              :filter (lambda (cmd) (unless (display-graphic-p) cmd)))
     "M-<backtab>" 'opencode-cycle-variant-backwards
     "M-S-<iso-lefttab>" 'opencode-cycle-variant-backwards
     "M-S-<tab>" 'opencode-cycle-variant-backwards
@@ -565,6 +568,89 @@ are marked with ✦."
   (when-let* ((project (project-current)))
     (remq (current-buffer) (project-buffers project))))
 
+(defvar eglot--servers-by-project)
+(declare-function eglot--current-project "eglot")
+(declare-function eglot--capabilities "eglot")
+(declare-function eglot--request "eglot")
+
+(defun opencode--eglot-workspace-symbols (prefix)
+  "Return names of symbols matching PREFIX from the project's Eglot servers.
+Return the symbol `cancelled' if input arrives before every server replies."
+  (catch 'cancelled
+    (seq-uniq
+     (seq-mapcat
+      (lambda (server)
+        (when (plist-get (eglot--capabilities server) :workspaceSymbolProvider)
+          (let ((symbols (eglot--request server :workspace/symbol
+                                         `(:query ,prefix)
+                                         :immediate t
+                                         :cancel-on-input t
+                                         :cancel-on-input-retval 'cancelled)))
+            (when (eq symbols 'cancelled)
+              (throw 'cancelled 'cancelled))
+            (mapcar (lambda (symbol) (plist-get symbol :name)) symbols))))
+      (gethash (eglot--current-project) eglot--servers-by-project)))))
+
+(defun opencode--eglot-capf ()
+  "Complete the symbol at point from the project's Eglot servers.
+Unlike Eglot's own completion, which needs a position in a file, this
+asks every server for the project for workspace symbols, so it works
+from a session buffer whatever languages the project uses."
+  (when-let* (((bound-and-true-p eglot--servers-by-project))
+              ((gethash (eglot--current-project) eglot--servers-by-project))
+              (bounds (bounds-of-thing-at-point 'symbol)))
+    ;; Query with the symbol at point, not the string the completion
+    ;; style asks for: orderless asks for "", which makes servers like
+    ;; jedi scan everything they can reach.  Servers match the query
+    ;; loosely, so the result is a superset for the style to filter.
+    (let ((query (buffer-substring-no-properties (car bounds) (cdr bounds)))
+          (names 'missing))
+      (list (car bounds) (cdr bounds)
+            (completion-table-dynamic
+             (lambda (_)
+               (when (eq names 'missing)
+                 (let ((result (opencode--eglot-workspace-symbols query)))
+                   ;; Don't memoize a cancelled request.
+                   (unless (eq result 'cancelled)
+                     (setq names result))))
+               (unless (eq names 'missing) names)))
+            :exclusive 'no))))
+
+(declare-function slime--completion-at-point "slime")
+
+(defun opencode--slime-capf ()
+  "Complete the symbol at point from the connected SLIME Lisp."
+  (when (and (fboundp 'slime-connected-p) (slime-connected-p))
+    ;; The Lisp may abort the request (swanky-python does outside Python
+    ;; buffers), which shouldn't stop the remaining capfs.
+    (when-let* ((result (ignore-errors
+                          (slime--completion-at-point))))
+      (if (functionp result)
+          result
+        (append result '(:exclusive no))))))
+
+(declare-function capf-autosuggest-mode "capf-autosuggest")
+
+(defvar-local opencode--project-has-elisp 'unknown
+  "Whether the session's project has Emacs Lisp files, or `unknown'.")
+
+(defun opencode--elisp-capf ()
+  "Complete Emacs Lisp symbols at point, if the project has Emacs Lisp files."
+  (when (eq opencode--project-has-elisp 'unknown)
+    (setq opencode--project-has-elisp
+          (when-let* ((project (project-current)))
+            (seq-some (lambda (file) (string-suffix-p ".el" file))
+                      (project-files project)))))
+  ;; Not `elisp-completion-at-point', which uses ( etc as context for what
+  ;; symbols to complete
+  (when-let* ((opencode--project-has-elisp)
+              (bounds (with-syntax-table emacs-lisp-mode-syntax-table
+                        (bounds-of-thing-at-point 'symbol))))
+    (list (car bounds) (cdr bounds) obarray
+          :predicate (lambda (symbol)
+                       (or (fboundp symbol) (boundp symbol) (facep symbol)))
+          :exclusive 'no)))
+
 (define-derived-mode opencode-session-mode comint-mode "OpenCode"
   "Major mode for interacting with an opencode session."
   (setq-local comint-use-prompt-regexp nil
@@ -598,6 +684,26 @@ are marked with ✦."
   ;; whatever its size.
   ;; Complete words from the code being discussed, not just other sessions.
   (setq-local dabbrev-select-buffers-function #'opencode--dabbrev-project-buffers)
+  ;; Before the global capfs, which include tags.
+  (add-hook 'completion-at-point-functions #'opencode--elisp-capf nil t)
+  (add-hook 'completion-at-point-functions #'opencode--eglot-capf nil t)
+  (add-hook 'completion-at-point-functions #'opencode--slime-capf nil t)
+  ;; `comint-completion-at-point' treats almost any word as a partial
+  ;; filename and returns exclusive data, so the global capfs (tags) were
+  ;; never reached.  Drop it, and run filename completion after the
+  ;; global capfs instead; tags is non-exclusive, so this still fires
+  ;; when nothing matches a tag.
+  (remove-hook 'completion-at-point-functions #'comint-completion-at-point t)
+  (add-hook 'completion-at-point-functions #'comint-filename-completion 90 t)
+  ;; History autosuggestions from users' comint setups don't suit session
+  ;; buffers.  Depth 100 runs this after the global `comint-mode-hook'
+  ;; functions, but before `opencode-session-mode-hook', so users can still
+  ;; opt back in there.
+  (add-hook 'comint-mode-hook
+            (lambda ()
+              (when (bound-and-true-p capf-autosuggest-mode)
+                (capf-autosuggest-mode -1)))
+            100 t)
   (setq-local imenu-create-index-function #'opencode--imenu-create-index
               imenu-auto-rescan t
               imenu-auto-rescan-maxout most-positive-fixnum)
@@ -820,6 +926,19 @@ directory itself when it's outside the project, such as a worktree."
             (string-remove-suffix (concat "/" .subpath) directory)
           directory))))))
 
+(defun opencode--use-project-tags ()
+  "Complete from the TAGS file at the session's project root, if any.
+Set `tags-table-list' locally too, so etags doesn't ask whether to add
+it to, or replace, the global tags tables.  Leave the global tables in
+use when the project has no TAGS file, a directory-local
+`tags-file-name' already chose one, or `etags-regen-mode' manages them."
+  (unless (or (local-variable-p 'tags-file-name)
+              (bound-and-true-p etags-regen-mode))
+    (let ((tags (expand-file-name "TAGS" opencode--project-root)))
+      (when (file-exists-p tags)
+        (setq-local tags-file-name tags
+                    tags-table-list (list tags))))))
+
 (cl-defun opencode-open-session (session &key callback)
   "Open comint based shell for SESSION.
 Returns the buffer.  SESSION is on the current connection's server, or on
@@ -847,7 +966,8 @@ If CALLBACK is given, it will be called with the session after it is initialized
                     opencode-session-title (opencode--session-title session))
               ;; Not over Tramp, as it's slow and can be run from a process filter
               (unless (file-remote-p default-directory)
-                (hack-dir-local-variables-non-file-buffer))
+                (hack-dir-local-variables-non-file-buffer)
+                (opencode--use-project-tags))
               (opencode--download-slash-commands default-directory)
               (opencode--download-skills default-directory)
               (puthash .id buffer (opencode-connection-session-buffers connection))

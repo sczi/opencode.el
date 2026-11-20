@@ -54,7 +54,7 @@ of advantages over the official TUI:
 ((nil . ((opencode-project-files-finished-editing-functions . (opencode-uv-pytest)))))
      #+end_src
    - add any emacs buffer to chat context with =opencode-add-buffer-dwim=
-   - add files from dired to context with =opencode-add-file-dwim=
+   - add files to context with =opencode-add-file-dwim=
    - add selected region to context with =opencode-add-region=
    - add function at point to context with =opencode-add-defun=
    - start a new session to fix all flycheck errors in the current buffer with
@@ -67,6 +67,11 @@ of advantages over the official TUI:
    - integration with magit is possible, =opencode-new-worktree= will create a new
      git branch and worktree for the current project, and start an opencode session in it
    - =`file`= and =file:line= references in LLM output are turned into clickable buttons
+   - complete on project symbols from within chat sessions
+     In chat buffers, we set =completion-at-point-functions= to complete with
+     eglot or slime if you're connected, and to complete elisp symbols if your
+     project contains elisp. We also complete using the TAGS file if your
+     project contains one.
    - use =dabbrev-expand= in the chat window to complete long variable or function
      names from your code buffers. We set =dabbrev-select-buffers-function= in the
      chat windows, to include all other buffers from your project.

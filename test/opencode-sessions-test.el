@@ -2,6 +2,7 @@
 ;;; Code:
 
 (require 'ert)
+(require 'etags)
 (require 'opencode)
 (require 'opencode-sessions)
 (require 'opencode-test-helpers)
@@ -462,6 +463,44 @@ References in reasoning aren't buttons."
       (should (equal '("1: first" "2: second line one") (mapcar #'car index)))
       (goto-char (cdr (nth 1 index)))
       (should (looking-at-p "\nsecond line one")))))
+
+(ert-deftest opencode-session-project-tags-test ()
+  "Tags complete from the project's TAGS file, leaving global tables alone."
+  (let* ((root (make-temp-file "opencode-tags" t))
+         (tags (expand-file-name "TAGS" root))
+         (global (expand-file-name "OTHER-TAGS" root))
+         (etags-regen-mode nil)
+         (tags-file-name global)
+         (tags-table-list (list global))
+         tags-table-computed-list tags-table-computed-list-for
+         tags-table-list-pointer tags-table-list-started-at
+         tags-table-set-list)
+    (unwind-protect
+        (progn
+          (with-opencode-session-test-buffer
+            (setq opencode--project-root root)
+            (opencode--use-project-tags)
+            (should-not (local-variable-p 'tags-file-name)))
+          (with-temp-file tags
+            (insert "\f\nfoo.el,60\n"
+                    "(defun opencode-tags-test-symbol \x7f"
+                    "opencode-tags-test-symbol\x011,0\n"))
+          (with-opencode-session-test-buffer
+            (setq opencode--project-root root)
+            (opencode--use-project-tags)
+            (should (equal tags tags-file-name))
+            (should (equal (list tags) tags-table-list))
+            (insert "opencode-tags-test-sy")
+            (pcase-let ((`(,beg ,end ,table . ,_)
+                         (tags-completion-at-point-function)))
+              (should (equal '("opencode-tags-test-symbol")
+                             (all-completions (buffer-substring beg end)
+                                              table)))))
+          (should (equal global tags-file-name))
+          (should (equal (list global) tags-table-list)))
+      (when-let* ((buffer (find-buffer-visiting tags)))
+        (kill-buffer buffer))
+      (delete-directory root t))))
 
 (ert-deftest opencode-session-diff-refinement-test ()
   "Refine entire synthetic hunks without touching input or earlier output."

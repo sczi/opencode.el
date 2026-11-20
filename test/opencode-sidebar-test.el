@@ -84,6 +84,18 @@ bound to `session'."
     (should (equal "boom" (get-text-property (point) 'help-echo)))
     (should (eq 'opencode-sidebar-toggle-mcp (key-binding (kbd "RET"))))))
 
+(ert-deftest opencode-sidebar-title-wrap-test ()
+  "A long session title is wrapped to the sidebar width."
+  (opencode-sidebar-test--with-sidebar
+    (let ((title (string-join (make-list 12 "wrapping") " ")))
+      (with-current-buffer session
+        (setq opencode-session-title title))
+      (opencode-sidebar--redraw)
+      (let ((lines (split-string (opencode-sidebar-test--text) "\n")))
+        (should (equal title (string-join (seq-take lines 3) " ")))
+        (dolist (line (seq-take lines 3))
+          (should (<= (string-width line) opencode-sidebar-width)))))))
+
 (defvar opencode-sidebar-test--messages
   '(((type . "user") (id . "u1") (text . "hello") (time (created . 1000)))
     ((type . "assistant") (id . "a1") (agent . "build")

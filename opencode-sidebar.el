@@ -599,7 +599,11 @@ RATE-LIMIT is the Claude rate limit alist, shown for claude-agent sessions."
                        (opencode--current-model)
                        opencode-session-todos opencode-sidebar--data
                        default-directory (cdr (opencode--claude-rate-limit))))))
-    (insert (propertize (or title "") 'font-lock-face 'opencode-sidebar-title)
+    (insert (propertize (string-fill (or title "")
+                                     (if-let* ((window (get-buffer-window)))
+                                         (window-body-width window)
+                                       opencode-sidebar-width))
+                        'font-lock-face 'opencode-sidebar-title)
             "\n\n")
     (opencode-sidebar--insert-agent step)
     (opencode-sidebar--insert-activity step)

@@ -592,11 +592,11 @@ and are the same once the session is reloaded."
             (should (string-search "Activity\n turn 2 · " (sidebar-text)))
             (should (equal (car (opencode--turn-messages (car opencode--turns)))
                            (cdr (opencode--message-at (point)))))
-            ;; at the prompt, the last turn's, with the session's status
+            ;; every turn has the session's status
             (goto-char (point-max))
             (should (string-search "· 🚀 idle\n" (sidebar-text)))
             (search-backward "It says alpha")
-            (should-not (string-search "idle" (sidebar-text)))
+            (should (string-search "· 🚀 idle\n" (sidebar-text)))
             (let (loaded)
               (add-hook 'opencode-session-loaded-functions
                         (lambda (_id) (setq loaded t)) nil t)

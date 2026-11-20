@@ -396,8 +396,7 @@ Lines it wraps onto are indented to the TEXT."
   "Return a plist of the step at point in the current session buffer.
 It has the :turn and the plist about its assistant :message, and the
 :agent, Model.Ref :model and its Model.Info :model-info, which are those
-selected in the session when it has no step.  :status is the session's,
-if it's of the last turn."
+selected in the session when it has no step.  :status is the session's."
   (pcase-let* ((`(,turn . ,id) (opencode--message-at (point)))
                (message (and id (opencode--message-info id)))
                (agent (plist-get message :agent))
@@ -414,8 +413,7 @@ if it's of the last turn."
                    opencode-session-agent)
           :model model
           :model-info (and model (opencode--find-model model))
-          :status (and (or (not turn) (eq turn (car opencode--turns)))
-                       opencode-session-status))))
+          :status opencode-session-status)))
 
 (defun opencode-sidebar--insert-agent (step)
   "Insert the agent section of STEP, from `opencode-sidebar--step'."

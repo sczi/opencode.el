@@ -140,16 +140,15 @@ bound to `session'."
                   (search-forward text))
                 (opencode-sidebar--redraw)
                 (opencode-sidebar-test--step-sections)))
-      (should (equal (concat "Agent\n Build\n prov\n m1 high\n\n"
+      (should (equal (concat "Agent\n Build · 🚀 idle\n prov\n m1 high\n\n"
                              "Activity\n turn 1 · 5.0s\n TTFT 0.5s · 50 tok/s\n\n")
                      (sections-at "first")))
       ;; the prompt is of its turn's first step
       (should (equal (sections-at "hello") (sections-at "first")))
-      (should (equal (concat "Agent\n Build\n prov\n m1\n\n"
+      (should (equal (concat "Agent\n Build · 🚀 idle\n prov\n m1\n\n"
                              "Activity\n turn 1 · 5.0s\n TTFT 0.1s · 50 tok/s\n\n")
                      (sections-at "second")))
-      ;; an agent that isn't listed is shown by its id, and the last turn
-      ;; has the session's status
+      ;; an agent that isn't listed is shown by its id
       (should (equal (concat "Agent\n plan · 🚀 idle\n prov\n m2\n\n"
                              "Activity\n turn 2 · 1m 5s\n TTFT 0.5s · 30 tok/s\n\n")
                      (sections-at "third"))))))

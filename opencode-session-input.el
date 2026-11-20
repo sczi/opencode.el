@@ -38,6 +38,11 @@ Buffer local so we can configure models and variants per agent per session.")
   "Return non-nil if AGENT can be the agent of a session."
   (not (equal "subagent" (alist-get 'mode agent))))
 
+(defun opencode--default-agent (&optional agents)
+  "Return the server's default agent: the first selectable one in AGENTS.
+AGENTS defaults to the server's."
+  (seq-find #'opencode--selectable-agent-p (or agents (opencode--agents))))
+
 (defun opencode-cycle-session-agent ()
   "Switch to the next agent in `opencode-session-agents'."
   (interactive)

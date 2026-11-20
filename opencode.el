@@ -154,7 +154,7 @@ If INITIAL-PROMPT is given, it is sent after CALLBACK is called."
      ;; Create it with the agent and model `opencode-open-session' will select,
      ;; as a session without an agent gets the reminders some agents add only
      ;; during its first turn, which then causes an extra turn.
-     (let* ((agent (car (opencode--inherited-agents)))
+     (let* ((agent (opencode--default-agent (opencode--inherited-agents)))
             (model (alist-get 'model agent))
             (directory (or (opencode--to-server-path default-directory)
                            (user-error "%s isn't on the host of opencode server %s"

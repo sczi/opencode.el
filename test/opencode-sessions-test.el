@@ -1178,6 +1178,36 @@ It resumes after the restart if the session's still active."
        (data . ((sessionID . "session") (agent . "plan")))))
     (should (equal "build" (alist-get 'id opencode-session-agent)))))
 
+(ert-deftest opencode-session-inherited-agents-test ()
+  "A new session gets the server's agents with the models chosen in this one."
+  (with-opencode-session-test-buffer
+    (setf (opencode-connection-agents opencode-default-connection)
+          '(((id . "plan") (name . "Plan"))
+            ((id . "build") (name . "Build") (model (id . "server")))
+            ((id . "general") (mode . "subagent"))
+            ((id . "new") (name . "New"))))
+    (setq opencode-buffer-connection opencode-default-connection
+          opencode-session-agents '(((id . "build") (name . "Build") (model (id . "stale")))
+                                    ((id . "plan") (name . "Plan") (model (id . "p")))
+                                    ((id . "gone") (name . "Gone")))
+          opencode-session-agent '((id . "build") (name . "Build") (model (id . "b"))))
+    (let* ((opencode-last-model '((id . "last")))
+           (agents (opencode--inherited-agents)))
+      (should (equal '("plan" "build" "general" "new")
+                     (mapcar (lambda (a) (alist-get 'id a)) agents)))
+      (should (equal '("p" "b" "last" "last")
+                     (mapcar (lambda (a) (map-nested-elt a '(model id))) agents)))
+      (should (equal "plan" (alist-get 'id (opencode--default-agent agents))))
+      ;; models are copies, so changing a variant doesn't change the source's
+      (setf (alist-get 'variant (alist-get 'model (car agents))) "high")
+      (should-not (map-nested-elt (cadr opencode-session-agents) '(model variant))))
+    ;; From a buffer that isn't a session on the server, an agent's own model
+    ;; is used
+    (setq opencode-buffer-connection nil)
+    (let ((opencode-last-model '((id . "last"))))
+      (should (equal "server" (map-nested-elt (nth 1 (opencode--inherited-agents))
+                                              '(model id)))))))
+
 (ert-deftest opencode-session-status-indicator-test ()
   "The mode line never shows nil for an agent.
 The server reports no variant as \"default\", which is no selection."

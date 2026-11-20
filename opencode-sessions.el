@@ -897,10 +897,10 @@ If CALLBACK is given, it will be called with SESSION afterwards."
                                        (equal "assistant" (alist-get 'type message)))
                                      (reverse messages)))
                 ;; a session with no agent yet uses the default, listed first
-                (alist-get 'id (seq-find #'opencode--selectable-agent-p
-                                         (opencode--agents)))))
+                (alist-get 'id (opencode--default-agent))))
       (opencode--replay-session-messages messages .revert.messageID)
-      ;; A new session keeps the agent and model of where it was opened from.
+      ;; A new session starts on the default agent, with the models chosen
+      ;; for each agent where it was opened from.
       (when messages
         (opencode--adopt-selection opencode--server-agent .model))
       (opencode-api-sessions-active
@@ -917,21 +917,23 @@ If CALLBACK is given, it will be called with SESSION afterwards."
           (funcall callback session))))))
 
 (defun opencode--inherited-agents ()
-  "Return the agent and agents a session opened from the current buffer gets.
-The value is (AGENT . AGENTS).  They are copied from the current buffer when it
-is a session on the current connection's server, otherwise AGENTS are the
-server's and AGENT is the first selectable one.  Agents without a model get
-`opencode-last-model'."
-  (let* ((same-server (eq opencode-buffer-connection (opencode-current-connection)))
-         (agents (mapcar (lambda (agent)
-                           (unless (alist-get 'model agent)
-                             (setf (alist-get 'model agent) (copy-alist opencode-last-model)))
-                           agent)
-                         (copy-tree (or (and same-server opencode-session-agents)
-                                        (opencode--agents))))))
-    (cons (or (and same-server (copy-tree opencode-session-agent))
-              (seq-find #'opencode--selectable-agent-p agents))
-          agents)))
+  "Return the server's agents, for a session opened from the current buffer.
+Each has the model selected for it in the current buffer when that's a
+session on the same server, else its own or `opencode-last-model'."
+  (let ((local (and (eq opencode-buffer-connection (opencode-current-connection))
+                    ;; the current agent's entry is only updated when cycling away
+                    (cons opencode-session-agent opencode-session-agents))))
+    (mapcar (lambda (agent)
+              (let ((agent (copy-tree agent))
+                    (selected (cl-find (alist-get 'id agent) local
+                                       :key (lambda (a) (alist-get 'id a))
+                                       :test #'equal)))
+                (setf (alist-get 'model agent)
+                      (copy-alist (or (alist-get 'model selected)
+                                      (alist-get 'model agent)
+                                      opencode-last-model)))
+                agent))
+            (opencode--agents))))
 
 (defun opencode--session-project-root (session)
   "Return the root directory of SESSION's project, as a file name on its host.
@@ -974,7 +976,7 @@ If CALLBACK is given, it will be called with the session after it is initialized
             (opencode--switch-to-buffer old-buffer)
           (let ((buffer (generate-new-buffer
                          (format "*OpenCode: %s*" (opencode--session-title session))))
-                (inherited (opencode--inherited-agents)))
+                (agents (opencode--inherited-agents)))
             (with-current-buffer buffer
               (opencode-session-mode)
               (setq opencode-buffer-connection connection
@@ -983,8 +985,8 @@ If CALLBACK is given, it will be called with the session after it is initialized
                     default-directory (file-name-as-directory
                                        (opencode--from-server-path .location.directory))
                     opencode--project-root (opencode--session-project-root session)
-                    opencode-session-agent (car inherited)
-                    opencode-session-agents (cdr inherited)
+                    opencode-session-agent (opencode--default-agent agents)
+                    opencode-session-agents agents
                     opencode-session-title (opencode--session-title session))
               ;; Not over Tramp, as it's slow and can be run from a process filter
               (unless (file-remote-p default-directory)

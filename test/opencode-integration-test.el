@@ -661,5 +661,32 @@ and are the same once the session is reloaded."
         (funcall state 'return nil)
         (should-not (buffer-live-p preview))))))
 
+(ert-deftest opencode-integration-finished-editing-diagnostics-test ()
+  "Diagnostics reported after a turn's edits are sent to the LLM in a new turn."
+  (opencode-test-with-session '(("a.txt" . "alpha\n"))
+    (let* ((reported nil)
+           (opencode-files-finished-editing-functions
+            (list (lambda (_files done)
+                    (if reported
+                        (funcall done)
+                      (setq reported t)
+                      (funcall done "- a.txt:1:1: error: ALPHA is wrong"))))))
+      (opencode-test-llm-reply
+       '((:tool "edit" ((path . "a.txt") (oldString . "alpha") (newString . "ALPHA"))))
+       "Edited."
+       "Fixed.")
+      (opencode-test-send "Shout alpha")
+      (opencode-test-wait-for-output "Fixed.")
+      (opencode-test-wait-until (opencode-test-at-prompt-p))
+      (let ((text (opencode-test-llm-user-text (car (last opencode-test-llm-requests)))))
+        (should (string-prefix-p "Diagnostics were reported after editing files." text))
+        (should (string-search "- a.txt:1:1: error: ALPHA is wrong" text)))
+      ;; The diagnostics are the input of the latest turn
+      (should (equal 2 (length opencode--turns)))
+      (should (string-prefix-p "Diagnostics were reported"
+                               (buffer-substring-no-properties
+                                (opencode--turn-start (car opencode--turns))
+                                (point-max)))))))
+
 (provide 'opencode-integration-test)
 ;;; opencode-integration-test.el ends here

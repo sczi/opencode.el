@@ -119,48 +119,79 @@ FRAME defaults to the selected frame.  If CREATE, create it if needed."
      (window-parameters (no-delete-other-windows . t)
                         (no-other-window . t)))))
 
-(defun opencode-sidebar--current-session ()
-  "Return the session buffer for a sidebar shown from the current buffer."
-  (cond ((derived-mode-p 'opencode-session-mode) (current-buffer))
-        ((derived-mode-p 'opencode-sidebar-mode) opencode-sidebar--session)
-        ((buffer-live-p opencode-last-session-buffer) opencode-last-session-buffer)))
+(defun opencode-sidebar--session-p (buffer)
+  "Return non-nil if BUFFER is a session buffer."
+  (with-current-buffer buffer
+    (derived-mode-p 'opencode-session-mode)))
 
-(defun opencode-sidebar--show (session)
-  "Show the selected frame's sidebar, for SESSION buffer."
-  (let ((sidebar (opencode-sidebar--buffer nil t)))
-    (opencode-sidebar--display sidebar)
-    (opencode-sidebar--set-session sidebar session t)))
+(defun opencode-sidebar--visible-session (&optional frame)
+  "Return the session buffer FRAME's sidebar should show, or nil if none.
+That's the session of FRAME's selected window, else the one its sidebar
+shows if it's still in a window of FRAME, else any session in a window
+of FRAME.  FRAME defaults to the selected frame."
+  (let* ((frame (or frame (selected-frame)))
+         (selected (window-buffer (frame-selected-window frame)))
+         (sidebar (opencode-sidebar--buffer frame))
+         (shown (and sidebar (buffer-local-value 'opencode-sidebar--session sidebar))))
+    (cond ((opencode-sidebar--session-p selected) selected)
+          ((and (buffer-live-p shown) (get-buffer-window shown frame)) shown)
+          (t (seq-some (lambda (window)
+                         (let ((buffer (window-buffer window)))
+                           (and (opencode-sidebar--session-p buffer) buffer)))
+                       (window-list frame 'never))))))
+
+(defun opencode-sidebar--show (session &optional frame)
+  "Show FRAME's sidebar, for SESSION buffer.
+FRAME defaults to the selected frame."
+  (with-selected-frame (or frame (selected-frame))
+    (let ((sidebar (opencode-sidebar--buffer nil t)))
+      (opencode-sidebar--display sidebar)
+      (opencode-sidebar--set-session sidebar session t))))
 
 ;;;###autoload
 (defun opencode-sidebar-toggle ()
   "Show or hide the sidebar of the selected frame.
-It shows the selected session buffer, or the last one selected."
+It's only shown while a session buffer is visible in the frame, and
+shows the selected one, or else one in another window."
   (interactive)
   (if-let* ((window (opencode-sidebar--window)))
       (progn
         (set-frame-parameter nil 'opencode-sidebar-dismissed t)
+        (set-frame-parameter nil 'opencode-sidebar-suspended nil)
         (delete-window window))
-    (set-frame-parameter nil 'opencode-sidebar-dismissed nil)
-    (opencode-sidebar--show (opencode-sidebar--current-session))))
+    (if-let* ((session (opencode-sidebar--visible-session)))
+        (progn
+          (set-frame-parameter nil 'opencode-sidebar-dismissed nil)
+          (opencode-sidebar--show session))
+      (message "No session visible in this frame"))))
 
 (defun opencode-sidebar--auto-p ()
-  "Return non-nil if the sidebar should show for the current session buffer."
+  "Return non-nil if the selected frame's sidebar should show on its own."
   (and opencode-sidebar-auto
        (not (frame-parameter nil 'opencode-sidebar-dismissed))
        (or (not (numberp opencode-sidebar-auto))
            (>= (frame-width) opencode-sidebar-auto))))
 
 (defun opencode-sidebar--follow (&optional frame)
-  "Make FRAME's sidebar show the session buffer of its selected window.
-For `window-selection-change-functions' and `window-buffer-change-functions',
-which also run for frames that aren't selected."
-  (let ((frame (if (framep frame) frame (selected-frame))))
-    (with-current-buffer (window-buffer (frame-selected-window frame))
-      (when (derived-mode-p 'opencode-session-mode)
-        (if-let* ((window (opencode-sidebar--window frame)))
-            (opencode-sidebar--set-session (window-buffer window) (current-buffer))
-          (when (and (eq frame (selected-frame)) (opencode-sidebar--auto-p))
-            (opencode-sidebar--show (current-buffer))))))))
+  "Make FRAME's sidebar show the session buffer visible in it.
+See `opencode-sidebar--visible-session'.  With none visible, the sidebar
+is hidden until one is.  For `window-selection-change-functions' and
+`window-buffer-change-functions', which also run for frames that aren't
+selected."
+  (let* ((frame (if (framep frame) frame (selected-frame)))
+         (session (opencode-sidebar--visible-session frame))
+         (window (opencode-sidebar--window frame)))
+    (cond ((not session)
+           (when window
+             (set-frame-parameter frame 'opencode-sidebar-suspended t)
+             (delete-window window)))
+          (window
+           (opencode-sidebar--set-session (window-buffer window) session))
+          ((or (frame-parameter frame 'opencode-sidebar-suspended)
+               (and (eq frame (selected-frame))
+                    (opencode-sidebar--auto-p)))
+           (set-frame-parameter frame 'opencode-sidebar-suspended nil)
+           (opencode-sidebar--show session frame)))))
 
 (add-hook 'window-selection-change-functions #'opencode-sidebar--follow)
 (add-hook 'window-buffer-change-functions #'opencode-sidebar--follow)

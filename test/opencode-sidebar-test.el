@@ -294,7 +294,8 @@ which would take precedence over the sidebar's side window action."
        (when-let* ((buffer (opencode-sidebar--buffer)))
          (kill-buffer buffer))
        (set-frame-parameter nil 'opencode-sidebar nil)
-       (set-frame-parameter nil 'opencode-sidebar-dismissed nil))))
+       (set-frame-parameter nil 'opencode-sidebar-dismissed nil)
+       (set-frame-parameter nil 'opencode-sidebar-suspended nil))))
 
 (ert-deftest opencode-sidebar-toggle-test ()
   "Toggling shows the session's sidebar in a side window, then hides it."
@@ -302,39 +303,80 @@ which would take precedence over the sidebar's side window action."
     (with-opencode-session-test-buffer
       (opencode-sidebar-test--fill-session)
       (let ((session (current-buffer)))
+        (save-window-excursion
+          (switch-to-buffer session)
+          (opencode-sidebar-toggle)
+          (let ((window (opencode-sidebar--window)))
+            (should window)
+            (should (eq opencode-sidebar-side (window-parameter window 'window-side)))
+            (with-current-buffer (window-buffer window)
+              (should (eq session opencode-sidebar--session))
+              (should (string-prefix-p "Session title\n" (opencode-sidebar-test--text)))))
+          (opencode-sidebar-toggle)
+          (should-not (opencode-sidebar--window))
+          (should (frame-parameter nil 'opencode-sidebar-dismissed)))))))
+
+(ert-deftest opencode-sidebar-toggle-no-session-test ()
+  "Toggling with no session visible in the frame doesn't show the sidebar."
+  (opencode-sidebar-test--with-frame-state
+    (with-opencode-session-test-buffer
+      (opencode-sidebar-test--fill-session)
+      (save-window-excursion
+        (delete-other-windows)
+        (switch-to-buffer (get-buffer-create "*scratch*"))
         (opencode-sidebar-toggle)
-        (let ((window (opencode-sidebar--window)))
-          (should window)
-          (should (eq opencode-sidebar-side (window-parameter window 'window-side)))
-          (with-current-buffer (window-buffer window)
-            (should (eq session opencode-sidebar--session))
-            (should (string-prefix-p "Session title\n" (opencode-sidebar-test--text)))))
-        (opencode-sidebar-toggle)
-        (should-not (opencode-sidebar--window))
-        (should (frame-parameter nil 'opencode-sidebar-dismissed))))))
+        (should-not (opencode-sidebar--window))))))
 
 (ert-deftest opencode-sidebar-follow-test ()
   "A shown sidebar follows the session buffer selected in its frame."
   (opencode-sidebar-test--with-frame-state
     (with-opencode-session-test-buffer
       (opencode-sidebar-test--fill-session)
-      (opencode-sidebar-toggle)
       (with-temp-buffer
         (opencode-session-mode)
         (opencode-sidebar-test--fill-session)
         (setq opencode-session-title "Other")
         (let ((other (current-buffer)))
           (save-window-excursion
+            (delete-other-windows)
             (switch-to-buffer other)
-            (opencode-sidebar--follow (selected-frame))
+            (opencode-sidebar-toggle)
             (with-current-buffer (opencode-sidebar--buffer)
               (should (eq other opencode-sidebar--session))
               (should (string-prefix-p "Other\n" (opencode-sidebar-test--text))))
-            ;; other buffers leave it showing the session
+            ;; a session in another window keeps it showing that session
+            (select-window (split-window))
             (switch-to-buffer (get-buffer-create "*scratch*"))
             (opencode-sidebar--follow (selected-frame))
+            (should (opencode-sidebar--window))
             (should (eq other (buffer-local-value 'opencode-sidebar--session
                                                   (opencode-sidebar--buffer))))))))))
+
+(ert-deftest opencode-sidebar-hide-without-session-test ()
+  "The sidebar's hidden while no session is visible in its frame.
+It comes back when one is, unless it was hidden with the toggle."
+  (opencode-sidebar-test--with-frame-state
+    (with-opencode-session-test-buffer
+      (opencode-sidebar-test--fill-session)
+      (let ((session (current-buffer)))
+        (save-window-excursion
+          (delete-other-windows)
+          (switch-to-buffer session)
+          (opencode-sidebar-toggle)
+          (should (opencode-sidebar--window))
+          (switch-to-buffer (get-buffer-create "*scratch*"))
+          (opencode-sidebar--follow (selected-frame))
+          (should-not (opencode-sidebar--window))
+          (switch-to-buffer session)
+          (opencode-sidebar--follow (selected-frame))
+          (should (opencode-sidebar--window))
+          ;; dismissed, it stays hidden
+          (opencode-sidebar-toggle)
+          (switch-to-buffer (get-buffer-create "*scratch*"))
+          (opencode-sidebar--follow (selected-frame))
+          (switch-to-buffer session)
+          (opencode-sidebar--follow (selected-frame))
+          (should-not (opencode-sidebar--window)))))))
 
 (ert-deftest opencode-sidebar-auto-test ()
   "With `opencode-sidebar-auto' it's shown on selecting a session buffer.

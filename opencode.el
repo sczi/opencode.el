@@ -211,11 +211,10 @@ Creates a new session starting from the current user message."
   (interactive)
   (unless opencode-session-id
     (user-error "Not in an opencode session buffer"))
-  (opencode--current-user-message message
-    (opencode-api-fork-session (opencode-session-id)
-        `((before . ,(alist-get 'id message)))
-        session
-      (opencode-open-session session))))
+  (opencode-api-fork-session (opencode-session-id)
+      `((before . ,(opencode--user-message-id-at-point)))
+      session
+    (opencode-open-session session)))
 
 (defun opencode-revert-message ()
   "Revert the user message at point and everything after it.
@@ -223,14 +222,14 @@ Its text and labels are put back in the prompt to edit and resend."
   (interactive)
   (unless opencode-session-id
     (user-error "Not in an opencode session buffer"))
-  (let ((start (copy-marker (opencode--prompt-start)))
+  (let ((id (opencode--user-message-id-at-point))
+        (start (copy-marker (opencode--prompt-start)))
         (input (opencode--prompt-input)))
-    (opencode--current-user-message message
-      (opencode-api-revert-message (opencode-session-id)
-          `((messageID . ,(alist-get 'id message)))
-          _result
-        (opencode--truncate-to-prompt start input)
-        (message "Reverted edits after message")))))
+    (opencode-api-revert-message (opencode-session-id)
+        `((messageID . ,id))
+        _result
+      (opencode--truncate-to-prompt start input)
+      (message "Reverted edits after message"))))
 
 (defun opencode--turn-file-diffs (message-id then)
   "Call THEN with the diffs of the text files changed in MESSAGE-ID's turn.
@@ -301,17 +300,16 @@ aren't shown.  It reads the file when the turn changed several."
   (interactive)
   (unless opencode-session-id
     (user-error "Not in an opencode session buffer"))
-  (opencode--current-user-message message
-    (opencode--turn-file-diffs
-     (alist-get 'id message)
-     (lambda (diffs)
-       (pcase diffs
-         ('nil (user-error "The turn changed no text files"))
-         (`(,diff) (opencode--ediff-file-diff diff))
-         (_ (when-let* ((diff (opencode--annotated-completion
-                               "Ediff file: "
-                               (opencode--turn-file-candidates diffs))))
-              (opencode--ediff-file-diff diff))))))))
+  (opencode--turn-file-diffs
+   (opencode--user-message-id-at-point)
+   (lambda (diffs)
+     (pcase diffs
+       ('nil (user-error "The turn changed no text files"))
+       (`(,diff) (opencode--ediff-file-diff diff))
+       (_ (when-let* ((diff (opencode--annotated-completion
+                             "Ediff file: "
+                             (opencode--turn-file-candidates diffs))))
+            (opencode--ediff-file-diff diff)))))))
 
 (defun opencode-unrevert-all ()
   "Unrevert all reverted messages in the current session."

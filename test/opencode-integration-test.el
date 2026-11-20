@@ -409,6 +409,35 @@ The server may briefly remove a file while restoring it, as on revert."
                               (process-mark (get-buffer-process (current-buffer)))
                               (point-max))))))
 
+(ert-deftest opencode-integration-user-message-id-test ()
+  "Sent prompts and slash commands are of their user messages, as when replayed.
+A shell command isn't a user message."
+  (opencode-test-with-session '((".opencode/command/greet.md" . "Greet $ARGUMENTS\n"))
+    (opencode-test-llm-reply "Hi." "Hello bob.")
+    (opencode-test-send "Hello")
+    (opencode-test-send "/greet bob")
+    (opencode-test-send "!echo ok")
+    (let ((id-at (lambda (text)
+                   (goto-char (point-min))
+                   (search-forward (concat "❯ " text))
+                   (opencode--user-message-id-at-point)))
+          users)
+      (opencode-api-all-messages (opencode-session-id)
+          messages
+        (setq users (cl-loop for message in messages
+                             when (equal "user" (alist-get 'type message))
+                             collect (alist-get 'id message))))
+      (opencode-test-wait-until users)
+      (should (equal 2 (length users)))
+      (should (equal users (mapcar id-at '("Hello" "/greet bob"))))
+      (goto-char (opencode-test--search "!echo ok"))
+      (should-error (opencode--user-message-id-at-point) :type 'user-error)
+      (opencode--reload-session)
+      (opencode-test-wait-until (and (opencode-test-at-prompt-p)
+                                     (string-search "❯ !echo" (opencode-test-output))))
+      ;; the server expands the command into the text of its message
+      (should (equal users (mapcar id-at '("Hello" "Greet bob")))))))
+
 (ert-deftest opencode-integration-turn-file-diffs-test ()
   "A message's turn diff has only the files that turn changed, before and after."
   (opencode-test-with-session '(("a.txt" . "one\n"))
@@ -421,9 +450,8 @@ The server may briefly remove a file while restoring it, as on revert."
     (opencode-test-send "Write it")
     (goto-char (opencode-test--search "Edit it"))
     (let (diffs)
-      (opencode--current-user-message message
-        (opencode--turn-file-diffs (alist-get 'id message)
-                                   (lambda (result) (setq diffs (list result)))))
+      (opencode--turn-file-diffs (opencode--user-message-id-at-point)
+                                 (lambda (result) (setq diffs (list result))))
       (opencode-test-wait-until diffs)
       (pcase-let ((`((,diff)) diffs))
         (should (equal "a.txt" (alist-get 'file diff)))

@@ -941,18 +941,26 @@ turn is of the last step.  MESSAGE-ID is nil for a turn with no steps yet."
       (overlay-put ov 'line-prefix margin)
       (overlay-put ov 'wrap-prefix margin))))
 
-(defun opencode--replay-input (text)
-  "Replay a prompt with input TEXT."
+(defun opencode--mark-input (start end id)
+  "Mark the sent input from START to END as that of the user message ID.
+ID is `shell' for a shell command, which isn't a user message."
+  (with-silent-modifications
+    (put-text-property start end 'opencode-user-message id)))
+
+(defun opencode--replay-input (text &optional id)
+  "Replay a prompt with input TEXT, of the user message ID.
+ID is `shell' for a shell command."
   (opencode--show-prompt)
   (insert text)
   (let ((comint-input-sender #'opencode--highlight-input))
     (comint-send-input))
+  (opencode--mark-input comint-last-input-start comint-last-input-end id)
   (opencode--output "\n"))
 
 (defun opencode--replay-user-request (message)
   "Replay a user request MESSAGE.
 It starts a turn, unless it was queued while one ran."
-  (opencode--replay-input (alist-get 'text message))
+  (opencode--replay-input (alist-get 'text message) (alist-get 'id message))
   (when (or opencode--replaying-legacy (not (opencode--running-turn)))
     (opencode--start-turn (map-nested-elt message '(time created))))
   (opencode--insert-skills (alist-get 'skills message)))
@@ -1234,7 +1242,7 @@ Calls not yet finished are recorded so that later events finish them."
       ("user" (opencode--replay-user-request message))
       ("assistant" (opencode--replay-assistant-message message))
       ("shell"
-       (opencode--replay-input (concat "!" .command))
+       (opencode--replay-input (concat "!" .command) 'shell)
        (opencode--insert-shell-output (or .output.output "")
                                       (opencode--shell-failed-p "shell" message)))
       ("compaction"

@@ -551,16 +551,24 @@ records a message, so that's only done if it differs."
       ,@(when agents `((agents . ,(vconcat agents))))
       ,@(when skills `((skills . ,(vconcat skills)))))))
 
+(defun opencode--user-message-enqueued (id)
+  "Mark the last sent input, a slash command, as that of the user message ID.
+`/command' doesn't return the id of the message it creates."
+  (let ((start comint-last-input-start))
+    (when (and (eq (char-after start) ?/)
+               (not (get-text-property start 'opencode-user-message)))
+      (opencode--mark-input start comint-last-input-end id))))
+
 (defun opencode--send-input (_proc string)
-  "Send STRING as input to current opencode session."
+  "Send STRING as input to current opencode session.
+The input is marked as of its user message once the server creates it."
   (opencode--highlight-input)
   (opencode--output "\n")
   ;; STRING is the buffer text of the input, where each label is one character
-  (pcase-let ((`(,string . ,extra-parts)
-               (opencode--input-text-and-parts
-                comint-last-input-start
-                (+ comint-last-input-start (length string))))
-              (temp-files opencode--temp-files))
+  (pcase-let* ((start (marker-position comint-last-input-start))
+               (end (+ start (length string)))
+               (`(,string . ,extra-parts) (opencode--input-text-and-parts start end))
+               (temp-files opencode--temp-files))
     (setf opencode--temp-files nil)
     (cond
      ((string-prefix-p "/" string)
@@ -582,12 +590,15 @@ records a message, so that's only done if it differs."
                   (opencode--show-prompt))))))))
       (opencode--delete-temp-files temp-files))
      ((string-prefix-p "!" string)
+      (opencode--mark-input start end 'shell)
       (opencode-api-session-shell (opencode-session-id)
           `((command . ,(substring string 1)))
           _response
         :else #'opencode--send-failed)
       (opencode--delete-temp-files temp-files))
      (t
+      (setq start (copy-marker start)
+            end (copy-marker end))
       (opencode--sync-agent-and-model
        (lambda ()
          (opencode-api-session-prompt (opencode-session-id)
@@ -597,6 +608,9 @@ records a message, so that's only done if it differs."
                    (opencode--delete-temp-files temp-files)
                    (opencode--send-failed error-msg))
            (opencode--delete-temp-files temp-files)
+           (opencode--mark-input start end (alist-get 'id inbox-item))
+           (set-marker start nil)
+           (set-marker end nil)
            (opencode--insert-skills
             (map-nested-elt inbox-item '(payload skills))))))))))
 

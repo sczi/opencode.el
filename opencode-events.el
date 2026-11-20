@@ -39,7 +39,7 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
     "session.tool.success" "session.tool.failed"
     "session.retry.scheduled" "session.shell.ended"
     "session.compaction.started" "session.compaction.ended"
-    "session.compaction.failed"
+    "session.compaction.failed" "session.inbox.enqueued"
     "permission.asked" "permission.replied"
     "form.created" "form.replied" "form.cancelled" "tui.toast.show"
     "mcp.status.changed"
@@ -99,6 +99,11 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
              (opencode--start-turn created)
              (opencode-sidebar-session-changed))
            (opencode--redisplay-session-control-buffers))
+          (session.inbox.enqueued
+           ;; the user message of a slash command, created by the server
+           (when (equal .item.type "user")
+             (opencode--with-session-buffer .sessionID
+               (opencode--user-message-enqueued .inboxID))))
           (session.execution.succeeded (opencode--session-finished .sessionID))
           (session.execution.interrupted
            ;; On a real shutdown the drain resumes after the restart, but the

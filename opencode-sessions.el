@@ -1076,50 +1076,21 @@ Emacs gives it the field `input'.  Input at the prompt isn't sent yet."
   (goto-char (point-max))
   (insert text))
 
-(defun opencode--current-message-number ()
-  "Return the 0-indexed message number at point.
-Counts prompts from the beginning of the buffer to the current position.
-Returns nil if point is before the first prompt."
-  (save-excursion
-    (let ((pos (point))
-          (first (progn (goto-char (point-min))
-                        (comint-next-prompt 1)
-                        (point))))
-      (unless (or (= first (point-min))
-                  (< pos (let ((inhibit-field-text-motion t))
-                           (line-beginning-position))))
-        (goto-char pos)
-        (opencode--goto-prompt-input)
-        (let ((target-point (point)))
-          (goto-char (point-min))
-          (cl-loop do (comint-next-prompt 1)
-                   while (< (point) target-point)
-                   count t))))))
-
-(defmacro opencode--current-user-message (result &rest body)
-  "Run BODY with RESULT as the user message at point.
-Prompts are user messages and shell commands, in order.  Signal a
-`user-error' if point is before the first prompt."
-  (declare (indent defun))
-  (let ((message-number (gensym "message-number"))
-        (messages (gensym "messages"))
-        (continue (gensym "continue")))
-    `(let ((,message-number (opencode--current-message-number))
-           (,continue (lambda (,result) ,@body)))
-       (if (not ,message-number)
-           (user-error "No user message at point")
-         (opencode-api-all-messages (opencode-session-id)
-             ,messages
-           (let ((message (nth ,message-number
-                               (seq-filter (lambda (message)
-                                             (member (alist-get 'type message)
-                                                     '("user" "shell")))
-                                           ,messages))))
-             (unless message
-               (user-error "No user message at point"))
-             (when (equal "shell" (alist-get 'type message))
-               (user-error "Can't do that to a shell command"))
-             (funcall ,continue message)))))))
+(defun opencode--user-message-id-at-point ()
+  "Return the id of the user message of the prompt at or before point.
+Its sent input is marked with it, once the server created the message.
+Signal a `user-error' if there's none, as before the first prompt or at
+the input not sent yet, or if it's a shell command."
+  (pcase-let ((`(,sent . ,id)
+               (save-excursion
+                 (opencode--goto-prompt-input)
+                 (cons (and (< (point) (opencode--session-process-position))
+                            (memq (get-char-property (point) 'field) '(nil input)))
+                       (get-text-property (point) 'opencode-user-message)))))
+    (cond ((eq id 'shell) (user-error "Can't do that to a shell command"))
+          (id)
+          (sent (user-error "No user message at point (not yet sent)"))
+          (t (user-error "No user message at point")))))
 
 (defun opencode-rename-session (&optional session)
   "Rename SESSION. If in a session buffer, rename that session."

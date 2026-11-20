@@ -459,15 +459,25 @@ A shell command isn't a user message."
         (should (equal '("one\n" . "two\n")
                        (opencode--patch-sides (alist-get 'patch diff))))))))
 
+(defun opencode-integration-test--usage (input output)
+  "Return an LLM response part reporting INPUT and OUTPUT tokens used."
+  `(:raw ((id . "usage") (object . "chat.completion.chunk")
+          (choices . [])
+          (usage (prompt_tokens . ,input) (completion_tokens . ,output)
+                 (total_tokens . ,(+ input output))))))
+
 (ert-deftest opencode-integration-sidebar-test ()
-  "The sidebar shows the session's todos and the files changed over all its turns.
-They're shown again when the session is reloaded."
+  "The sidebar shows the session's todos, changes, usage, and the step at point.
+The changes are those of all its turns, and the usage is refetched when a
+step ends.  The times of steps recorded from events are those the server
+records.  They're all the same once the session is reloaded."
   (opencode-test-with-session '(("a.txt" . "one\n"))
     (opencode-test-llm-reply
-     '((:tool "todowrite" ((todos . [((content . "Edit a.txt") (status . "completed"))
+     '((:reasoning "Let me plan")
+       (:tool "todowrite" ((todos . [((content . "Edit a.txt") (status . "completed"))
                                      ((content . "Write b.txt") (status . "pending"))]))))
      '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
-     "Edited."
+     `("Edited." ,(opencode-integration-test--usage 1000 200))
      '((:tool "write" ((path . "b.txt") (content . "new\nfile\n"))))
      "Wrote.")
     (opencode-test-send "Edit it")
@@ -475,148 +485,99 @@ They're shown again when the session is reloaded."
     (let ((session (current-buffer))
           (sidebar (generate-new-buffer " *opencode-sidebar-test*")))
       (unwind-protect
-          (cl-flet ((sidebar-text ()
-                      (with-current-buffer sidebar
-                        (opencode-sidebar--redraw)
-                        (buffer-substring-no-properties (point-min) (point-max)))))
-            (with-current-buffer sidebar
-              (opencode-sidebar-mode))
-            (cl-letf (((symbol-function 'opencode-sidebar--shown-p)
-                       (lambda (buffer) (eq buffer session))))
-              (opencode-sidebar--set-session sidebar session)
-              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
-              (should (string-search "Todo (1 remaining)\n [✓] Edit a.txt\n [ ] Write b.txt\n"
-                                     (sidebar-text)))
-              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
-              (setq opencode-session-todos nil
-                    opencode-sidebar--data nil)
-              (let (loaded)
-                (add-hook 'opencode-session-loaded-functions
-                          (lambda (_id) (setq loaded t)) nil t)
-                (opencode--reload-session)
-                (opencode-test-wait-until loaded))
-              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
-              (should (string-search "Todo (1 remaining)\n" (sidebar-text)))
-              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))))
-        (kill-buffer sidebar)))))
-
-(ert-deftest opencode-integration-sidebar-usage-test ()
-  "The sidebar's usage is the session's, refetched when a step ends."
-  (opencode-test-with-session nil
-    (opencode-test-llm-reply
-     "First."
-     '("Second." (:raw ((id . "usage") (object . "chat.completion.chunk")
-                        (choices . [])
-                        (usage (prompt_tokens . 1000) (completion_tokens . 200)
-                               (total_tokens . 1200))))))
-    (opencode-test-send "One")
-    (let ((session (current-buffer))
-          (sidebar (generate-new-buffer " *opencode-sidebar-test*")))
-      (unwind-protect
-          (cl-flet ((sidebar-text ()
-                      (with-current-buffer sidebar
-                        (opencode-sidebar--redraw)
-                        (buffer-substring-no-properties (point-min) (point-max)))))
-            (with-current-buffer sidebar
-              (opencode-sidebar-mode))
-            (cl-letf (((symbol-function 'opencode-sidebar--shown-p)
-                       (lambda (buffer) (eq buffer session))))
-              (opencode-sidebar--set-session sidebar session)
-              (opencode-test-wait-until (string-search "Usage\n" (sidebar-text)))
-              (opencode-test-send "Two")
-              (opencode-test-wait-until
-               (string-search "Usage\n ↑1k ↓200 🧠0\n" (sidebar-text)))))
-        (kill-buffer sidebar)))))
-
-(ert-deftest opencode-integration-sidebar-activity-test ()
-  "The sidebar shows the agent and activity of the step at point.
-The times of steps recorded from events are those the server records,
-and are the same once the session is reloaded."
-  (opencode-test-with-session '(("a.txt" . "alpha\n"))
-    (opencode-test-llm-reply
-     '((:reasoning "Let me look") (:tool "read" ((path . "a.txt"))))
-     '("It says alpha." (:raw ((id . "usage") (object . "chat.completion.chunk")
-                               (choices . [])
-                               (usage (prompt_tokens . 1000) (completion_tokens . 200)
-                                      (total_tokens . 1200)))))
-     "Second answer.")
-    (opencode-test-send "What's in a.txt?")
-    (opencode-test-send "And now?")
-    (let ((session (current-buffer))
-          (sidebar (generate-new-buffer " *opencode-sidebar-test*"))
-          (live (mapcar (lambda (turn)
-                          (mapcar (lambda (id)
-                                    (cons id (opencode--message-info id)))
-                                  (reverse (opencode--turn-messages turn))))
-                        (reverse opencode--turns))))
-      (unwind-protect
-          (cl-flet ((sidebar-text ()
-                      (with-current-buffer sidebar
-                        (opencode-sidebar--redraw)
-                        (buffer-substring-no-properties (point-min) (point-max))))
-                    (times (info)
-                      (list (plist-get info :created) (plist-get info :first-token)
-                            (plist-get info :streamed) (plist-get info :completed)
-                            (plist-get info :tokens))))
-            ;; the tool call's step and the answer's, then the second answer's
-            (should (equal '(2 1) (mapcar #'length live)))
-            (should (equal '(1 2) (mapcar #'opencode--turn-number (reverse opencode--turns))))
-            (should-not (opencode--running-turn))
-            (pcase-dolist (`(,_id . ,info) (apply #'append live))
-              (should (plist-get info :first-token))
-              (should (plist-get info :streamed))
-              (should (plist-get info :completed)))
-            (let (messages)
+          (cl-flet* ((sidebar-text ()
+                       (with-current-buffer sidebar
+                         (opencode-sidebar--redraw)
+                         (buffer-substring-no-properties (point-min) (point-max))))
+                     (times (id)
+                       (let ((info (opencode--message-info id)))
+                         (list (plist-get info :created) (plist-get info :first-token)
+                               (plist-get info :streamed) (plist-get info :completed)
+                               (plist-get info :tokens))))
+                     (turn-times ()
+                       ;; each turn's steps' ids and times, in order
+                       (mapcar (lambda (turn)
+                                 (mapcar (lambda (id) (cons id (times id)))
+                                         (reverse (opencode--turn-messages turn))))
+                               (reverse opencode--turns))))
+            ;; the steps' times recorded from events are the server's
+            (let ((live (turn-times))
+                  messages)
+              (should (equal '(3 2) (mapcar #'length live)))
+              (should (equal '(1 2) (mapcar #'opencode--turn-number
+                                            (reverse opencode--turns))))
+              (should-not (opencode--running-turn))
+              (pcase-dolist (`(,_id ,created ,first-token ,streamed ,completed ,_tokens)
+                             (apply #'append live))
+                (should (and created first-token streamed completed)))
               (opencode-api-all-messages (opencode-session-id)
                   result
                 (setq messages result))
               (opencode-test-wait-until messages)
-              (pcase-dolist (`(,id . ,info) (apply #'append live))
+              (pcase-dolist (`(,id . ,times) (apply #'append live))
                 (let-alist (seq-find (lambda (message) (equal id (alist-get 'id message)))
                                      messages)
                   (should (equal (list .time.created .time.firstToken .time.streamed
                                        .time.completed .tokens)
-                                 (times info))))))
+                                 times)))))
             (with-current-buffer sidebar
               (opencode-sidebar-mode))
-            (opencode-sidebar--set-session sidebar session)
-            (goto-char (point-min))
-            (search-forward "It says alpha")
-            (should (string-match-p
-                     (rx "Agent\n " (+ nonl) "\n " (+ nonl) "\n " (+ nonl) "\n\n"
-                         "Activity\n turn 1 · " (+ (any "0-9.ms ")) "\n"
-                         " TTFT " (+ (any "0-9.ms ")) " · " (+ digit) " tok/s\n")
-                     (sidebar-text)))
-            ;; the prompt of the second turn is of its step
-            (search-forward "And now?")
-            (should (string-search "Activity\n turn 2 · " (sidebar-text)))
-            (should (equal (car (opencode--turn-messages (car opencode--turns)))
-                           (cdr (opencode--message-at (point)))))
-            ;; so is its prompt string, though point is moved off it after commands
-            (let ((inhibit-field-text-motion t))
-              (should (equal (cons (car opencode--turns)
-                                   (car (opencode--turn-messages (car opencode--turns))))
-                             (opencode--message-at (line-beginning-position)))))
-            ;; before the first prompt is of the first turn
-            (goto-char (point-min))
-            (should (string-search "Activity\n turn 1 · " (sidebar-text)))
-            ;; every turn has the session's status
-            (goto-char (point-max))
-            (should (string-search "· 🚀 idle\n" (sidebar-text)))
-            (search-backward "It says alpha")
-            (should (string-search "· 🚀 idle\n" (sidebar-text)))
-            (let (loaded)
-              (add-hook 'opencode-session-loaded-functions
-                        (lambda (_id) (setq loaded t)) nil t)
-              (opencode--reload-session)
-              (opencode-test-wait-until loaded))
-            (should (equal (mapcar (lambda (turn)
-                                     (mapcar (lambda (step) (times (cdr step))) turn))
-                                   live)
-                           (mapcar (lambda (turn)
-                                     (mapcar (lambda (id) (times (opencode--message-info id)))
-                                             (reverse (opencode--turn-messages turn))))
-                                   (reverse opencode--turns)))))
+            (cl-letf (((symbol-function 'opencode-sidebar--shown-p)
+                       (lambda (buffer) (eq buffer session))))
+              (opencode-sidebar--set-session sidebar session)
+              ;; todos and the changes of all turns
+              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
+              (should (string-search "Todo (1 remaining)\n [✓] Edit a.txt\n [ ] Write b.txt\n"
+                                     (sidebar-text)))
+              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
+              ;; the agent and activity of the step at point
+              (goto-char (point-min))
+              (search-forward "Edited.")
+              (should (string-match-p
+                       (rx "Agent\n " (+ nonl) "\n " (+ nonl) "\n " (+ nonl) "\n\n"
+                           "Activity\n turn 1 · " (+ (any "0-9.ms ")) "\n"
+                           " TTFT " (+ (any "0-9.ms ")) " · " (+ digit) " tok/s\n")
+                       (sidebar-text)))
+              ;; the prompt of the second turn is of its first step
+              (search-forward "Write it")
+              (should (string-search "Activity\n turn 2 · " (sidebar-text)))
+              (let* ((turn (car opencode--turns))
+                     (first-step (car (last (opencode--turn-messages turn)))))
+                (should (equal first-step (cdr (opencode--message-at (point)))))
+                ;; so is its prompt string, though point is moved off it after commands
+                (let ((inhibit-field-text-motion t))
+                  (should (equal (cons turn first-step)
+                                 (opencode--message-at (line-beginning-position))))))
+              ;; before the first prompt is of the first turn
+              (goto-char (point-min))
+              (should (string-search "Activity\n turn 1 · " (sidebar-text)))
+              ;; every turn has the session's status
+              (goto-char (point-max))
+              (should (string-search "· 🚀 idle\n" (sidebar-text)))
+              (search-backward "Edited.")
+              (should (string-search "· 🚀 idle\n" (sidebar-text)))
+              ;; the usage is the session's, refetched when a step ends
+              (should (string-search "Usage\n ↑1k ↓200 🧠0\n" (sidebar-text)))
+              (opencode-test-llm-reply
+               `("Again." ,(opencode-integration-test--usage 1000 200)))
+              (opencode-test-send "Once more")
+              (opencode-test-wait-until
+               (string-search "Usage\n ↑2k ↓400 🧠0\n" (sidebar-text)))
+              ;; all the same once reloaded
+              (let ((live (turn-times))
+                    loaded)
+                (setq opencode-session-todos nil
+                      opencode-sidebar--data nil)
+                (add-hook 'opencode-session-loaded-functions
+                          (lambda (_id) (setq loaded t)) nil t)
+                (opencode--reload-session)
+                (opencode-test-wait-until loaded)
+                (should (equal live (turn-times))))
+              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
+              (should (string-search "Todo (1 remaining)\n" (sidebar-text)))
+              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
+              (opencode-test-wait-until
+               (string-search "Usage\n ↑2k ↓400 🧠0\n" (sidebar-text)))))
         (kill-buffer sidebar)))))
 
 (ert-deftest opencode-integration-kill-session-test ()

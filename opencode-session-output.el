@@ -899,9 +899,19 @@ retried starts anew, forgetting when it was streamed."
   "Return the current time in ms."
   (* 1000 (float-time)))
 
+(defun opencode--turn-prompt-start (turn)
+  "Return where the line of TURN's prompt starts.
+TURN starts after its prompt, which can be invisible, and point moved
+onto it is only moved past it after `post-command-hook'."
+  (save-excursion
+    (goto-char (opencode--turn-start turn))
+    (let ((inhibit-field-text-motion t))
+      (line-beginning-position))))
+
 (defun opencode--turn-at (pos)
-  "Return the turn displayed at POS, or the last one if POS is before them."
-  (or (seq-find (lambda (turn) (<= (opencode--turn-start turn) pos))
+  "Return the turn displayed at POS, or the last one if POS is before them.
+The prompt of a turn is of it."
+  (or (seq-find (lambda (turn) (<= (opencode--turn-prompt-start turn) pos))
                 opencode--turns)
       (car opencode--turns)))
 
@@ -923,9 +933,10 @@ turn is of the last step.  MESSAGE-ID is nil for a turn with no steps yet."
   (when-let* ((turn (opencode--turn-at pos)))
     (let ((start (opencode--turn-start turn)))
       (cons turn
-            (if (< pos start)
+            (if (< pos (opencode--turn-prompt-start turn))
                 (car (opencode--turn-messages turn))
-              (or (opencode--marked-message-before pos start)
+              (or (and (>= pos start)
+                       (opencode--marked-message-before pos start))
                   (car (last (opencode--turn-messages turn)))))))))
 
 (defun opencode--margin-string (face)

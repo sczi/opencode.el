@@ -592,6 +592,11 @@ and are the same once the session is reloaded."
             (should (string-search "Activity\n turn 2 · " (sidebar-text)))
             (should (equal (car (opencode--turn-messages (car opencode--turns)))
                            (cdr (opencode--message-at (point)))))
+            ;; so is its prompt string, though point is moved off it after commands
+            (let ((inhibit-field-text-motion t))
+              (should (equal (cons (car opencode--turns)
+                                   (car (opencode--turn-messages (car opencode--turns))))
+                             (opencode--message-at (line-beginning-position)))))
             ;; every turn has the session's status
             (goto-char (point-max))
             (should (string-search "· 🚀 idle\n" (sidebar-text)))

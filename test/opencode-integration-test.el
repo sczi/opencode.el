@@ -551,9 +551,12 @@ records.  They're all the same once the session is reloaded."
                 (let ((inhibit-field-text-motion t))
                   (should (equal (cons turn first-step)
                                  (opencode--message-at (line-beginning-position))))))
-              ;; before the first prompt is of the first turn
+              ;; before the first prompt is of the first turn's first step
               (goto-char (point-min))
               (should (string-search "Activity\n turn 1 · " (sidebar-text)))
+              (let ((turn (car (last opencode--turns))))
+                (should (equal (cons turn (car (last (opencode--turn-messages turn))))
+                               (opencode--message-at (point)))))
               ;; every turn has the session's status
               (goto-char (point-max))
               (should (string-search "· 🚀 idle\n" (sidebar-text)))

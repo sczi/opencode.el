@@ -953,11 +953,9 @@ first step.  MESSAGE-ID is nil for a turn with no steps yet."
   (when-let* ((turn (opencode--turn-at pos)))
     (let ((start (opencode--turn-start turn)))
       (cons turn
-            (if (< pos (opencode--turn-prompt-start turn))
-                (car (opencode--turn-messages turn))
-              (or (and (>= pos start)
-                       (opencode--marked-message-before pos start))
-                  (car (last (opencode--turn-messages turn)))))))))
+            (or (and (>= pos start)
+                     (opencode--marked-message-before pos start))
+                (car (last (opencode--turn-messages turn))))))))
 
 (defun opencode--margin-string (face)
   "Return a string displaying the margin bar with FACE in the left margin."

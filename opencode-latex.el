@@ -208,29 +208,43 @@ NODE isn't math, like the text between the dollars of two prices."
                                       '(?0 ?1 ?2 ?3 ?4 ?5 ?6 ?7 ?8 ?9))))))
           (cl-list* (string-trim tex) display-p start end))))))
 
+(defvar opencode--latex-query nil
+  "Compiled query for the latex_block nodes of Markdown inlines.")
+
 (defun opencode--latex-nodes (start end)
   "Return the latex_block nodes between START and END.
 Each Markdown inline has its own local parser, so math never spans them."
-  (cl-loop for parser in (treesit-local-parsers-on start end 'markdown-inline)
-           append (mapcar #'cdr (treesit-query-capture
-                                 parser '((latex_block) @math) start end))))
+  (let ((query (or opencode--latex-query
+                   (setq opencode--latex-query
+                         (treesit-query-compile 'markdown-inline
+                                                '((latex_block) @math))))))
+    (cl-loop for parser in (treesit-local-parsers-on start end 'markdown-inline)
+             append (mapcar #'cdr (treesit-query-capture
+                                   parser query start end)))))
 
 (defun opencode--render-latex (start end)
   "Display the math between START and END as images, rendering it if needed.
 Math rendered before that's no longer math is displayed as text again."
   (with-silent-modifications
     ;; Clear whole formulas, which may extend past START and END.
-    (let ((pos start))
+    (let ((pos start)
+          cleared)
       (while (< pos end)
         (let ((next (next-single-property-change pos 'opencode-latex nil end)))
           (when (get-text-property pos 'opencode-latex)
+            (setq cleared t)
             (remove-list-of-text-properties
              (or (previous-single-property-change (1+ pos) 'opencode-latex)
                  (point-min))
              (next-single-property-change pos 'opencode-latex nil (point-max))
              '(display opencode-latex)))
-          (setq pos next))))
-    (when (opencode--latex-available-p)
+          (setq pos next)))
+      ;; Math is delimited by dollars, so without any, and no formula
+      ;; cleared to redisplay, there's no math to find.
+      (unless (or cleared
+                  (save-excursion (goto-char start) (search-forward "$" end t)))
+        (setq end start)))
+    (when (and (< start end) (opencode--latex-available-p))
       (let ((input-start (when-let* ((process (get-buffer-process (current-buffer))))
                            (marker-position (process-mark process)))))
         (dolist (node (opencode--latex-nodes start end))

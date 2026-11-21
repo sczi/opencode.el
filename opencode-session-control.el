@@ -16,7 +16,6 @@
 (require 'opencode-common)
 (require 'opencode-session-output)
 (require 'opencode-sessions)
-(require 'profiler)
 (require 'vtable)
 (require 'xdg)
 
@@ -167,43 +166,6 @@ before acting on more than one session."
   (message "%s archived sessions"
            (if opencode-session-control-show-archived "Showing" "Hiding"))
   (opencode-sessions-redisplay))
-
-(defun opencode--profile-session-loading (session)
-  "Profile loading SESSION, the session at point, with the CPU profiler.
-Kill its buffer if it has one, reopen it, and show the profiler report
-once it is loaded, along with how many redisplays happened before and
-after its messages were replayed."
-  (interactive (list (or (vtable-current-object)
-                         (user-error "No session at point")))
-               opencode-session-control-mode)
-  (let* ((buffer (opencode--session-buffer (alist-get 'id session)))
-         (start (float-time))
-         (redisplays 0)
-         before-replay
-         ;; `pre-redisplay-functions' runs once per window, but this runs
-         ;; once per redisplay.
-         (count-redisplay (lambda (&rest _) (setq redisplays (1+ redisplays))))
-         (mark-replayed (lambda (&rest _)
-                          (setq before-replay (or before-replay redisplays)))))
-    (when (buffer-live-p buffer)
-      (let ((kill-buffer-query-functions nil))
-        (kill-buffer buffer)))
-    (advice-add 'redisplay--pre-redisplay-functions :before count-redisplay)
-    (advice-add 'opencode--replay-session-messages :after mark-replayed)
-    (profiler-reset)
-    (profiler-start 'cpu)
-    (opencode-open-session
-     session
-     :callback (lambda (_session)
-                 (profiler-stop)
-                 (advice-remove 'redisplay--pre-redisplay-functions count-redisplay)
-                 (advice-remove 'opencode--replay-session-messages mark-replayed)
-                 (message "Loaded %s in %.3fs with %d redisplays before replay and %d after"
-                          (opencode--session-title session)
-                          (- (float-time) start)
-                          (or before-replay redisplays)
-                          (- redisplays (or before-replay redisplays)))
-                 (profiler-report)))))
 
 (defvar opencode--session-control-branch-cache (make-hash-table :test #'equal)
   "Cache of git branch per directory for the session control table.

@@ -251,6 +251,12 @@ period is one day, it will also show a table with information about sessions
 active during that day, and clicking on a session will open it. A header at the
 top shows the keybindings you can use to change the time period or information shown.
 
+* Sidebar
+=C-c s= toggles the display of a sidebar with information about the active session
+and the turn at point. =RET= on an MCP in the sidebar will toggle it. You can
+configure what is shown in the sidebar with =opencode-sidebar= and define your own
+sidebar sections with =opencode-sidebar-define-section=.
+
 * Commands
 #+begin_src emacs-lisp :results table :colnames '("Command" "Description") :exports results
 (cl-loop for command in '(opencode opencode-connect opencode-disconnect
@@ -401,6 +407,10 @@ discuss.
   display of images
 - =opencode-render-latex=, =opencode-latex-preamble= and =opencode-latex-scale=
   configure display of =$...$= and =$$...$$= math as images
+- =opencode-sidebar=, =opencode-sidebar-auto=, =opencode-sidebar-width=, =opencode-sidebar-side=,
+  =opencode-sidebar-speed-start=, =opencode-sidebar-updated-after=,
+  =opencode-sidebar-test-file-regexp=, and =opencode-sidebar-doc-extensions=
+  configure the sidebar display
 
 # Local Variables:
 # flycheck-org-lint-disabled-checkers: (invalid-id-link wrong-header-value)

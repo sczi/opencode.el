@@ -912,6 +912,13 @@ retried starts anew, forgetting when it was streamed."
   "Return the current time in ms."
   (* 1000 (float-time)))
 
+(defun opencode--server-now-ms ()
+  "Return the current time in ms on the clock of the current connection's server.
+That's the clock of the times it records, like of turns."
+  (let ((connection (opencode-current-connection)))
+    (- (opencode--now-ms)
+       (if connection (opencode-connection-clock-offset connection) 0))))
+
 (defun opencode--turn-prompt-start (turn)
   "Return where the line of TURN's prompt starts.
 TURN starts after its prompt, which can be invisible, and point moved

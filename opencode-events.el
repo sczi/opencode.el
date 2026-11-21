@@ -46,14 +46,14 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
     "command.updated" "skill.updated")
   "Types of the events to subscribe to.")
 
-(defun opencode--session-finished (session-id &optional interrupted)
-  "Handle the end of SESSION-ID's execution.
+(defun opencode--session-finished (session-id ended &optional interrupted)
+  "Handle the end of SESSION-ID's execution, at ENDED in ms on the server's clock.
 INTERRUPTED means it was interrupted rather than finishing on its own."
   (opencode-session--set-status session-id "idle")
   ;; show it with the status change, so pending input is never left
   ;; without its separator or a prompt
   (opencode--with-session-buffer session-id
-    (opencode--end-turn (opencode--now-ms))
+    (opencode--end-turn ended)
     (opencode--show-prompt)
     (opencode-sidebar-session-changed :diff :branch))
   (opencode--redisplay-session-control-buffers)
@@ -79,8 +79,12 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
   (let ((type (intern (alist-get 'type event)))
         (data (alist-get 'data event))
         ;; in ms, as the server records the times of messages
-        (created (or (alist-get 'created event) (opencode--now-ms))))
+        (created (alist-get 'created event)))
     (opencode--log-event "MESSAGE" event)
+    (if-let* (((numberp created))
+              (connection (opencode-current-connection)))
+        (setf (opencode-connection-clock-offset connection) (- (opencode--now-ms) created))
+      (setq created (opencode--server-now-ms)))
     (let-alist data
       (let ((block-key (list (if (memq type '(session.text.delta session.text.ended))
                                  'text
@@ -104,7 +108,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            (when (equal .item.type "user")
              (opencode--with-session-buffer .sessionID
                (opencode--user-message-enqueued .inboxID))))
-          (session.execution.succeeded (opencode--session-finished .sessionID))
+          (session.execution.succeeded (opencode--session-finished .sessionID created))
           (session.execution.interrupted
            ;; On a real shutdown the drain resumes after the restart, but the
            ;; server also reports any interrupt without a reason this way, like
@@ -112,12 +116,12 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            ;; user interrupted it.
            (if (equal .reason "shutdown")
                (opencode--unless-session-active
-                .sessionID (lambda () (opencode--session-finished .sessionID t)))
+                .sessionID (lambda () (opencode--session-finished .sessionID created t)))
              (opencode-session--display-error .sessionID "Interrupted")
-             (opencode--session-finished .sessionID t)))
+             (opencode--session-finished .sessionID created t)))
           (session.execution.failed
            (opencode-session--display-error .sessionID .error.message)
-           (opencode--session-finished .sessionID))
+           (opencode--session-finished .sessionID created))
           (session.step.started
            (opencode--with-session-buffer .sessionID
              ;; Keys are only unique within a step, so forget the last block.

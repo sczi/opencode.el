@@ -684,7 +684,8 @@ A running turn's time counts up, by redrawing the sidebar every second."
         (insert (format " turn %d · %s\n"
                         (opencode--turn-number turn)
                         (opencode-sidebar--duration
-                         (- (or ended (opencode--now-ms)) (opencode--turn-created turn))
+                         (- (or ended (opencode-sidebar-with-session (opencode--server-now-ms)))
+                            (opencode--turn-created turn))
                          (not ended)))))
       (when-let* ((speed (opencode-sidebar--speed (plist-get step :message))))
         (insert " " speed "\n")))))

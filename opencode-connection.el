@@ -91,6 +91,8 @@ Set with `opencode--set-models'.")
                    :documentation "Hash table of session ids to their buffers.")
   (session-control-buffers nil :documentation "Its session control buffers.
 Some may have been killed.")
+  (clock-offset 0 :documentation "How far ahead of the server's clock ours is, in ms.
+Set from the creation time of each event it sends.")
   (claude-rate-limit 'unfetched
                      :documentation "The latest Claude subscription rate limit info.
 It's nil if there is none.  A cons of the time in seconds it was reported and

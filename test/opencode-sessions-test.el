@@ -1155,6 +1155,24 @@ It resumes after the restart if the session's still active."
       (should (equal opencode-session-status "busy"))
       (should-not (opencode-session-test--at-prompt-p)))))
 
+(ert-deftest opencode-session-event-server-clock-test ()
+  "Turn times are on the server's clock, even when ours is off from it."
+  (with-opencode-session-test-buffer
+    (opencode-session-test--with-stubbed-api nil
+      (setq opencode-buffer-connection opencode-default-connection)
+      (let ((start (- (opencode--now-ms) 3600000)))
+        (opencode--output "request\n\n")
+        (opencode--handle-message
+         `((type . "session.execution.started") (created . ,start)
+           (data . ((sessionID . "session")))))
+        (should (< (abs (- (opencode--server-now-ms) start)) 1000))
+        (opencode--handle-message
+         `((type . "session.execution.succeeded") (created . ,(+ start 5000))
+           (data . ((sessionID . "session")))))
+        (let ((turn (car opencode--turns)))
+          (should (= start (opencode--turn-created turn)))
+          (should (= (+ start 5000) (opencode--turn-ended turn))))))))
+
 (ert-deftest opencode-session-event-selection-test ()
   "Selections made elsewhere are followed, and ours don't disturb local state."
   (with-opencode-session-test-buffer

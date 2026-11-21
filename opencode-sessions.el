@@ -37,6 +37,7 @@
     "C-c y" 'yank-media
     "C-c Y" 'opencode-copy-conversation
     "C-c C-c" 'opencode-abort-session
+    "C-c C-b" 'opencode-background-all-jobs
     "C-c C-p" 'opencode-respond
     "C-c x" 'opencode-kill-session
     "<backtab>" 'backward-button
@@ -1170,6 +1171,18 @@ With prefix ARG, also abort all subagents it spawned, recursively."
         result
       (when (opencode--json-falsy (alist-get 'interrupted result))
         (message "Failed to abort session.")))))
+
+(defun opencode-background-all-jobs ()
+  "Move the current session's blocking jobs to the background.
+This covers running shell commands, subagents, Code Mode scripts and
+image or video generation.  The session's turn carries on while they
+keep running, and it is woken when they finish.  Does nothing if
+there are none."
+  (interactive)
+  (unless opencode-session-id
+    (user-error "Not in an OpenCode session"))
+  (opencode-api-background-session (opencode-session-id)
+      _result))
 
 (defun opencode-compact-session ()
   "Compact the current session."

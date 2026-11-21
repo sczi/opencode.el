@@ -211,6 +211,7 @@ may start with :else HANDLER to handle errors."
  (post fork-session "/api/session/%s/fork")
  (post compact-session "/api/session/%s/compact")
  (post nodata interrupt-session "/api/session/%s/interrupt")
+ (post nodata background-session "/api/session/%s/background")
  (post session-prompt "/api/session/%s/prompt")
  (post session-command "/api/session/%s/command")
  (post session-shell "/api/session/%s/shell")

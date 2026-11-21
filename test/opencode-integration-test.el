@@ -162,6 +162,29 @@ Aborting with a prefix argument also aborts the session's subagents."
                              (opencode-test-llm-user-text
                               (car (last opencode-test-llm-requests))))))))
 
+(ert-deftest opencode-integration-background-all-jobs-test ()
+  "Backgrounding a running shell lets the turn finish while it keeps running."
+  (opencode-test-with-session nil
+    (should (eq (keymap-lookup opencode-session-mode-map "C-c C-b")
+                'opencode-background-all-jobs))
+    (opencode-test-llm-reply
+     '((:tool "shell" ((command . "touch started; while [ ! -e go ]; do sleep 0.1; done; echo went"))))
+     "Started it."
+     "It went.")
+    (let ((since (length opencode-test-events)))
+      (opencode-test-send "Run it" t)
+      (opencode-test-wait-until (file-exists-p "started"))
+      (opencode-background-all-jobs)
+      (opencode-test-wait-finished since))
+    (should (string-search "Started it." (opencode-test-output)))
+    (should-not (string-search "It went." (opencode-test-output)))
+    (let ((since (length opencode-test-events)))
+      (write-region "" nil "go")
+      (opencode-test-wait-until
+       (opencode-test-event-p "session.execution.started" nil since))
+      (opencode-test-wait-finished since))
+    (should (string-search "It went." (opencode-test-output)))))
+
 (ert-deftest opencode-integration-alert-after-background-test ()
   "A session isn't alerted as finished until its background shell finishes."
   (opencode-test-with-session nil

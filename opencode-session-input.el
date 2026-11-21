@@ -456,7 +456,9 @@ line numbers, if it's on the host of the last session's server."
                   (let ((region (buffer-substring-no-properties beg end)))
                     (cons (format "region: %s"
                                   (truncate-string-to-width
-                                   region 24 0 nil (truncate-string-ellipsis)))
+                                   (replace-regexp-in-string
+                                    "[ \t\n\r]+" " " (string-trim region))
+                                   24 0 nil (truncate-string-ellipsis)))
                           region)))))
     (with-last-opencode-session
      (opencode--insert-label name (opencode--text-attachment text name)))))

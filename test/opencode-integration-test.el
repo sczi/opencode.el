@@ -655,5 +655,30 @@ records.  They're all the same once the session is reloaded."
                                 (opencode--turn-start (car opencode--turns))
                                 (point-max)))))))
 
+(ert-deftest opencode-integration-build-go-test ()
+  "`opencode-build-go' switches to the build agent and sends \"go\".
+Pending input is kept, and the plan agent with its settings is saved."
+  (opencode-test-with-session nil
+    (opencode-test-llm-reply "A plan." "Building.")
+    (while (not (equal "plan" (alist-get 'id opencode-session-agent)))
+      (opencode-cycle-session-agent))
+    (setq opencode-session-agent (copy-alist opencode-session-agent))
+    (opencode-test-send "Make a plan")
+    (should (equal "plan" opencode--server-agent))
+    (opencode-test-type "draft")
+    (let ((since (length opencode-test-events))
+          (plan opencode-session-agent))
+      (opencode-build-go)
+      (should (memq plan opencode-session-agents))
+      (opencode-test-wait-finished since))
+    (should (equal "go" (opencode-test-llm-user-text
+                         (car (last opencode-test-llm-requests)))))
+    (should (equal "build" opencode--server-agent))
+    (should (equal "build" (alist-get 'id opencode-session-agent)))
+    (should (string-search "❯ go\n\nBuilding.\n\n❯ " (opencode-test-output)))
+    (should (equal "draft" (buffer-substring-no-properties
+                            (process-mark (get-buffer-process (current-buffer)))
+                            (point-max))))))
+
 (provide 'opencode-integration-test)
 ;;; opencode-integration-test.el ends here

@@ -53,6 +53,7 @@
     "C-c b" 'opencode-btw
     "C-c B" 'opencode-add-buffer-dwim
     "C-c m" 'opencode-select-model
+    "C-c g" 'opencode-build-go
     "M-<tab>" 'opencode-cycle-variant
     ;; only bind in terminals that can't receive M-<tab>
     "C-M-i" '(menu-item "" opencode-cycle-variant

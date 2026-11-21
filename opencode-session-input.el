@@ -43,22 +43,33 @@ Buffer local so we can configure models and variants per agent per session.")
 AGENTS defaults to the server's."
   (seq-find #'opencode--selectable-agent-p (or agents (opencode--agents))))
 
+(defun opencode--session-agent-position ()
+  "Return the position of the current agent in `opencode-session-agents'."
+  (when-let* ((id (alist-get 'id opencode-session-agent)))
+    (cl-position-if (lambda (agent)
+                      (equal id (alist-get 'id agent)))
+                    opencode-session-agents)))
+
+(defun opencode--switch-session-agent (agent)
+  "Make AGENT, an element of `opencode-session-agents', the session's agent.
+The current agent, with its model and variant for this session, is saved
+back into `opencode-session-agents' first."
+  (when-let* ((pos (opencode--session-agent-position)))
+    (setcar (nthcdr pos opencode-session-agents) opencode-session-agent))
+  (setq opencode-session-agent agent)
+  (force-mode-line-update))
+
 (defun opencode-cycle-session-agent ()
   "Switch to the next agent in `opencode-session-agents'."
   (interactive)
-  (let* ((id (alist-get 'id opencode-session-agent))
-         (agents opencode-session-agents)
-         (pos (and id (cl-position-if
-                       (lambda (agent)
-                         (string= id (alist-get 'id agent)))
-                       agents))))
-    (when pos
-      (setcar (nthcdr pos agents) opencode-session-agent)
-      (when-let* ((next (seq-find
-                         #'opencode--selectable-agent-p
-                         (append (nthcdr (1+ pos) agents)
-                                 (seq-take agents (1+ pos))))))
-        (setq opencode-session-agent next))))
+  (let ((agents opencode-session-agents)
+        (pos (opencode--session-agent-position)))
+    (when-let* ((pos)
+                (next (seq-find
+                       #'opencode--selectable-agent-p
+                       (append (nthcdr (1+ pos) agents)
+                               (seq-take agents (1+ pos))))))
+      (opencode--switch-session-agent next)))
   (force-mode-line-update))
 
 (defun opencode--model-ref (model)
@@ -650,7 +661,8 @@ Preserve any pending input context while sending STRING as a plain prompt."
             (save-excursion
               (goto-char prompt-start)
               (setq start (point))
-              (insert string)
+              ;; Like `comint-send-input', the newline is only in the buffer
+              (insert string "\n")
               (setq end (point))))
           (set-marker (process-mark process) end)
           (set-marker comint-last-input-start start)
@@ -661,6 +673,18 @@ Preserve any pending input context while sending STRING as a plain prompt."
       (goto-char original-point)
       (set-marker pending-prompt nil)
       (set-marker original-point nil))))
+
+(defun opencode-build-go ()
+  "Switch this session to the build agent and send the prompt \"go\".
+For carrying out a plan made with the plan agent.  Pending input is kept."
+  (interactive nil opencode-session-mode)
+  (let ((build (seq-find (lambda (agent)
+                           (equal "build" (alist-get 'id agent)))
+                         opencode-session-agents)))
+    (unless build
+      (user-error "No build agent in this session"))
+    (opencode--switch-session-agent build)
+    (opencode-session--send-synthetic-input "go")))
 
 (provide 'opencode-session-input)
 ;;; opencode-session-input.el ends here

@@ -5,6 +5,12 @@ A list of known bugs in other packages affecting users of opencode.el. For bugs
 in opencode.el itself, see the issue tracker.
 
 * unfixed
+** diff ignores changes after main agent has returned, and been woken up again by a background session
+This is both the diff reported in the sidebar, and what is sent to
+=opencode-files-finished-editing-functions=. This is not really possibly to
+support well on our end, it affects all opencode UI and needs [[https://github.com/anomalyco/opencode/issues/63507][#63507]] upstream to fix.
+recommended to stay on opencode 2.2.7 for now, as the switch to background only
+subagents causes [[https://github.com/anomalyco/opencode/issues/64073][other issues]]
 ** [[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=82218][occasional permission prompts despite adding project directory to safe-local-variable-directories]]
 if you configure =opencode-project-files-finished-editing-functions= in
 =.dir-locals.el=, and add to =safe-local-variable-directories= you still get

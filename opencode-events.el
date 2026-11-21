@@ -40,6 +40,7 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
     "session.retry.scheduled" "session.shell.ended"
     "session.compaction.started" "session.compaction.ended"
     "session.compaction.failed" "session.inbox.enqueued"
+    "session.inbox.delivered" "session.inbox.cancelled"
     "permission.asked" "permission.replied"
     "form.created" "form.replied" "form.cancelled" "tui.toast.show"
     "mcp.status.changed"
@@ -104,10 +105,18 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
              (opencode-sidebar-session-changed))
            (opencode--redisplay-session-control-buffers))
           (session.inbox.enqueued
-           ;; the user message of a slash command, created by the server
-           (when (equal .item.type "user")
-             (opencode--with-session-buffer .sessionID
-               (opencode--user-message-enqueued .inboxID))))
+           (opencode--with-session-buffer .sessionID
+             (if (equal .item.delivery "queue")
+                 (opencode--add-queued-input .inboxID .item)
+               ;; the user message of a slash command, created by the server
+               (when (equal .item.type "user")
+                 (opencode--user-message-enqueued .inboxID)))))
+          (session.inbox.delivered
+           (opencode--with-session-buffer .sessionID
+             (opencode--inbox-delivered .inboxID)))
+          (session.inbox.cancelled
+           (opencode--with-session-buffer .sessionID
+             (opencode--inbox-cancelled .inboxID)))
           (session.execution.succeeded (opencode--session-finished .sessionID created))
           (session.execution.interrupted
            ;; On a real shutdown the drain resumes after the restart, but the

@@ -162,6 +162,73 @@ Aborting with a prefix argument also aborts the session's subagents."
                              (opencode-test-llm-user-text
                               (car (last opencode-test-llm-requests))))))))
 
+(defun opencode-test--pending-display ()
+  "Return the text displayed before the pending input, or nil."
+  (when opencode--pending-input-overlay
+    (substring-no-properties
+     (or (overlay-get opencode--pending-input-overlay 'before-string) ""))))
+
+(ert-deftest opencode-integration-queue-input-test ()
+  "Queued input is sent while idle, and pending while a turn runs.
+It's delivered after the turn, with input typed meanwhile kept after it,
+and shown pending again when the session is reloaded."
+  (opencode-test-with-session nil
+    (should (eq (keymap-lookup opencode-session-mode-map "C-<return>")
+                'opencode-queue-input))
+    (opencode-test-llm-reply "Answer"
+                             '("First answer" (:hold)) "Queued answer"
+                             '("Third answer" (:hold)) "Fourth answer")
+    ;; while idle
+    (let ((since (length opencode-test-events)))
+      (opencode-test-type "Hello")
+      (opencode-queue-input)
+      (opencode-test-wait-finished since))
+    (should-not opencode--queued-inputs)
+    (should (string-match-p "\\`❯ Hello\n\nAnswer\n\n❯ \\'" (opencode-test-output)))
+    ;; while a turn runs
+    (let ((since (length opencode-test-events)))
+      (opencode-test-send "First" t)
+      (opencode-test-wait-for-output "First answer")
+      (opencode-test-type "Second")
+      (opencode-queue-input)
+      (should-not (string-search "Second" (buffer-string)))
+      (should (string-search "Second  (queued)" (opencode-test--pending-display)))
+      (opencode-test-wait-until (opencode--queued-id (car opencode--queued-inputs)))
+      (opencode-test-type "draft")
+      (backward-char 2)
+      (opencode-test-llm-finish (opencode-test-llm-wait-held))
+      (opencode-test-wait-finished since))
+    (should-not opencode--queued-inputs)
+    (should (string-suffix-p "❯ First\n\nFirst answer\n\n❯ Second\n\nQueued answer\n\n❯ "
+                             (opencode-test-output)))
+    ;; point stays in the pending input
+    (should (looking-at-p "ft\\'"))
+    (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
+      (should (equal "draft" (buffer-substring-no-properties pmark (point-max))))
+      (delete-region pmark (point-max)))
+    (should (stringp (get-text-property (opencode-test--search "Second")
+                                        'opencode-user-message)))
+    (should (equal "Second" (opencode-test-llm-user-text
+                             (car (last opencode-test-llm-requests)))))
+    ;; the queued input is of the turn it was delivered to, as when replayed
+    (should (length= opencode--turns 2))
+    ;; reloaded while it's queued
+    (let ((since (length opencode-test-events)))
+      (opencode-test-send "Third" t)
+      (opencode-test-wait-for-output "Third answer")
+      (opencode-test-type "Fourth")
+      (opencode-queue-input)
+      (opencode-test-wait-until (opencode--queued-id (car opencode--queued-inputs)))
+      (opencode--reload-session)
+      (should-not opencode--queued-inputs)
+      (opencode-test-wait-until opencode--queued-inputs)
+      (should (equal "Fourth" (opencode--queued-text (car opencode--queued-inputs))))
+      (should (string-search "Fourth  (queued)" (opencode-test--pending-display)))
+      (opencode-test-llm-finish (opencode-test-llm-wait-held))
+      (opencode-test-wait-finished since))
+    (should-not opencode--queued-inputs)
+    (should (string-suffix-p "❯ Fourth\n\nFourth answer\n\n❯ " (opencode-test-output)))))
+
 (ert-deftest opencode-integration-background-all-jobs-test ()
   "Backgrounding a running shell lets the turn finish while it keeps running."
   (opencode-test-with-session nil
@@ -689,6 +756,7 @@ Pending input is kept, and the plan agent with its settings is saved."
     (opencode-test-send "Make a plan")
     (should (equal "plan" opencode--server-agent))
     (opencode-test-type "draft")
+    (backward-char 1)
     (let ((since (length opencode-test-events))
           (plan opencode-session-agent))
       (opencode-build-go)
@@ -701,7 +769,9 @@ Pending input is kept, and the plan agent with its settings is saved."
     (should (string-search "❯ go\n\nBuilding.\n\n❯ " (opencode-test-output)))
     (should (equal "draft" (buffer-substring-no-properties
                             (process-mark (get-buffer-process (current-buffer)))
-                            (point-max))))))
+                            (point-max))))
+    (should (looking-at-p "t\\'"))
+    (should (equal "go" (ring-ref comint-input-ring 0)))))
 
 (provide 'opencode-integration-test)
 ;;; opencode-integration-test.el ends here

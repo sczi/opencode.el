@@ -577,22 +577,32 @@ records a message, so that's only done if it differs."
                (not (get-text-property start 'opencode-user-message)))
       (opencode--mark-input start comint-last-input-end id))))
 
+(defvar opencode--input-delivery nil
+  "How input being sent is delivered to a running turn, or nil to steer it.
+`queue' is bound by `opencode-queue-input'.")
+
 (defun opencode--send-input (_proc string)
   "Send STRING as input to current opencode session.
-The input is marked as of its user message once the server creates it."
-  (opencode--highlight-input)
-  (opencode--output "\n")
+The input is marked as of its user message once the server creates it.
+With `opencode--input-delivery' while busy, a prompt is queued instead."
   ;; STRING is the buffer text of the input, where each label is one character
   (pcase-let* ((start (marker-position comint-last-input-start))
                (end (+ start (length string)))
+               (queue (and opencode--input-delivery
+                           (equal opencode-session-status "busy")
+                           (not (string-match-p "\\`[/!]" string))))
                (`(,string . ,extra-parts) (opencode--input-text-and-parts start end))
                (temp-files opencode--temp-files))
+    (unless queue
+      (opencode--highlight-input)
+      (opencode--output "\n"))
     (setf opencode--temp-files nil)
     ;; Resent input, as put back by a revert or yanked, still has the
     ;; id of its old message, until this one's is known.
     (with-silent-modifications
       (remove-list-of-text-properties start end '(opencode-user-message)))
     (cond
+     (queue (opencode--queue-input start end string extra-parts temp-files))
      ((string-prefix-p "/" string)
       (let ((space-pos (seq-position string ?\s)))
         (opencode--sync-agent-and-model
@@ -636,6 +646,103 @@ The input is marked as of its user message once the server creates it."
            (opencode--insert-skills
             (map-nested-elt inbox-item '(payload skills))))))))))
 
+(defun opencode--queue-input (start end text parts temp-files)
+  "Queue the input sent from START to END, until the running turn ends.
+TEXT is the input with the label PARTS.  It's taken out of the buffer,
+and shown pending until it's delivered.  TEMP-FILES are deleted once
+it's sent.  It gets its id once it's enqueued, see
+`opencode--add-queued-input'."
+  (let ((queued (opencode--queued-create :text (opencode--input-string start end)
+                                         :sent text))
+        (delivery opencode--input-delivery))
+    ;; the sent input and its newline
+    (let ((inhibit-read-only t))
+      (delete-region start comint-last-input-end))
+    (setq opencode--queued-inputs (append opencode--queued-inputs (list queued)))
+    (opencode--update-pending-input)
+    (opencode--sync-agent-and-model
+     (lambda ()
+       (opencode-api-session-prompt (opencode-session-id)
+           `(,@(opencode--prompt-body text parts) (delivery . ,delivery))
+           _inbox-item
+         :else (lambda (error-msg)
+                 (opencode--delete-temp-files temp-files)
+                 (setq opencode--queued-inputs (delq queued opencode--queued-inputs))
+                 (opencode--insert-error error-msg)
+                 (unless (equal opencode-session-status "busy")
+                   (opencode--show-prompt)))
+         (opencode--delete-temp-files temp-files))))))
+
+(defun opencode--input-string (start end)
+  "Return the input from START to END, keeping the properties of its labels.
+Those comint gives sent input are removed."
+  (let ((input (buffer-substring start end)))
+    (remove-list-of-text-properties
+     0 (length input) '(read-only help-echo mouse-face) input)
+    input))
+
+(defun opencode-queue-input ()
+  "Send input like `opencode-send-input', but queued while a turn runs.
+Input sent while a turn runs steers it, the model sees it after its next
+step.  Queued input waits until the turn finishes, then starts the next.
+It's shown pending until then.  Slash and shell commands aren't queued."
+  (interactive nil opencode-session-mode)
+  (let ((opencode--input-delivery 'queue))
+    (opencode-send-input)))
+
+(defun opencode--queued-input (id)
+  "Return the input of `opencode--queued-inputs' with inbox item ID, or nil."
+  (seq-find (lambda (queued) (equal id (opencode--queued-id queued)))
+            opencode--queued-inputs))
+
+(defun opencode--add-queued-input (id item)
+  "Show the inbox ITEM with ID pending, if it's a queued user message.
+If it's the input this buffer sent, which awaits its id, it gets ID.
+The server's response to sending it can come after it's delivered,
+the event of it being enqueued can't."
+  (let-alist item
+    (when (and (equal .type "user") (equal .delivery "queue")
+               (not (opencode--queued-input id)))
+      (if-let* ((queued (seq-find (lambda (queued)
+                                    (and (null (opencode--queued-id queued))
+                                         (equal .payload.text (opencode--queued-sent queued))))
+                                  opencode--queued-inputs)))
+          (setf (opencode--queued-id queued) id
+                (opencode--queued-skills queued) .payload.skills)
+        (setq opencode--queued-inputs
+              (append opencode--queued-inputs
+                      (list (opencode--queued-create :id id :text .payload.text
+                                                     :skills .payload.skills))))
+        (opencode--update-pending-input)))))
+
+(defun opencode--inbox-delivered (id)
+  "Insert the queued input of inbox item ID, if it is one, as it was delivered."
+  (when-let* ((queued (opencode--queued-input id)))
+    (opencode--insert-queued-input queued)))
+
+(defun opencode--inbox-cancelled (id)
+  "Forget the queued input of inbox item ID, as it was cancelled."
+  (when-let* ((queued (opencode--queued-input id)))
+    (setq opencode--queued-inputs (delq queued opencode--queued-inputs))
+    (opencode--update-pending-input)))
+
+(defun opencode--forget-queued-inputs ()
+  "Forget the queued input the server returned, as the session's loaded anew.
+It's replayed if it's been delivered, else fetched once it's loaded."
+  (setq opencode--queued-inputs (seq-remove #'opencode--queued-id
+                                            opencode--queued-inputs)))
+
+(defun opencode--fetch-queued-inputs (session-id)
+  "Show SESSION-ID's queued input that's still to be delivered.
+Events are lost when not connected, so this is the only way to see it."
+  (opencode-api-session-inbox (session-id)
+      items
+    (opencode--with-session-buffer session-id
+      (dolist (item items)
+        (opencode--add-queued-input (alist-get 'id item) item)))))
+
+(add-hook 'opencode-session-loaded-functions #'opencode--fetch-queued-inputs)
+
 (defun opencode-send-input ()
   "Send input like `comint-send-input', unless it is empty.
 The input is the current input, or with point before it, the old input
@@ -649,32 +756,12 @@ The input is the current input, or with point before it, the old input
       (comint-send-input))))
 
 (defun opencode-session--send-synthetic-input (string)
-  "Send STRING to the current opencode session.
-Preserve any pending input context while sending STRING as a plain prompt."
-  (let* ((process (get-buffer-process (current-buffer)))
-         (pending-prompt (copy-marker (process-mark process) t))
-         (original-point (copy-marker (point) t))
-         (prompt-start (opencode--session-process-position))
-         start
-         end)
-    (unwind-protect
-        (progn
-          (let ((inhibit-read-only t))
-            (save-excursion
-              (goto-char prompt-start)
-              (setq start (point))
-              ;; Like `comint-send-input', the newline is only in the buffer
-              (insert string "\n")
-              (setq end (point))))
-          (set-marker (process-mark process) end)
-          (set-marker comint-last-input-start start)
-          (set-marker comint-last-input-end end)
-          (let ((opencode--temp-files nil))
-            (opencode--send-input process string)))
-      (set-marker (process-mark process) pending-prompt)
-      (goto-char original-point)
-      (set-marker pending-prompt nil)
-      (set-marker original-point nil))))
+  "Send STRING to the current opencode session as if typed and sent.
+Pending input is kept, with the temporary files of its labels."
+  (opencode--with-pending-input-aside
+    (let ((opencode--temp-files nil))
+      (insert string)
+      (comint-send-input))))
 
 (defun opencode-build-go ()
   "Switch this session to the build agent and send the prompt \"go\".

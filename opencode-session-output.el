@@ -114,7 +114,20 @@ Their blocks had output in the replay, without this client seeing any delta.")
   "(START . END) markers of the last prompt `opencode--show-prompt' showed.")
 
 (defvar-local opencode--pending-input-overlay nil
-  "Overlay separating input typed while busy from the output before it.")
+  "Overlay separating input typed while busy from the output before it.
+It also shows `opencode--queued-inputs'.")
+
+(cl-defstruct (opencode--queued (:constructor opencode--queued-create)
+                                (:copier nil))
+  "Input queued until the session's running work finishes."
+  (id nil :documentation "The id of its inbox item, nil until it's enqueued.")
+  (text nil :documentation "The input to show, which can have labels.")
+  (sent nil :documentation "The text sent from this buffer, if it was.")
+  (skills nil :documentation "The skills loaded with it."))
+
+(defvar-local opencode--queued-inputs nil
+  "The `opencode--queued' input of the session, oldest first.
+It's shown pending, and inserted when it's delivered.")
 
 (defvar-local opencode-last-response-start nil
   "Position of the start of the latest assistant text block.")
@@ -641,7 +654,9 @@ input, which commands acting on the input line, like evil's `dd', expect."
                                  (copy-marker (opencode--session-process-position)))))
   (opencode--add-margin (car comint-last-prompt)
                         (cdr comint-last-prompt)
-                        'opencode-request-margin-highlight))
+                        'opencode-request-margin-highlight)
+  ;; queued input shows before the prompt
+  (opencode--update-pending-input))
 
 (defun opencode--prompt-showing-p ()
   "Return non-nil if the last prompt is showing, with no input sent since."
@@ -667,23 +682,50 @@ Pending input after it stays, and a later prompt goes before it."
             comint-last-prompt nil)
       (opencode--update-pending-input))))
 
+(defun opencode--queued-inputs-string ()
+  "Return the display of `opencode--queued-inputs', a line for each."
+  (let ((margin (opencode--margin-string 'opencode-request-margin-highlight)))
+    (mapconcat (lambda (queued)
+                 (let ((text (copy-sequence (opencode--queued-text queued))))
+                   (add-face-text-property 0 (length text) 'shadow t text)
+                   (concat margin
+                           (string-replace "\n" (concat "\n" margin) text)
+                           (propertize "  (queued)" 'face '(shadow italic))
+                           "\n")))
+               opencode--queued-inputs)))
+
 (defun opencode--update-pending-input (&rest _)
   "Separate input typed while busy from the output before it.
-Display a blank line and the request margin before the pending input."
+Display a blank line and the request margin before the pending input.
+`opencode--queued-inputs' are shown before it, or before the prompt if
+one is showing."
   (let* ((proc (get-buffer-process (current-buffer)))
-         (pmark (and proc (marker-position (process-mark proc)))))
-    (if (and pmark
-             (equal opencode-session-status "busy")
-             (< pmark (point-max)))
+         (pmark (and proc (marker-position (process-mark proc))))
+         (busy (equal opencode-session-status "busy"))
+         (start (cond ((not pmark) nil)
+                      ((and opencode--queued-inputs (opencode--prompt-showing-p))
+                       ;; The newline of the blank line before the invisible
+                       ;; prompt, which would hide a string before it.
+                       (let ((prompt (car opencode--prompt)))
+                         (if (eq (char-before prompt) ?\n) (1- prompt) prompt)))
+                      ((and busy (or opencode--queued-inputs (< pmark (point-max))))
+                       pmark))))
+    (if start
         (progn
           (if opencode--pending-input-overlay
-              (move-overlay opencode--pending-input-overlay pmark (point-max))
+              (move-overlay opencode--pending-input-overlay start (point-max))
             (setq opencode--pending-input-overlay
-                  (make-overlay pmark (point-max) nil t t)))
+                  (make-overlay start (point-max) nil t t)))
           (overlay-put opencode--pending-input-overlay 'before-string
-                       (concat (opencode--block-spacing pmark)
-                               (opencode--margin-string
-                                'opencode-request-margin-highlight))))
+                       (let ((queued (opencode--queued-inputs-string)))
+                         (if (/= start pmark)
+                             ;; before the blank line, and the prompt has
+                             ;; its own margin
+                             (concat "\n" queued)
+                           (concat (opencode--block-spacing pmark)
+                                   (and opencode--queued-inputs (concat queued "\n"))
+                                   (opencode--margin-string
+                                    'opencode-request-margin-highlight))))))
       (when opencode--pending-input-overlay
         (delete-overlay opencode--pending-input-overlay)
         (setq opencode--pending-input-overlay nil)))))
@@ -985,6 +1027,45 @@ ID is `shell' for a shell command."
     (comint-send-input))
   (opencode--mark-input comint-last-input-start comint-last-input-end id)
   (opencode--output "\n"))
+
+(defmacro opencode--with-pending-input-aside (&rest body)
+  "Run BODY at the end of the buffer with the pending input taken out.
+The pending input is put back after what BODY inserts, with point where
+it was in it.  Taking it out and back isn't undoable, as output going
+before it isn't."
+  (declare (indent 0) (debug t))
+  (let ((pmark (make-symbol "pmark"))
+        (pending (make-symbol "pending"))
+        (offset (make-symbol "offset")))
+    `(let* ((,pmark (process-mark (get-buffer-process (current-buffer))))
+            (,pending (buffer-substring ,pmark (point-max)))
+            (,offset (and (>= (point) ,pmark) (- (point) ,pmark)))
+            (inhibit-read-only t))
+       (let ((buffer-undo-list t))
+         (delete-region ,pmark (point-max)))
+       (unwind-protect
+           (save-excursion
+             (goto-char (point-max))
+             ,@body)
+         (let ((buffer-undo-list t))
+           (save-excursion
+             (goto-char (point-max))
+             (insert ,pending)))
+         (when ,offset
+           (goto-char (+ ,pmark ,offset)))
+         (opencode--update-pending-input)))))
+
+(defun opencode--insert-queued-input (queued)
+  "Insert the input QUEUED, an element of `opencode--queued-inputs'.
+It's inserted as if just sent, before any pending input, as its user
+message was just delivered to the running turn."
+  (setq opencode--queued-inputs (delq queued opencode--queued-inputs))
+  (opencode--with-pending-input-aside
+    ;; it's in the history since it was first sent
+    (let ((comint-input-filter #'ignore))
+      (opencode--replay-input (opencode--queued-text queued)
+                              (opencode--queued-id queued)))
+    (opencode--insert-skills (opencode--queued-skills queued))))
 
 (defun opencode--replay-user-request (message)
   "Replay a user request MESSAGE.

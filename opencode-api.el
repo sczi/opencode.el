@@ -215,6 +215,7 @@ may start with :else HANDLER to handle errors."
  (post session-prompt "/api/session/%s/prompt")
  (post session-command "/api/session/%s/command")
  (post session-shell "/api/session/%s/shell")
+ (session-inbox "/api/session/%s/inbox")
  (post session-model "/api/session/%s/model")
  (post session-agent "/api/session/%s/agent")
  (post session-generate "/api/session/%s/generate")

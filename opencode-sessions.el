@@ -43,6 +43,7 @@
     "<backtab>" 'backward-button
     "TAB" 'opencode--tab-dispatch
     "RET" 'opencode-send-input
+    "C-<return>" 'opencode-queue-input
     "C-c R" 'opencode-rename-session
     "C-c n" 'opencode-new-session
     "C-c l" 'opencode-select-session
@@ -80,7 +81,8 @@
     "@" 'opencode-add-mention
     "/" 'opencode-insert-slash-command)
   (evil-define-key* 'normal opencode-session-mode-map
-    (kbd "RET") 'opencode-send-input))
+    (kbd "RET") 'opencode-send-input
+    (kbd "C-<return>") 'opencode-queue-input))
 
 (defvar-local opencode-session-pending-permission nil
   "Pending permission requests for this session buffer, as a list of plists.
@@ -1025,6 +1027,7 @@ It keeps its properties, which hold the parts of its labels."
       (remove-overlays)
       (erase-buffer))
     (setq opencode--current-block nil)
+    (opencode--forget-queued-inputs)
     (opencode-insert-logo)
     (opencode-api-session (opencode-session-id)
         session
@@ -1052,11 +1055,8 @@ It keeps its properties, which hold the parts of its labels."
   "Return the input of the prompt before point, keeping its labels."
   (save-excursion
     (opencode--goto-prompt-input)
-    (let ((input (buffer-substring (point) (field-end))))
-      (remove-list-of-text-properties
-       0 (length input) '(read-only help-echo mouse-face) input)
-      ;; replayed input ends with a newline
-      (string-trim-right input "\n+"))))
+    ;; replayed input ends with a newline
+    (string-trim-right (opencode--input-string (point) (field-end)) "\n+")))
 
 (defun opencode--imenu-create-index ()
   "Return an imenu index of the sent user messages in the session buffer.

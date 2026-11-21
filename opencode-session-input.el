@@ -575,6 +575,10 @@ The input is marked as of its user message once the server creates it."
                (`(,string . ,extra-parts) (opencode--input-text-and-parts start end))
                (temp-files opencode--temp-files))
     (setf opencode--temp-files nil)
+    ;; Resent input, as put back by a revert or yanked, still has the
+    ;; id of its old message, until this one's is known.
+    (with-silent-modifications
+      (remove-list-of-text-properties start end '(opencode-user-message)))
     (cond
      ((string-prefix-p "/" string)
       (let ((space-pos (seq-position string ?\s)))

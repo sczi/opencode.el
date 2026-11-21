@@ -355,7 +355,7 @@ References in reasoning aren't buttons."
 (ert-deftest opencode-session-user-message-id-at-point-test ()
   "The user message at point is the one its prompt's sent input is marked with.
 Shell commands, sent input not yet given its id, and the unsent input
-have none."
+have none, even if copied from sent input, as after a revert."
   (with-opencode-session-test-buffer
     (opencode--replay-input "hi" "msg_1")
     (opencode--output "reply\n\n")
@@ -363,7 +363,7 @@ have none."
     (opencode--output "file\n\n")
     (opencode--replay-input "pending")
     (opencode--show-prompt)
-    (insert "unsent")
+    (insert (propertize "unsent" 'opencode-user-message "msg_1"))
     (cl-flet ((id-at (text)
                 (goto-char (point-min))
                 (search-forward text)

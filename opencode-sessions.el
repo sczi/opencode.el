@@ -1082,13 +1082,17 @@ Emacs gives it the field `input'.  Input at the prompt isn't sent yet."
   "Return the id of the user message of the prompt at or before point.
 Its sent input is marked with it, once the server created the message.
 Signal a `user-error' if there's none, as before the first prompt or at
-the input not sent yet, or if it's a shell command."
+the input not sent yet, or if it's a shell command.  Input not sent yet
+may still have the id of a message it was copied from, as after a revert."
   (pcase-let ((`(,sent . ,id)
                (save-excursion
                  (opencode--goto-prompt-input)
-                 (cons (and (< (point) (opencode--session-process-position))
-                            (memq (get-char-property (point) 'field) '(nil input)))
-                       (get-text-property (point) 'opencode-user-message)))))
+                 (let ((sent (and (< (point) (opencode--session-process-position))
+                                  (memq (get-char-property (point) 'field)
+                                        '(nil input)))))
+                   (cons sent
+                         (and sent
+                              (get-text-property (point) 'opencode-user-message)))))))
     (cond ((eq id 'shell) (user-error "Can't do that to a shell command"))
           (id)
           (sent (user-error "No user message at point (not yet sent)"))

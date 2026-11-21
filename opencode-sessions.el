@@ -669,6 +669,14 @@ from a session buffer whatever languages the project uses."
                        (or (fboundp symbol) (boundp symbol) (facep symbol)))
           :exclusive 'no)))
 
+(defun opencode--skip-doom-protect-output (process &rest _)
+  "Return non-nil if PROCESS's buffer is an opencode session.
+Then skip Doom's advice that marks all output since the last input
+read-only, on every output, which is quadratic while streaming."
+  (when-let* ((buffer (process-buffer process)))
+    (with-current-buffer buffer
+      (derived-mode-p 'opencode-session-mode))))
+
 (define-derived-mode opencode-session-mode comint-mode "OpenCode"
   "Major mode for interacting with an opencode session."
   (setq-local comint-use-prompt-regexp nil
@@ -682,6 +690,10 @@ from a session buffer whatever languages the project uses."
               (seq-difference comint-output-filter-functions
                               '(comint-watch-for-password-prompt
                                 ansi-color-process-output)))
+  ;; Doom defines it `after! comint', which has run as we derive from comint.
+  (when (fboundp 'comint-output-filter@protect-output)
+    (advice-add 'comint-output-filter@protect-output :before-until
+                #'opencode--skip-doom-protect-output))
   (setq-local markdown-ts-hide-markup t
               markdown-ts-enable-code-block-context-mode nil
               markdown-ts-enable-table-mode nil)

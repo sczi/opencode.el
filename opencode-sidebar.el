@@ -222,10 +222,6 @@ It's found once per redraw."
           (t (setcar cache t)
              (setcdr cache (opencode-sidebar-with-session (opencode-sidebar--step)))))))
 
-(defvar-local opencode-sidebar--visibility nil
-  "Alist of the sidebar's section types and whether they're hidden.
-It's kept across redraws, and for every session the sidebar shows.")
-
 (defvar-local opencode-sidebar--data nil
   "Plist of what a session buffer's sidebar shows, fetched from the server.
 The keys are :diff, :mcps and :branch.  A missing key hasn't been fetched.")
@@ -234,17 +230,10 @@ The keys are :diff, :mcps and :branch.  A missing key hasn't been fetched.")
   "Timer of the pending redraw of the sidebars.")
 
 (defvar opencode-sidebar--tick-timer nil
-  "Timer redrawing the sidebars showing a running turn, as its time counts up.")
+  "Timer ticking every second while a sidebar is visible, see `opencode-sidebar--tick'.")
 
-(defvar-local opencode-sidebar--running nil
-  "Non-nil if the sidebar shows a running turn.")
-
-(defvar opencode-sidebar--age-timer nil
-  "Timer redrawing the sidebars of idle sessions, as their last update ages.")
-
-(defvar-local opencode-sidebar--aging nil
-  "Non-nil if the sidebar shows an idle session, with when it was last updated.
-Whether that's shown depends on how long ago it was, so it's redrawn as it ages.")
+(defvar opencode-sidebar--ticks 0
+  "Seconds `opencode-sidebar--tick-timer' has ticked, modulo 60.")
 
 (defvar-local opencode-sidebar--step nil
   "The (TURN . MESSAGE-ID) at point in a session buffer, last time it was looked up.")
@@ -316,7 +305,6 @@ FRAME defaults to the selected frame."
   (with-selected-frame (or frame (selected-frame))
     (let ((sidebar (opencode-sidebar--buffer nil t)))
       (opencode-sidebar--display sidebar)
-      (set-frame-parameter nil 'opencode-sidebar-shown t)
       (opencode-sidebar--set-session sidebar session t))))
 
 ;;;###autoload
@@ -327,29 +315,27 @@ shows the selected one, or else one in another window."
   (interactive)
   (if-let* ((window (opencode-sidebar--window)))
       (progn
-        (set-frame-parameter nil 'opencode-sidebar-dismissed t)
         (set-frame-parameter nil 'opencode-sidebar-suspended nil)
-        (set-frame-parameter nil 'opencode-sidebar-shown nil)
         (delete-window window))
     (if-let* ((session (opencode-sidebar--visible-session)))
-        (progn
-          (set-frame-parameter nil 'opencode-sidebar-dismissed nil)
-          (opencode-sidebar--show session))
+        (opencode-sidebar--show session)
       (message "No session visible in this frame"))))
 
 (defun opencode-sidebar--auto-p ()
-  "Return non-nil if the selected frame's sidebar should show on its own."
+  "Return non-nil if the selected frame's sidebar should show on its own.
+Only in a frame that hasn't had a sidebar yet: once it has, its buffer
+not being in a window means it was closed."
   (and opencode-sidebar-auto
-       (not (frame-parameter nil 'opencode-sidebar-dismissed))
+       (not (opencode-sidebar--buffer))
        (or (not (numberp opencode-sidebar-auto))
            (>= (frame-width) opencode-sidebar-auto))))
 
 (defun opencode-sidebar--follow (&optional frame)
   "Make FRAME's sidebar show the session buffer visible in it.
 See `opencode-sidebar--visible-session'.  With none visible, the sidebar
-is hidden until one is.  If its window was closed some other way, like
-with `quit-window', it's dismissed as if by `opencode-sidebar-toggle'.
-For `window-selection-change-functions' and
+is suspended, hidden until one is.  If it was closed, with
+`opencode-sidebar-toggle' or otherwise, like with `quit-window', it stays
+closed.  For `window-selection-change-functions' and
 `window-buffer-change-functions', which also run for frames that aren't
 selected."
   (let* ((frame (if (framep frame) frame (selected-frame)))
@@ -361,10 +347,6 @@ selected."
              (delete-window window)))
           (window
            (opencode-sidebar--set-session (window-buffer window) session))
-          ((and (frame-parameter frame 'opencode-sidebar-shown)
-                (not (frame-parameter frame 'opencode-sidebar-suspended)))
-           (set-frame-parameter frame 'opencode-sidebar-shown nil)
-           (set-frame-parameter frame 'opencode-sidebar-dismissed t))
           ((or (frame-parameter frame 'opencode-sidebar-suspended)
                (and (eq frame (selected-frame))
                     (opencode-sidebar--auto-p)))
@@ -581,18 +563,6 @@ For a session buffer's `post-command-hook'."
     (with-current-buffer sidebar
       (opencode-sidebar--redraw))))
 
-(defun opencode-sidebar--remember-visibility ()
-  "Record whether each of the sidebar's sections is hidden."
-  (when magit-root-section
-    (dolist (section (oref magit-root-section children))
-      (setf (alist-get (oref section type) opencode-sidebar--visibility)
-            (if (oref section hidden) 'hide 'show)))))
-
-(defun opencode-sidebar--section-visibility (section)
-  "Return the recorded visibility of SECTION.
-For `magit-section-set-visibility-hook'."
-  (alist-get (oref section type) opencode-sidebar--visibility))
-
 (defun opencode-sidebar--heading (heading &optional summary)
   "Insert HEADING of a section, followed by a SUMMARY in the `shadow' face."
   (magit-insert-heading
@@ -711,7 +681,6 @@ A running turn's time counts up, by redrawing the sidebar every second."
     (when-let* ((turn (plist-get step :turn)))
       (opencode-sidebar--heading "Activity")
       (let ((ended (opencode--turn-ended turn)))
-        (setq opencode-sidebar--running (not ended))
         (insert (format " turn %d · %s\n"
                         (opencode--turn-number turn)
                         (opencode-sidebar--duration
@@ -801,12 +770,12 @@ And for claude-agent sessions, the Claude rate limit windows."
 (opencode-sidebar-define-section changes
   "Insert how many files the session changed, from `opencode-sidebar--diffstat'.
 Test files are counted apart from other files.  If only one kind changed,
-it's counted on the heading's line, else each on its own line under it."
+it's counted on the heading's line, else each on its own line under it,
+so the section's collapsible."
   :fetch ((:diff . opencode-sidebar--fetch-diff))
   (pcase (opencode-sidebar-data :diff)
     (`(,files ,additions ,deletions ,tests ,test-additions ,test-deletions)
      (when (plusp (+ files tests))
-       (insert (propertize "Changed" 'font-lock-face 'opencode-sidebar-heading))
        (let ((lines (append (when (plusp files)
                               (list (opencode-sidebar--diffstat-line
                                      files "file" additions deletions)))
@@ -814,8 +783,11 @@ it's counted on the heading's line, else each on its own line under it."
                               (list (opencode-sidebar--diffstat-line
                                      tests "test" test-additions test-deletions))))))
          (if (cdr lines)
-             (insert "\n" (mapconcat (lambda (line) (concat " " line)) lines))
-           (insert " " (car lines))))))))
+             (progn
+               (opencode-sidebar--heading "Changed")
+               (insert (mapconcat (lambda (line) (concat " " line)) lines)))
+           (insert (propertize "Changed" 'font-lock-face 'opencode-sidebar-heading)
+                   " " (car lines))))))))
 
 (defun opencode-sidebar--mcp-status (mcp)
   "Return the status of MCP, a Mcp.Server."
@@ -850,7 +822,8 @@ it's counted on the heading's line, else each on its own line under it."
                      (ngettext "error" "errors" errors))))
     (dolist (mcp mcps)
       (let ((status (opencode-sidebar--mcp-status mcp)))
-        (magit-insert-section section (opencode-sidebar-mcp-server mcp)
+        (magit-insert-section section
+          (opencode-sidebar-mcp-server mcp)
           (oset section keymap 'opencode-sidebar-mcp-map)
           (opencode-sidebar--item
            (propertize "●" 'font-lock-face (opencode-sidebar--mcp-face status))
@@ -873,12 +846,10 @@ it's counted on the heading's line, else each on its own line under it."
 (defun opencode-sidebar--updated (session status)
   "Return when SESSION, a Session.Info, was last updated, or nil to not show it.
 It's shown once it's `opencode-sidebar-updated-after' minutes ago, unless
-STATUS is busy, as SESSION is only refetched once a step ends.  Sets
-`opencode-sidebar--aging' if it may be shown later."
+STATUS is busy, as SESSION is only refetched once a step ends."
   (when-let* ((opencode-sidebar-updated-after)
               ((not (equal status "busy")))
               (seconds (opencode--time-ago session 'updated)))
-    (setq opencode-sidebar--aging t)
     (when (>= seconds (* 60 opencode-sidebar-updated-after))
       (concat "updated " (opencode--format-time-ago seconds) " ago"))))
 
@@ -928,41 +899,44 @@ that's empty, it's inserted in its place."
    (lambda ()
      (let ((inhibit-read-only t)
            (session opencode-sidebar--session))
-       (opencode-sidebar--remember-visibility)
        (erase-buffer)
-       (setq magit-root-section nil
-             opencode-sidebar--running nil
-             opencode-sidebar--aging nil)
+       ;; the old `magit-root-section' isn't cleared, and magit-section's
+       ;; visibility cache keeps collapsed sections collapsed
        (magit-insert-section (opencode-sidebar-root)
          (if (buffer-live-p session)
              (opencode-sidebar--insert session)
-           (insert (propertize "No session" 'font-lock-face 'shadow) "\n"))))))
-  (opencode-sidebar--update-tick))
+           (insert (propertize "No session" 'font-lock-face 'shadow) "\n")))
+       ;; hide the sections marked hidden, like `magit-refresh-buffer' does by
+       ;; showing the root, but so only they get a visibility indicator
+       (magit-map-sections
+        (lambda (section)
+          (when (and (oref section hidden) (not (eq section magit-root-section)))
+            (magit-section-hide section)))))))
+  (when (and (get-buffer-window (current-buffer) t)
+             (not (timerp opencode-sidebar--tick-timer)))
+    (setq opencode-sidebar--ticks 0
+          opencode-sidebar--tick-timer (run-with-timer 1 1 #'opencode-sidebar--tick))))
 
-(defmacro opencode-sidebar--update-timer (timer flag seconds)
-  "Run TIMER every SECONDS while a visible sidebar has FLAG set, redrawing those."
-  `(let ((needed (seq-some (lambda (sidebar) (buffer-local-value ',flag sidebar))
-                           (opencode-sidebar--sidebars))))
-     (cond ((and needed (not (timerp ,timer)))
-            (setq ,timer (run-with-timer ,seconds ,seconds
-                                         #'opencode-sidebar--redraw-flagged ',flag)))
-           ((and (not needed) (timerp ,timer))
-            (cancel-timer ,timer)
-            (setq ,timer nil)))))
+(defun opencode-sidebar--running-p ()
+  "Return non-nil if the current sidebar shows a running turn, the step at point's."
+  (and (buffer-live-p opencode-sidebar--session)
+       (with-current-buffer opencode-sidebar--session
+         (when-let* ((turn (car (opencode--message-at (point)))))
+           (not (opencode--turn-ended turn))))))
 
-(defun opencode-sidebar--update-tick ()
-  "Redraw the visible sidebars showing a running turn every second, if any.
-And those showing when an idle session was last updated, every minute."
-  (opencode-sidebar--update-timer opencode-sidebar--tick-timer opencode-sidebar--running 1)
-  (opencode-sidebar--update-timer opencode-sidebar--age-timer opencode-sidebar--aging 60))
-
-(defun opencode-sidebar--redraw-flagged (flag)
-  "Redraw the visible sidebars with the buffer-local variable FLAG set."
-  (dolist (sidebar (opencode-sidebar--sidebars))
-    (when (buffer-local-value flag sidebar)
-      (with-current-buffer sidebar
-        (opencode-sidebar--redraw))))
-  (opencode-sidebar--update-tick))
+(defun opencode-sidebar--tick ()
+  "Redraw the visible sidebars showing a running turn, as its time counts up.
+And every minute all of them, as when idle sessions were last updated ages.
+Run every second while a sidebar is visible."
+  (if-let* ((sidebars (opencode-sidebar--sidebars)))
+      (progn
+        (setq opencode-sidebar--ticks (% (1+ opencode-sidebar--ticks) 60))
+        (dolist (sidebar sidebars)
+          (with-current-buffer sidebar
+            (when (or (zerop opencode-sidebar--ticks) (opencode-sidebar--running-p))
+              (opencode-sidebar--redraw)))))
+    (cancel-timer opencode-sidebar--tick-timer)
+    (setq opencode-sidebar--tick-timer nil)))
 
 ;;; Mode
 
@@ -1010,9 +984,7 @@ And those showing when an idle session was last updated, every minute."
   (setq-local truncate-lines nil
               word-wrap t
               mode-line-format nil
-              cursor-in-non-selected-windows nil)
-  (add-hook 'magit-section-set-visibility-hook
-            #'opencode-sidebar--section-visibility nil t))
+              cursor-in-non-selected-windows nil))
 
 (provide 'opencode-sidebar)
 ;;; opencode-sidebar.el ends here

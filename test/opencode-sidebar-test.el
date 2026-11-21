@@ -126,8 +126,12 @@ if they're in a test directory."
                     (substring text start (string-search "\n\n" text start))))))
       (should (equal "Changed\n 2 files +30 -4\n 1 test +5 -1"
                      (changes '(("a.el" 10 4) ("b.el" 20 0) ("test/a-test.el" 5 1)))))
+      ;; collapsible, with its lines under its heading
+      (should (magit-section-content-p (opencode-sidebar-test--section-at "Changed")))
       (should (equal "Changed 1 file +10 -4"
                      (changes '(("a.el" 10 4)))))
+      ;; with nothing under its heading to collapse
+      (should-not (magit-section-content-p (opencode-sidebar-test--section-at "Changed")))
       (should (equal "Changed 2 tests +7 -1"
                      (changes '(("test/a-test.el" 5 1) ("test/b-test.el" 2 0)))))
       (should-not (changes nil)))))
@@ -162,10 +166,8 @@ if they're in a test directory."
       (should (eq 'shadow (get-text-property (pos-bol 2) 'font-lock-face)))
       ;; redrawn every minute, so it's shown once it's long enough ago
       (should (equal "" (updated-line 5)))
-      (should opencode-sidebar--aging)
       ;; the session is stale while it's busy
       (should (equal "" (updated-line 30 "busy")))
-      (should-not opencode-sidebar--aging)
       (let ((opencode-sidebar-updated-after nil))
         (should (equal "" (updated-line 30))))
       (let ((opencode-sidebar-updated-after 60))
@@ -244,7 +246,7 @@ With no step yet, the session's selected agent is shown."
     (should (string-match-p (rx "Agent\n Build · ⏳ busy\n prov\n m1\n\n"
                                 "Activity\n turn 1 · 3s\n\n")
                             (opencode-sidebar-test--step-sections)))
-    (should opencode-sidebar--running)
+    (should (opencode-sidebar--running-p))
     (with-current-buffer session
       (opencode--add-message "a1" "plan" '((id . "m2") (providerID . "prov"))
                              (opencode--now-ms)))
@@ -321,16 +323,35 @@ With no step yet, the session's selected agent is shown."
 (ert-deftest opencode-sidebar-visibility-test ()
   "A collapsed section stays collapsed on redraw, and for other sessions."
   (opencode-sidebar-test--with-sidebar
-    (magit-section-hide (opencode-sidebar-test--section-at "Todo"))
-    (opencode-sidebar--redraw)
-    (should (oref (opencode-sidebar-test--section-at "Todo") hidden))
-    (should-not (oref (opencode-sidebar-test--section-at "MCP") hidden))
-    (with-temp-buffer
-      (let ((other (current-buffer)))
-        (opencode-sidebar-test--fill-session)
-        (opencode-sidebar--set-session sidebar other)
-        (with-current-buffer sidebar
-          (should (oref (opencode-sidebar-test--section-at "Todo") hidden)))))))
+    (cl-flet ((invisible (text)
+                (save-excursion
+                  (goto-char (point-min))
+                  (search-forward text)
+                  (invisible-p (match-beginning 0))))
+              (indicator (heading)
+                (let ((start (oref (opencode-sidebar-test--section-at heading) start)))
+                  (seq-some (lambda (overlay) (overlay-get overlay 'magit-vis-indicator))
+                            (overlays-in start (save-excursion
+                                                 (goto-char start)
+                                                 (pos-eol)))))))
+      ;; in the margin, so it'd be drawn on expanded sections too
+      (setq-local magit-section-visibility-indicators '((?> . ?v) (?> . ?v)))
+      (magit-section-hide (opencode-sidebar-test--section-at "Todo"))
+      (opencode-sidebar--redraw)
+      (should (oref (opencode-sidebar-test--section-at "Todo") hidden))
+      (should (invisible "[✓] done"))
+      (should (indicator "Todo"))
+      (should-not (oref (opencode-sidebar-test--section-at "MCP") hidden))
+      (should-not (invisible "docs connected"))
+      ;; only sections the user folded get an indicator
+      (should-not (indicator "MCP"))
+      (with-temp-buffer
+        (let ((other (current-buffer)))
+          (opencode-sidebar-test--fill-session)
+          (opencode-sidebar--set-session sidebar other)
+          (with-current-buffer sidebar
+            (should (oref (opencode-sidebar-test--section-at "Todo") hidden))
+            (should (invisible "[✓] done"))))))))
 
 (ert-deftest opencode-sidebar-killed-session-test ()
   "The sidebar of a killed session buffer says there's no session."
@@ -379,9 +400,7 @@ which would take precedence over the sidebar's side window action."
        (when-let* ((buffer (opencode-sidebar--buffer)))
          (kill-buffer buffer))
        (set-frame-parameter nil 'opencode-sidebar nil)
-       (set-frame-parameter nil 'opencode-sidebar-dismissed nil)
-       (set-frame-parameter nil 'opencode-sidebar-suspended nil)
-       (set-frame-parameter nil 'opencode-sidebar-shown nil))))
+       (set-frame-parameter nil 'opencode-sidebar-suspended nil))))
 
 (ert-deftest opencode-sidebar-toggle-test ()
   "Toggling shows the session's sidebar in a side window, then hides it."
@@ -400,7 +419,32 @@ which would take precedence over the sidebar's side window action."
               (should (string-prefix-p "Session title\n" (opencode-sidebar-test--text)))))
           (opencode-sidebar-toggle)
           (should-not (opencode-sidebar--window))
-          (should (frame-parameter nil 'opencode-sidebar-dismissed)))))))
+          ;; dismissed: its buffer's kept, out of a window
+          (should (opencode-sidebar--buffer))
+          (let ((opencode-sidebar-auto t))
+            (should-not (opencode-sidebar--auto-p))))))))
+
+(ert-deftest opencode-sidebar-tick-test ()
+  "The tick timer runs while a sidebar is visible, and stops once none is."
+  (opencode-sidebar-test--with-frame-state
+    (with-opencode-session-test-buffer
+      (opencode-sidebar-test--fill-session)
+      ;; apart from the timer and sidebars of any other frames
+      (let ((opencode-sidebar--tick-timer nil)
+            (frame (selected-frame)))
+        (cl-letf (((symbol-function 'frame-list) (lambda () (list frame))))
+          (unwind-protect
+              (save-window-excursion
+                (switch-to-buffer (current-buffer))
+                (opencode-sidebar-toggle)
+                (should (timerp opencode-sidebar--tick-timer))
+                (opencode-sidebar--tick)
+                (should (timerp opencode-sidebar--tick-timer))
+                (opencode-sidebar-toggle)
+                (opencode-sidebar--tick)
+                (should-not opencode-sidebar--tick-timer))
+            (when (timerp opencode-sidebar--tick-timer)
+              (cancel-timer opencode-sidebar--tick-timer))))))))
 
 (ert-deftest opencode-sidebar-toggle-no-session-test ()
   "Toggling with no session visible in the frame doesn't show the sidebar."
@@ -496,7 +540,7 @@ So `opencode-sidebar-auto' doesn't show it again right away."
           (quit-window nil (opencode-sidebar--window))
           (opencode-sidebar--follow (selected-frame))
           (should-not (opencode-sidebar--window))
-          (should (frame-parameter nil 'opencode-sidebar-dismissed))
+          (should-not (opencode-sidebar--auto-p))
           (opencode-sidebar--follow (selected-frame))
           (should-not (opencode-sidebar--window))
           ;; the toggle shows it again, and then it follows

@@ -1068,7 +1068,9 @@ Emacs gives it the field `input'.  Input at the prompt isn't sent yet."
     (nreverse index)))
 
 (defun opencode--truncate-to-prompt (start text)
-  "Delete from START to the end of the buffer, then prompt with TEXT as input."
+  "Delete from START to the end of the buffer, then prompt with TEXT as input.
+The turns displayed there are forgotten."
+  (opencode--forget-turns-from start)
   (let ((inhibit-read-only t))
     (remove-overlays start (point-max))
     (delete-region start (point-max)))

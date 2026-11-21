@@ -359,18 +359,28 @@ A denied tool isn't run."
     (opencode-test-llm-reply
      "First answer."
      '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
-     "Edited.")
+     "Edited."
+     "Answered again.")
     (opencode-test-send "Hello")
     (opencode-test-send "Edit it")
     (should (equal "two\n" (opencode-integration-test--file "a.txt")))
-    (goto-char (opencode-test--search "Edit it"))
-    (opencode-revert-message)
-    (opencode-test-wait-until (equal "one\n" (opencode-integration-test--file "a.txt")))
-    (opencode-test-wait-until (not (string-search "Edited." (opencode-test-output))))
-    (should (equal "❯ Hello\n\nFirst answer.\n\n❯ " (opencode-test-output)))
-    (should (equal "Edit it" (buffer-substring-no-properties
-                              (process-mark (get-buffer-process (current-buffer)))
-                              (point-max))))))
+    (let ((first (opencode--turn-messages (cadr opencode--turns)))
+          (reverted (opencode--turn-messages (car opencode--turns))))
+      (goto-char (opencode-test--search "Edit it"))
+      (opencode-revert-message)
+      (opencode-test-wait-until (equal "one\n" (opencode-integration-test--file "a.txt")))
+      (opencode-test-wait-until (not (string-search "Edited." (opencode-test-output))))
+      (should (equal "❯ Hello\n\nFirst answer.\n\n❯ " (opencode-test-output)))
+      (should (equal "Edit it" (buffer-substring-no-properties
+                                (process-mark (get-buffer-process (current-buffer)))
+                                (point-max))))
+      ;; the reverted turn and its messages are forgotten
+      (should (equal 1 (length opencode--turns)))
+      (should-not (seq-some #'opencode--message-info reverted))
+      (should (equal (length first) (hash-table-count opencode--messages)))
+      ;; so the turn resent is numbered after the one left
+      (opencode-test-send "")
+      (should (equal 2 (opencode--turn-number (car opencode--turns)))))))
 
 (ert-deftest opencode-integration-user-message-id-test ()
   "Sent prompts and slash commands are of their user messages, as when replayed.

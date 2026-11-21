@@ -836,6 +836,19 @@ Return the plist of the call, from `opencode--tool-calls'."
         opencode--messages nil
         opencode--output-message nil))
 
+(defun opencode--forget-turns-from (pos)
+  "Forget the turns starting at or after POS, and the messages of their steps.
+As when their text is deleted by a revert."
+  (while (and opencode--turns
+              (>= (opencode--turn-start (car opencode--turns)) pos))
+    (let ((turn (pop opencode--turns)))
+      (dolist (id (opencode--turn-messages turn))
+        (when (equal id opencode--output-message)
+          (setq opencode--output-message nil))
+        (when opencode--messages
+          (remhash id opencode--messages)))
+      (set-marker (opencode--turn-start turn) nil))))
+
 (defun opencode--message-info (id)
   "Return the plist about the displayed assistant message ID, or nil."
   (and opencode--messages (gethash id opencode--messages)))

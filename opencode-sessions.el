@@ -1206,12 +1206,12 @@ It's shown pending until then.  Slash and shell commands aren't queued."
 
 (cl-defun opencode-open-session (session &key callback)
   "Open comint based shell for SESSION.
-Returns the buffer.  SESSION is on the current connection's server, or on
-that of its `opencode-connection' if it has one.
-If CALLBACK is given, it will be called with the session after it is initialized.
-If SESSION's directory no longer exists, offer to move it back to its
-project's directory, see `opencode--offer-relocation'.  It's opened once
-moved, or if already open, its buffer follows it."
+SESSION is on the current connection's server, or on that of its
+`opencode-connection' if it has one.  If CALLBACK is given, it will be called
+with the session after it is initialized.  If SESSION's directory no longer
+exists, offer to move it back to its project's directory, see
+`opencode--offer-relocation'.  It's opened once moved, or if already open, its
+buffer follows it."
   (opencode--with-connection-of session
     (let-alist session
       (let* ((connection (opencode--conn))

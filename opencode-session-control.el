@@ -87,12 +87,19 @@ before acting on more than one session."
         (when (> count 1)
           (message "%s %d sessions" verb count))))))
 
+(defun opencode--session-control-open-session (session)
+  "Open SESSION as the server has it now.
+The table's copy may be stale, like from before a revert was staged."
+  (opencode-api-session ((alist-get 'id session))
+      current
+    (opencode-open-session current)))
+
 (defvar opencode-session-control-mode-map
   (define-keymap
     ;; needed here instead of vtable :actions, as emojify-mode keymap was taking
     ;; precedence over vtable's keymap
-    "RET" (opencode--session-control-command #'opencode-open-session)
-    "o" (opencode--session-control-command #'opencode-open-session)
+    "RET" (opencode--session-control-command #'opencode--session-control-open-session)
+    "o" (opencode--session-control-command #'opencode--session-control-open-session)
     "R" (opencode--session-control-command #'opencode-rename-session)
     "x" (opencode--session-control-command #'opencode-kill-session
                                            "Deleted" "Delete")

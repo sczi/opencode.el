@@ -465,6 +465,8 @@ Those whose standard value can't be computed are left out, as are
             (opencode-alerted-sessions nil)
             (opencode-last-model nil)
             (opencode-last-session-buffer nil)
+            ;; Tests reloading a session see all its turns, unless they bind it.
+            (opencode-session-initial-turns nil)
             (opencode--tool-calls (make-hash-table :test 'equal))
             (opencode-forms--queue nil)
             (opencode-forms--current nil)

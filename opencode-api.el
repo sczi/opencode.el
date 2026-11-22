@@ -101,10 +101,12 @@ and ELSE run with as their current connection too."
      (when body-p
        (list :body (json-encode body))))))
 
-(defun opencode-api--fetch-all-pages (path then &optional else)
+(defun opencode-api--fetch-all-pages (path then &optional else done-p)
   "Call THEN with the items of every page of PATH, in the server's order.
 PATH must already have a query string.
-Call ELSE with the error message if given and a request fails."
+Call ELSE with the error message if given and a request fails.
+If DONE-P is given, it's called with each page's items in turn, and once
+it returns non-nil the pages after are not fetched."
   (let (pages)
     (cl-labels ((fetch (cursor)
                   (opencode-api--request
@@ -117,7 +119,8 @@ Call ELSE with the error message if given and a request fails."
                            (let ((page (alist-get 'data result))
                                  (next (map-nested-elt result '(cursor next))))
                              (push page pages)
-                             (if (and page (not (opencode--json-falsy next)))
+                             (if (and page (not (opencode--json-falsy next))
+                                      (not (and done-p (funcall done-p page))))
                                  (fetch next)
                                (funcall then (apply #'append (nreverse pages)))))))))
       (fetch nil))))
@@ -130,6 +133,18 @@ Call ELSE with the error message if given and a request fails."
    (format "/api/session/%s/message?limit=200" session-id)
    (lambda (messages) (funcall then (reverse messages)))
    else))
+
+(defun opencode-api--fetch-recent-messages (session-id done-p then &optional else)
+  "Call THEN with SESSION-ID's most recent messages, oldest first.
+The server returns them newest first, a page at a time.  DONE-P is called
+with each page's messages, newest first, and once it returns non-nil no
+older pages are fetched.  THEN gets the messages of all pages fetched.
+Call ELSE with the error message if given and a request fails."
+  (opencode-api--fetch-all-pages
+   (format "/api/session/%s/message?limit=50" session-id)
+   (lambda (messages) (funcall then (reverse messages)))
+   else
+   done-p))
 
 (defun opencode-api--fetch-all-sessions (project-id include-subagents then
                                                     &optional include-archived)

@@ -988,6 +988,21 @@ Keep their text properties if PROPERTIES is non-nil."
     (should (opencode-session-test--error-face-p "It broke"))
     (should (opencode-session-test--error-face-p "Interrupted"))))
 
+(ert-deftest opencode-session-replay-point-elsewhere-test ()
+  "Replayed input goes after the prompt even if point is in earlier output.
+Point can be left behind when reloading after clicking the older
+messages button."
+  (with-opencode-session-test-buffer
+    (opencode--output "logo\n\n")
+    (goto-char (point-min))
+    (opencode--replay-session-messages
+     '(((id . "msg_1") (type . "user") (text . "hello"))))
+    (should (string-prefix-p "logo\n\n" (buffer-string)))
+    (goto-char (point-min))
+    (should (search-forward "❯ hello" nil t))
+    (should (equal "msg_1" (get-text-property (1- (point))
+                                              'opencode-user-message)))))
+
 (ert-deftest opencode-session-replay-undo-test ()
   "Replay isn't recorded for undo, even if output resets the undo list.
 Resetting it made `combine-change-calls' warn that it was truncated."
@@ -1566,6 +1581,7 @@ Switching agent always records a message, and each switch is a round trip."
   (with-opencode-session-test-buffer
     (let ((opencode-session-agents '(((id . "build") (name . "Build"))
                                      ((id . "plan") (name . "Plan"))))
+          (opencode-session-initial-turns nil)
           (opencode-default-connection
            (opencode--make-connection
             :name 'test
@@ -2060,6 +2076,53 @@ MENUS collects their selections.  Timers run immediately."
         (setq result messages)))
     (should (equal '("1" "2" "3") (mapcar (lambda (m) (alist-get 'id m)) result)))
     (should (equal "/api/session/session/message?limit=200&cursor=a%3Db" (car paths)))))
+
+(ert-deftest opencode-recent-turns-test ()
+  "Keep messages from the last turns' user messages, not counting reverted ones."
+  (let* ((messages '(((id . "msg_1") (type . "user"))
+                     ((id . "msg_2") (type . "assistant"))
+                     ((id . "msg_3") (type . "idle"))
+                     ((id . "msg_4") (type . "shell"))
+                     ((id . "msg_5") (type . "user"))
+                     ((id . "msg_6") (type . "assistant"))
+                     ;; steering the last turn starts a new one here
+                     ((id . "msg_7") (type . "user"))
+                     ((id . "msg_8") (type . "assistant"))))
+         (ids (lambda (result)
+                (cons (mapcar (lambda (m) (alist-get 'id m)) (car result))
+                      (mapcar (lambda (m) (alist-get 'id m)) (cdr result))))))
+    (should (equal '(("msg_7" "msg_8") "msg_1" "msg_2" "msg_3" "msg_4" "msg_5" "msg_6")
+                   (funcall ids (opencode--recent-turns messages 1))))
+    (should (equal '(("msg_5" "msg_6" "msg_7" "msg_8") "msg_1" "msg_2" "msg_3" "msg_4")
+                   (funcall ids (opencode--recent-turns messages 2))))
+    ;; no more turns than asked for, so nothing is left out
+    (should (equal (cons (mapcar (lambda (m) (alist-get 'id m)) messages) nil)
+                   (funcall ids (opencode--recent-turns messages 3))))
+    (should (equal '(nil) (opencode--recent-turns nil 1)))
+    ;; the revert staged from msg_7 hides it, so the last turn is msg_5's
+    (should (equal '(("msg_5" "msg_6" "msg_7" "msg_8") "msg_1" "msg_2" "msg_3" "msg_4")
+                   (funcall ids (opencode--recent-turns messages 1 "msg_7"))))))
+
+(ert-deftest opencode-replay-recent-turn-test ()
+  "A last turn replayed without earlier messages isn't taken for a legacy one.
+Its steering input is of the running turn, as the earlier messages have
+idle markers.  The button loads the older messages."
+  (with-opencode-session-test-buffer
+    (let ((earlier '(((id . "msg_1") (type . "user") (text . "first"))
+                     ((id . "msg_2") (type . "idle") (time . ((created . 1)))))))
+      (opencode--insert-older-messages-button)
+      (opencode--replay-session-messages
+       '(((id . "msg_3") (type . "user") (text . "second") (time . ((created . 2))))
+         ((id . "msg_4") (type . "user") (text . "steer") (time . ((created . 3)))))
+       nil earlier)
+      (should (length= opencode--turns 1))
+      (should-not (string-search "first" (buffer-string)))
+      (goto-char (point-min))
+      (let (loaded)
+        (cl-letf (((symbol-function 'opencode-load-older-messages)
+                   (lambda () (setq loaded t))))
+          (push-button (point)))
+        (should loaded)))))
 
 (defvar doom-switch-buffer-hook)
 

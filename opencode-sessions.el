@@ -898,43 +898,132 @@ then only sees the conversation up to the response in progress."
 Each function receives the SESSION-ID.  Events are lost when not
 connected, so this is where to fetch what is pending for the session.")
 
+(defcustom opencode-session-initial-turns 1
+  "How many of its last turns a session shows when it's opened, or nil for all.
+A turn starts at a user message.  When older ones are left out, a button
+at the start of the buffer loads them, see `opencode-load-older-messages'."
+  :type '(choice (const :tag "All" nil) natnum)
+  :group 'opencode)
+
+(defvar-local opencode--show-older-messages nil
+  "Non-nil if the session buffer shows all messages, not only its last turns.
+Set by `opencode-load-older-messages', it's kept when the session is reloaded.")
+
+(defvar-local opencode--older-messages-hidden nil
+  "Non-nil if older messages of the session aren't displayed.
+Turns are then numbered from the first displayed, so their numbers aren't shown.")
+
+(defun opencode--turn-start-message-p (message revert-message-id)
+  "Return non-nil if MESSAGE is a user message, so starts a turn.
+Not if it's from REVERT-MESSAGE-ID on, which have a staged revert."
+  (and (equal "user" (alist-get 'type message))
+       (not (and revert-message-id
+                 (not (string< (alist-get 'id message) revert-message-id))))))
+
+(defun opencode--recent-turns (messages turns &optional revert-message-id)
+  "Return (SHOWN . EARLIER), MESSAGES from the TURNS th last user message on.
+MESSAGES are oldest first, and EARLIER those before SHOWN.  User messages
+from REVERT-MESSAGE-ID on have a staged revert, so don't count.  If there
+are no more than TURNS user messages, all are SHOWN."
+  (let* ((users (cl-loop for message in messages
+                         for index from 0
+                         when (opencode--turn-start-message-p message revert-message-id)
+                         collect index))
+         (start (if (> (length users) turns)
+                    ;; none when TURNS is 0
+                    (or (nth (- (length users) turns) users) (length messages))
+                  0)))
+    (cons (nthcdr start messages) (seq-take messages start))))
+
+(defun opencode--fetch-session-messages (session-id revert-message-id then)
+  "Call THEN with the messages of SESSION-ID to display, and earlier ones.
+THEN gets lists SHOWN and EARLIER, oldest first.  Only the last
+`opencode-session-initial-turns' are shown, unless the buffer shows
+older messages.  EARLIER are those fetched that aren't, which are only
+some of the older messages.  REVERT-MESSAGE-ID is as for
+`opencode--recent-turns'."
+  (let ((turns opencode-session-initial-turns))
+    (if (or (not turns) opencode--show-older-messages)
+        (opencode-api--fetch-all-messages
+         session-id (lambda (messages) (funcall then messages nil)))
+      (let ((users 0))
+        (opencode-api--fetch-recent-messages
+         session-id
+         ;; one user message more than shown, so it's known if there are older
+         (lambda (page)
+           (cl-incf users (seq-count (lambda (message)
+                                       (opencode--turn-start-message-p
+                                        message revert-message-id))
+                                     page))
+           (> users turns))
+         (lambda (messages)
+           (pcase-let ((`(,shown . ,earlier)
+                        (opencode--recent-turns messages turns revert-message-id)))
+             (funcall then shown earlier))))))))
+
+(defun opencode--insert-older-messages-button ()
+  "Insert a button that loads the older messages of the session."
+  (let ((start (opencode--session-process-position))
+        (inhibit-read-only t))
+    (opencode--output "Load older messages")
+    (make-text-button start (opencode--session-process-position)
+                      'action (lambda (_) (opencode-load-older-messages))
+                      'follow-link t
+                      'help-echo "Show the whole session"
+                      'mouse-face 'highlight)
+    (opencode--output "\n\n")))
+
+(defun opencode-load-older-messages ()
+  "Redisplay the session with all its messages, also those of older turns."
+  (interactive nil opencode-session-mode)
+  (unless opencode-session-id
+    (user-error "Not in an OpenCode session"))
+  (setq opencode--show-older-messages t)
+  (opencode--reload-session))
+
 (defun opencode--load-session (session &optional callback)
   "Display SESSION in the current buffer and go to a prompt, unless it's busy.
-If CALLBACK is given, it will be called with SESSION afterwards."
+If CALLBACK is given, it will be called with SESSION afterwards.
+Only its last `opencode-session-initial-turns' are displayed, unless the
+buffer shows older messages, see `opencode-load-older-messages'."
   (let-alist session
-    (opencode-api-all-messages (.id)
-        messages
-      (opencode--reset-turns)
-      (setq opencode--replayed-unfinished-messages nil
-            opencode-session-todos nil
-            opencode-session-cost (or .cost 0)
-            opencode--server-model .model
-            opencode--server-agent
-            (or .agent
-                ;; sessions migrated from v1 only have it on their messages
-                (alist-get 'agent
-                           (seq-find (lambda (message)
-                                       (equal "assistant" (alist-get 'type message)))
-                                     (reverse messages)))
-                ;; a session with no agent yet uses the default, listed first
-                (alist-get 'id (opencode--default-agent))))
-      (opencode--replay-session-messages messages .revert.messageID)
-      ;; A new session starts on the default agent, with the models chosen
-      ;; for each agent where it was opened from.
-      (when messages
-        (opencode--adopt-selection opencode--server-agent .model))
-      (opencode-api-sessions-active
-        active
-        (if (assq (intern .id) active)
-            (setq opencode-session-status "busy")
-          (setq opencode-session-status "idle")
-          ;; like one from before idle markers, or that failed to record one
-          (opencode--end-turn)
-          (opencode--show-prompt))
-        (force-mode-line-update)
-        (run-hook-with-args 'opencode-session-loaded-functions .id)
-        (when callback
-          (funcall callback session))))))
+    (opencode--fetch-session-messages
+     .id .revert.messageID
+     (lambda (messages earlier)
+       (opencode--reset-turns)
+       (setq opencode--replayed-unfinished-messages nil
+             opencode--older-messages-hidden (and earlier t)
+             opencode-session-todos nil
+             opencode-session-cost (or .cost 0)
+             opencode--server-model .model
+             opencode--server-agent
+             (or .agent
+                 ;; sessions migrated from v1 only have it on their messages
+                 (alist-get 'agent
+                            (seq-find (lambda (message)
+                                        (equal "assistant" (alist-get 'type message)))
+                                      (reverse (append earlier messages))))
+                 ;; a session with no agent yet uses the default, listed first
+                 (alist-get 'id (opencode--default-agent))))
+       (when earlier
+         (opencode--insert-older-messages-button))
+       (opencode--replay-session-messages messages .revert.messageID earlier)
+       ;; A new session starts on the default agent, with the models chosen
+       ;; for each agent where it was opened from.
+       (when (or messages earlier)
+         (opencode--adopt-selection opencode--server-agent .model))
+       (opencode-api-sessions-active
+         active
+         (if (assq (intern .id) active)
+             (setq opencode-session-status "busy")
+           (setq opencode-session-status "idle")
+           ;; like one from before idle markers, or that failed to record one
+           (opencode--end-turn)
+           (opencode--show-prompt))
+         (force-mode-line-update)
+         (run-hook-with-args 'opencode-session-loaded-functions .id)
+         (when callback
+           (funcall callback session)))))))
 
 (defun opencode--inherited-agents ()
   "Return the server's agents, for a session opened from the current buffer.
@@ -1259,6 +1348,10 @@ may still have the id of a message it was copied from, as after a revert."
     (cond ((eq id 'shell) (user-error "Can't do that to a shell command"))
           (id)
           (sent (user-error "No user message at point (not yet sent)"))
+          ((and opencode--older-messages-hidden
+                (or (not opencode--turns)
+                    (< (point) (opencode--turn-start (car (last opencode--turns))))))
+           (user-error "No user message at point, load older messages first"))
           (t (user-error "No user message at point")))))
 
 (defun opencode-rename-session (&optional session)

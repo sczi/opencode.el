@@ -1080,6 +1080,9 @@ ID is `shell' for a shell command, which isn't a user message."
   "Replay a prompt with input TEXT, of the user message ID.
 ID is `shell' for a shell command."
   (opencode--show-prompt)
+  ;; point may not have followed the output, as after reloading with a
+  ;; mouse click elsewhere
+  (goto-char (opencode--session-process-position))
   (insert text)
   (let ((comint-input-sender #'opencode--highlight-input))
     (comint-send-input))
@@ -1426,15 +1429,18 @@ Calls not yet finished are recorded so that later events finish them."
          ("failed" (opencode--insert-error (or .error.message "Session failed")))
          ("interrupted" (opencode--insert-error "Interrupted")))))))
 
-(defun opencode--replay-session-messages (messages &optional revert-message-id)
+(defun opencode--replay-session-messages (messages &optional revert-message-id
+                                                   earlier)
   "Display past session MESSAGES.
-Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
+Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden.
+EARLIER are messages before them that aren't displayed, which tell
+whether the session has idle markers when MESSAGES have none yet."
   (let ((inhibit-redisplay t)
         ;; collect once afterwards, rather than many times during the replay
         (gc-cons-threshold most-positive-fixnum)
         (opencode--replaying-legacy
          (not (seq-some (lambda (message) (equal "idle" (alist-get 'type message)))
-                        messages))))
+                        (append earlier messages)))))
     ;; Run the change hooks, like jit-lock's, once for the whole replay
     ;; rather than for every insertion.
     (combine-change-calls (point-min) (point-max)

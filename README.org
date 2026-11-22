@@ -416,6 +416,8 @@ discuss.
   =opencode-sidebar-speed-start=, =opencode-sidebar-updated-after=,
   =opencode-sidebar-test-file-regexp=, and =opencode-sidebar-doc-extensions=
   configure the sidebar display
+- =opencode-session-initial-turns= configures how many turns of history to load by
+  default when loading old sessions
 
 # Local Variables:
 # flycheck-org-lint-disabled-checkers: (invalid-id-link wrong-header-value)

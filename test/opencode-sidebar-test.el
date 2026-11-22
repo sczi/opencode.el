@@ -257,7 +257,11 @@ if they're in a test directory."
                      (sections-at "third")))
       ;; or counting from the first token
       (let ((opencode-sidebar-speed-start 'first-token))
-        (should (string-search "TTFT 0.5s · 30 tok/s" (sections-at "third")))))))
+        (should (string-search "TTFT 0.5s · 30 tok/s" (sections-at "third"))))
+      ;; with older turns not displayed, the numbers would be wrong
+      (with-current-buffer session
+        (setq opencode--older-messages-hidden t))
+      (should (string-search "Activity\n 1m 5s\n" (sections-at "third"))))))
 
 (ert-deftest opencode-sidebar-running-turn-test ()
   "A running turn's time is how long it's run, and its step's agent is shown.

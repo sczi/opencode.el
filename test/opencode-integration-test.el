@@ -1059,5 +1059,40 @@ session.  x cancels them, and they're no longer shown."
                                   (opencode--turn-start (car opencode--turns))
                                   (point-max))))))))
 
+(ert-deftest opencode-integration-older-messages-test ()
+  "A reopened session shows its last turn, and a button loads the older ones."
+  (opencode-test-with-session nil
+    (opencode-test-llm-reply "First answer" "Second answer")
+    (opencode-test-send "First")
+    (opencode-test-send "Second")
+    (let ((opencode-session-initial-turns 1)
+          (loaded (lambda (text)
+                    (opencode-test-wait-until
+                     (and (opencode-test-at-prompt-p)
+                          (string-search text (opencode-test-output)))))))
+      (opencode--reload-session)
+      (funcall loaded "Second answer")
+      (should opencode--older-messages-hidden)
+      (should-not (string-search "First" (opencode-test-output)))
+      (should (length= opencode--turns 1))
+      ;; the turn shown has its message, older ones need loading first
+      (goto-char (opencode-test--search "Second"))
+      (should (stringp (opencode--user-message-id-at-point)))
+      (goto-char (point-min))
+      (should (equal "No user message at point, load older messages first"
+                     (cadr (should-error (opencode--user-message-id-at-point)
+                                         :type 'user-error))))
+      (push-button (opencode-test--search "Load older messages"))
+      (funcall loaded "First answer")
+      (should-not opencode--older-messages-hidden)
+      (should-not (string-search "Load older messages" (opencode-test-output)))
+      (should (string-search "❯ First\n\nFirst answer\n\n❯ Second\n\nSecond answer"
+                             (opencode-test-output)))
+      (should (equal '(1 2) (mapcar #'opencode--turn-number (reverse opencode--turns))))
+      ;; still all of them once reloaded
+      (opencode--reload-session)
+      (funcall loaded "Second answer")
+      (should (string-search "First answer" (opencode-test-output))))))
+
 (provide 'opencode-integration-test)
 ;;; opencode-integration-test.el ends here

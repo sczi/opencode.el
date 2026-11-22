@@ -515,87 +515,88 @@ resent is of its new user message, not the old one.  A message's turn diff
 has only the files that turn changed, before and after.  Reverting a
 message undoes its edits and those after it, and puts its text back in the
 prompt."
-  (opencode-test-with-session '((".opencode/command/greet.md" . "Greet $ARGUMENTS\n")
-                                ("a.txt" . "one\n"))
-    (opencode-test-llm-reply
-     "Hi." "Hello bob." "Hello again bob."
-     '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
-     "Edited."
-     '((:tool "write" ((path . "b.txt") (content . "new\n"))))
-     "Wrote."
-     "Answered again.")
-    (opencode-test-send "Hello")
-    (opencode-test-send "/greet bob")
-    (let* ((id-at (lambda (text)
-                    (goto-char (point-min))
-                    (search-forward (concat "❯ " text))
-                    (opencode--user-message-id-at-point)))
-           (user-ids (lambda ()
-                       (let (users)
-                         (opencode-api-all-messages (opencode-session-id)
-                             messages
-                           (setq users (cl-loop for message in messages
-                                                when (equal "user" (alist-get 'type message))
-                                                collect (alist-get 'id message))))
-                         (opencode-test-wait-until users))))
-           (pmark (process-mark (get-buffer-process (current-buffer))))
-           (old (funcall id-at "/greet bob"))
-           users)
-      ;; a reverted slash command, resent
-      (opencode-revert-message)
-      (opencode-test-wait-until
-       (equal "/greet bob" (buffer-substring-no-properties pmark (point-max))))
-      ;; not sent yet, so it's of no message
-      (goto-char (point-max))
-      (should-error (opencode--user-message-id-at-point) :type 'user-error)
-      (opencode-test-send "")
-      (opencode-test-send "!echo ok")
-      (setq users (funcall user-ids))
-      (should (equal 2 (length users)))
-      (should-not (member old users))
-      (should (equal users (mapcar id-at '("Hello" "/greet bob"))))
-      (goto-char (opencode-test--search "!echo ok"))
-      (should-error (opencode--user-message-id-at-point) :type 'user-error)
-      (opencode--reload-session)
-      (opencode-test-wait-until (and (opencode-test-at-prompt-p)
-                                     (string-search "❯ !echo" (opencode-test-output))))
-      ;; the server expands the command into the text of its message
-      (should (equal users (mapcar id-at '("Hello" "Greet bob"))))
-      ;; turn diffs
-      (let ((before (opencode-test-output))
-            (turns (length opencode--turns))
-            (number (opencode--turn-number (car opencode--turns)))
-            (messages (hash-table-count opencode--messages))
-            diffs)
-        (opencode-test-send "Edit it")
-        (opencode-test-send "Write it")
-        (should (equal "two\n" (opencode-integration-test--file "a.txt")))
-        (goto-char (opencode-test--search "Edit it"))
-        (opencode--turn-file-diffs (opencode--user-message-id-at-point)
-                                   (lambda (result) (setq diffs (list result))))
-        (opencode-test-wait-until diffs)
-        (pcase-let ((`((,diff)) diffs))
-          (should (equal "a.txt" (alist-get 'file diff)))
-          (should (equal "modified" (alist-get 'status diff)))
-          (should (equal '("one\n" . "two\n")
-                         (opencode--patch-sides (alist-get 'patch diff)))))
-        ;; reverted with the turn after it
-        (let ((reverted (mapcan (lambda (turn) (copy-sequence (opencode--turn-messages turn)))
-                                (seq-take opencode--turns 2))))
+  (let ((opencode-test-snapshots t))
+    (opencode-test-with-session '((".opencode/command/greet.md" . "Greet $ARGUMENTS\n")
+                                  ("a.txt" . "one\n"))
+      (opencode-test-llm-reply
+       "Hi." "Hello bob." "Hello again bob."
+       '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
+       "Edited."
+       '((:tool "write" ((path . "b.txt") (content . "new\n"))))
+       "Wrote."
+       "Answered again.")
+      (opencode-test-send "Hello")
+      (opencode-test-send "/greet bob")
+      (let* ((id-at (lambda (text)
+                      (goto-char (point-min))
+                      (search-forward (concat "❯ " text))
+                      (opencode--user-message-id-at-point)))
+             (user-ids (lambda ()
+                         (let (users)
+                           (opencode-api-all-messages (opencode-session-id)
+                               messages
+                             (setq users (cl-loop for message in messages
+                                                  when (equal "user" (alist-get 'type message))
+                                                  collect (alist-get 'id message))))
+                           (opencode-test-wait-until users))))
+             (pmark (process-mark (get-buffer-process (current-buffer))))
+             (old (funcall id-at "/greet bob"))
+             users)
+        ;; a reverted slash command, resent
+        (opencode-revert-message)
+        (opencode-test-wait-until
+         (equal "/greet bob" (buffer-substring-no-properties pmark (point-max))))
+        ;; not sent yet, so it's of no message
+        (goto-char (point-max))
+        (should-error (opencode--user-message-id-at-point) :type 'user-error)
+        (opencode-test-send "")
+        (opencode-test-send "!echo ok")
+        (setq users (funcall user-ids))
+        (should (equal 2 (length users)))
+        (should-not (member old users))
+        (should (equal users (mapcar id-at '("Hello" "/greet bob"))))
+        (goto-char (opencode-test--search "!echo ok"))
+        (should-error (opencode--user-message-id-at-point) :type 'user-error)
+        (opencode--reload-session)
+        (opencode-test-wait-until (and (opencode-test-at-prompt-p)
+                                       (string-search "❯ !echo" (opencode-test-output))))
+        ;; the server expands the command into the text of its message
+        (should (equal users (mapcar id-at '("Hello" "Greet bob"))))
+        ;; turn diffs
+        (let ((before (opencode-test-output))
+              (turns (length opencode--turns))
+              (number (opencode--turn-number (car opencode--turns)))
+              (messages (hash-table-count opencode--messages))
+              diffs)
+          (opencode-test-send "Edit it")
+          (opencode-test-send "Write it")
+          (should (equal "two\n" (opencode-integration-test--file "a.txt")))
           (goto-char (opencode-test--search "Edit it"))
-          (opencode-revert-message)
-          (opencode-test-wait-until (equal "one\n" (opencode-integration-test--file "a.txt")))
-          (opencode-test-wait-until (not (file-exists-p "b.txt")))
-          (opencode-test-wait-until (not (string-search "Edited." (opencode-test-output))))
-          (should (equal before (opencode-test-output)))
-          (should (equal "Edit it" (buffer-substring-no-properties pmark (point-max))))
-          ;; the reverted turns and their messages are forgotten
-          (should (equal turns (length opencode--turns)))
-          (should-not (seq-some #'opencode--message-info reverted))
-          (should (equal messages (hash-table-count opencode--messages)))
-          ;; so the turn resent is numbered after the ones left
-          (opencode-test-send "")
-          (should (equal (1+ number) (opencode--turn-number (car opencode--turns)))))))))
+          (opencode--turn-file-diffs (opencode--user-message-id-at-point)
+                                     (lambda (result) (setq diffs (list result))))
+          (opencode-test-wait-until diffs)
+          (pcase-let ((`((,diff)) diffs))
+            (should (equal "a.txt" (alist-get 'file diff)))
+            (should (equal "modified" (alist-get 'status diff)))
+            (should (equal '("one\n" . "two\n")
+                           (opencode--patch-sides (alist-get 'patch diff)))))
+          ;; reverted with the turn after it
+          (let ((reverted (mapcan (lambda (turn) (copy-sequence (opencode--turn-messages turn)))
+                                  (seq-take opencode--turns 2))))
+            (goto-char (opencode-test--search "Edit it"))
+            (opencode-revert-message)
+            (opencode-test-wait-until (equal "one\n" (opencode-integration-test--file "a.txt")))
+            (opencode-test-wait-until (not (file-exists-p "b.txt")))
+            (opencode-test-wait-until (not (string-search "Edited." (opencode-test-output))))
+            (should (equal before (opencode-test-output)))
+            (should (equal "Edit it" (buffer-substring-no-properties pmark (point-max))))
+            ;; the reverted turns and their messages are forgotten
+            (should (equal turns (length opencode--turns)))
+            (should-not (seq-some #'opencode--message-info reverted))
+            (should (equal messages (hash-table-count opencode--messages)))
+            ;; so the turn resent is numbered after the ones left
+            (opencode-test-send "")
+            (should (equal (1+ number) (opencode--turn-number (car opencode--turns))))))))))
 
 (defun opencode-integration-test--git (&rest args)
   "Run git with ARGS in `default-directory', signaling an error if it fails."
@@ -811,197 +812,198 @@ records.  They're all the same once the session is reloaded.
 It shows the session's running subagents and background shells.  RET on a
 shell shows its output, followed while it runs, and on a subagent opens its
 session.  x cancels them, and they're no longer shown."
-  (opencode-test-with-session '(("a.txt" . "one\n"))
-    (opencode-test-llm-reply
-     '((:reasoning "Let me plan")
-       (:tool "todowrite" ((todos . [((content . "Edit a.txt") (status . "completed"))
-                                     ((content . "Write b.txt") (status . "pending"))]))))
-     '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
-     `("Edited." ,(opencode-integration-test--usage 1000 200))
-     '((:tool "write" ((path . "b.txt") (content . "new\nfile\n"))))
-     "Wrote.")
-    (opencode-test-send "Edit it")
-    (opencode-test-send "Write it")
-    (let ((session (current-buffer))
-          (sidebar (generate-new-buffer " *opencode-sidebar-test*")))
-      (unwind-protect
-          (cl-flet* ((sidebar-text ()
-                       (with-current-buffer sidebar
-                         (opencode-sidebar--redraw)
-                         (buffer-substring-no-properties (point-min) (point-max))))
-                     (goto-job (text)
-                       (with-current-buffer sidebar
-                         (goto-char (point-min))
-                         (search-forward text)))
-                     (times (id)
-                       (let ((info (opencode--message-info id)))
-                         (list (plist-get info :created) (plist-get info :first-token)
-                               (plist-get info :streamed) (plist-get info :completed)
-                               (plist-get info :tokens))))
-                     (turn-times ()
-                       ;; each turn's steps' ids and times, in order
-                       (mapcar (lambda (turn)
-                                 (mapcar (lambda (id) (cons id (times id)))
-                                         (reverse (opencode--turn-messages turn))))
-                               (reverse opencode--turns))))
-            ;; the steps' times recorded from events are the server's
-            (let ((live (turn-times))
-                  messages)
-              (should (equal '(3 2) (mapcar #'length live)))
-              (should (equal '(1 2) (mapcar #'opencode--turn-number
-                                            (reverse opencode--turns))))
-              (should-not (opencode--running-turn))
-              (pcase-dolist (`(,_id ,created ,first-token ,streamed ,completed ,_tokens)
-                             (apply #'append live))
-                (should (and created first-token streamed completed)))
-              (opencode-api-all-messages (opencode-session-id)
-                  result
-                (setq messages result))
-              (opencode-test-wait-until messages)
-              (pcase-dolist (`(,id . ,times) (apply #'append live))
-                (let-alist (seq-find (lambda (message) (equal id (alist-get 'id message)))
-                                     messages)
-                  (should (equal (list .time.created .time.firstToken .time.streamed
-                                       .time.completed .tokens)
-                                 times)))))
-            (with-current-buffer sidebar
-              (opencode-sidebar-mode))
-            (cl-letf (((symbol-function 'opencode-sidebar--shown-p)
-                       (lambda (buffer) (eq buffer session))))
-              (opencode-sidebar--set-session sidebar session)
-              ;; todos and the changes of all turns
-              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
-              (should (string-search "Todo (1 remaining)\n [✓] Edit a.txt\n [ ] Write b.txt\n"
-                                     (sidebar-text)))
-              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
-              ;; the agent and activity of the step at point
-              (goto-char (point-min))
-              (search-forward "Edited.")
-              (should (string-match-p
-                       (rx "Agent\n " (+ nonl) "\n " (+ nonl) "\n " (+ nonl) "\n\n"
-                           "Activity\n turn 1 · " (+ (any "0-9.ms ")) "\n"
-                           " TTFT " (+ (any "0-9.ms ")) " · " (+ digit) " tok/s\n")
-                       (sidebar-text)))
-              ;; the prompt of the second turn is of its first step
-              (search-forward "Write it")
-              (should (string-search "Activity\n turn 2 · " (sidebar-text)))
-              (let* ((turn (car opencode--turns))
-                     (first-step (car (last (opencode--turn-messages turn)))))
-                (should (equal first-step (cdr (opencode--message-at (point)))))
-                ;; so is its prompt string, though point is moved off it after commands
-                (let ((inhibit-field-text-motion t))
-                  (should (equal (cons turn first-step)
-                                 (opencode--message-at (line-beginning-position))))))
-              ;; before the first prompt is of the first turn's first step
-              (goto-char (point-min))
-              (should (string-search "Activity\n turn 1 · " (sidebar-text)))
-              (let ((turn (car (last opencode--turns))))
-                (should (equal (cons turn (car (last (opencode--turn-messages turn))))
-                               (opencode--message-at (point)))))
-              ;; every turn has the session's status
-              (goto-char (point-max))
-              (should (string-search "· 🚀 idle\n" (sidebar-text)))
-              (search-backward "Edited.")
-              (should (string-search "· 🚀 idle\n" (sidebar-text)))
-              ;; the usage is the session's, refetched when a step ends
-              (should (string-search "Usage\n ↑1k ↓200 🧠0\n" (sidebar-text)))
-              (opencode-test-llm-reply
-               `("Again." ,(opencode-integration-test--usage 1000 200)))
-              (opencode-test-send "Once more")
-              (opencode-test-wait-until
-               (string-search "Usage\n ↑2k ↓400 🧠0\n" (sidebar-text)))
-              ;; all the same once reloaded
+  (let ((opencode-test-snapshots t))
+    (opencode-test-with-session '(("a.txt" . "one\n"))
+      (opencode-test-llm-reply
+       '((:reasoning "Let me plan")
+         (:tool "todowrite" ((todos . [((content . "Edit a.txt") (status . "completed"))
+                                       ((content . "Write b.txt") (status . "pending"))]))))
+       '((:tool "edit" ((path . "a.txt") (oldString . "one") (newString . "two"))))
+       `("Edited." ,(opencode-integration-test--usage 1000 200))
+       '((:tool "write" ((path . "b.txt") (content . "new\nfile\n"))))
+       "Wrote.")
+      (opencode-test-send "Edit it")
+      (opencode-test-send "Write it")
+      (let ((session (current-buffer))
+            (sidebar (generate-new-buffer " *opencode-sidebar-test*")))
+        (unwind-protect
+            (cl-flet* ((sidebar-text ()
+                         (with-current-buffer sidebar
+                           (opencode-sidebar--redraw)
+                           (buffer-substring-no-properties (point-min) (point-max))))
+                       (goto-job (text)
+                         (with-current-buffer sidebar
+                           (goto-char (point-min))
+                           (search-forward text)))
+                       (times (id)
+                         (let ((info (opencode--message-info id)))
+                           (list (plist-get info :created) (plist-get info :first-token)
+                                 (plist-get info :streamed) (plist-get info :completed)
+                                 (plist-get info :tokens))))
+                       (turn-times ()
+                         ;; each turn's steps' ids and times, in order
+                         (mapcar (lambda (turn)
+                                   (mapcar (lambda (id) (cons id (times id)))
+                                           (reverse (opencode--turn-messages turn))))
+                                 (reverse opencode--turns))))
+              ;; the steps' times recorded from events are the server's
               (let ((live (turn-times))
-                    loaded)
-                (setq opencode-session-todos nil
-                      opencode-sidebar--data nil)
-                (add-hook 'opencode-session-loaded-functions
-                          (lambda (_id) (setq loaded t)) nil t)
-                (opencode--reload-session)
-                (opencode-test-wait-until loaded)
-                (should (equal live (turn-times))))
-              (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
-              (should (string-search "Todo (1 remaining)\n" (sidebar-text)))
-              (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
-              (opencode-test-wait-until
-               (string-search "Usage\n ↑2k ↓400 🧠0\n" (sidebar-text)))
-              ;; running jobs
-              (let ((reply (lambda (body)
-                             (if (string-search "You are a subagent"
-                                                (opencode-test-llm-user-text body))
-                                 '("Child working" (:hold))
-                               "Noted.")))
-                    (shown nil))
+                    messages)
+                (should (equal '(3 2) (mapcar #'length live)))
+                (should (equal '(1 2) (mapcar #'opencode--turn-number
+                                              (reverse opencode--turns))))
+                (should-not (opencode--running-turn))
+                (pcase-dolist (`(,_id ,created ,first-token ,streamed ,completed ,_tokens)
+                               (apply #'append live))
+                  (should (and created first-token streamed completed)))
+                (opencode-api-all-messages (opencode-session-id)
+                    result
+                  (setq messages result))
+                (opencode-test-wait-until messages)
+                (pcase-dolist (`(,id . ,times) (apply #'append live))
+                  (let-alist (seq-find (lambda (message) (equal id (alist-get 'id message)))
+                                       messages)
+                    (should (equal (list .time.created .time.firstToken .time.streamed
+                                         .time.completed .tokens)
+                                   times)))))
+              (with-current-buffer sidebar
+                (opencode-sidebar-mode))
+              (cl-letf (((symbol-function 'opencode-sidebar--shown-p)
+                         (lambda (buffer) (eq buffer session))))
+                (opencode-sidebar--set-session sidebar session)
+                ;; todos and the changes of all turns
+                (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
+                (should (string-search "Todo (1 remaining)\n [✓] Edit a.txt\n [ ] Write b.txt\n"
+                                       (sidebar-text)))
+                (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
+                ;; the agent and activity of the step at point
+                (goto-char (point-min))
+                (search-forward "Edited.")
+                (should (string-match-p
+                         (rx "Agent\n " (+ nonl) "\n " (+ nonl) "\n " (+ nonl) "\n\n"
+                             "Activity\n turn 1 · " (+ (any "0-9.ms ")) "\n"
+                             " TTFT " (+ (any "0-9.ms ")) " · " (+ digit) " tok/s\n")
+                         (sidebar-text)))
+                ;; the prompt of the second turn is of its first step
+                (search-forward "Write it")
+                (should (string-search "Activity\n turn 2 · " (sidebar-text)))
+                (let* ((turn (car opencode--turns))
+                       (first-step (car (last (opencode--turn-messages turn)))))
+                  (should (equal first-step (cdr (opencode--message-at (point)))))
+                  ;; so is its prompt string, though point is moved off it after commands
+                  (let ((inhibit-field-text-motion t))
+                    (should (equal (cons turn first-step)
+                                   (opencode--message-at (line-beginning-position))))))
+                ;; before the first prompt is of the first turn's first step
+                (goto-char (point-min))
+                (should (string-search "Activity\n turn 1 · " (sidebar-text)))
+                (let ((turn (car (last opencode--turns))))
+                  (should (equal (cons turn (car (last (opencode--turn-messages turn))))
+                                 (opencode--message-at (point)))))
+                ;; every turn has the session's status
+                (goto-char (point-max))
+                (should (string-search "· 🚀 idle\n" (sidebar-text)))
+                (search-backward "Edited.")
+                (should (string-search "· 🚀 idle\n" (sidebar-text)))
+                ;; the usage is the session's, refetched when a step ends
+                (should (string-search "Usage\n ↑1k ↓200 🧠0\n" (sidebar-text)))
                 (opencode-test-llm-reply
-                 '((:tool "shell" ((command . "echo hello; while [ ! -e go ]; do sleep 0.1; done")
-                                   (background . t)))
-                   (:tool "subagent" ((agent . "general") (description . "Long task")
-                                      (prompt . "Work slowly"))))
-                 reply reply
-                 ;; woken by the shell, then the subagent, being cancelled
-                 reply reply)
-                ;; the buffers shown, and whether in the same window
-                (cl-letf (((symbol-function 'opencode--switch-to-buffer)
-                           (lambda (buffer)
-                             (push (cons buffer opencode-open-same-window) shown))))
-                  (opencode-test-send "Start them")
-                  (opencode-test-llm-wait-held)
-                  (opencode-test-wait-until (string-search "Jobs (2 running)" (sidebar-text)))
-                  (should (string-match-p (rx "\n $ echo hello; while " (+ nonl) " " (+ digit) "s\n")
-                                          (sidebar-text)))
-                  (should (string-match-p (rx "\n ● @general Long task " (+ digit) "s\n")
-                                          (sidebar-text)))
-                  ;; the shell's output
-                  (goto-job "echo hello")
-                  (let* ((shell (with-current-buffer sidebar
-                                  (prog1 (alist-get 'shellID (car (opencode-sidebar--job-at-point)))
-                                    (opencode-sidebar-visit-job))))
-                         (output (opencode-test-wait-until
-                                  (seq-find (lambda (buffer)
-                                              (equal shell (buffer-local-value
-                                                            'opencode-shell-output--id buffer)))
-                                            (buffer-list)))))
-                    (with-current-buffer output
-                      (opencode-test-wait-until (string-search "\nhello\n" (buffer-string)))
-                      (should (timerp opencode-shell-output--timer)))
-                    ;; in another window
-                    (should (equal (cons output nil) (car shown)))
-                    ;; the subagent's session
-                    (goto-job "Long task")
-                    (let ((child (with-current-buffer sidebar
-                                   (alist-get 'childSessionID
-                                              (car (opencode-sidebar--job-at-point))))))
-                      (with-current-buffer sidebar
-                        (opencode-sidebar-visit-job))
-                      (opencode-test-wait-until (opencode--session-buffer child))
-                      (should (equal (cons (opencode--session-buffer child) nil) (car shown)))
-                      ;; cancelling the shell ends its output
-                      (let ((since (length opencode-test-events)))
-                        (goto-job "echo hello")
+                 `("Again." ,(opencode-integration-test--usage 1000 200)))
+                (opencode-test-send "Once more")
+                (opencode-test-wait-until
+                 (string-search "Usage\n ↑2k ↓400 🧠0\n" (sidebar-text)))
+                ;; all the same once reloaded
+                (let ((live (turn-times))
+                      loaded)
+                  (setq opencode-session-todos nil
+                        opencode-sidebar--data nil)
+                  (add-hook 'opencode-session-loaded-functions
+                            (lambda (_id) (setq loaded t)) nil t)
+                  (opencode--reload-session)
+                  (opencode-test-wait-until loaded)
+                  (should (equal live (turn-times))))
+                (opencode-test-wait-until (string-search "Changed" (sidebar-text)))
+                (should (string-search "Todo (1 remaining)\n" (sidebar-text)))
+                (should (string-search "Changed 2 files +3 -1\n" (sidebar-text)))
+                (opencode-test-wait-until
+                 (string-search "Usage\n ↑2k ↓400 🧠0\n" (sidebar-text)))
+                ;; running jobs
+                (let ((reply (lambda (body)
+                               (if (string-search "You are a subagent"
+                                                  (opencode-test-llm-user-text body))
+                                   '("Child working" (:hold))
+                                 "Noted.")))
+                      (shown nil))
+                  (opencode-test-llm-reply
+                   '((:tool "shell" ((command . "echo hello; while [ ! -e go ]; do sleep 0.1; done")
+                                     (background . t)))
+                     (:tool "subagent" ((agent . "general") (description . "Long task")
+                                        (prompt . "Work slowly"))))
+                   reply reply
+                   ;; woken by the shell, then the subagent, being cancelled
+                   reply reply)
+                  ;; the buffers shown, and whether in the same window
+                  (cl-letf (((symbol-function 'opencode--switch-to-buffer)
+                             (lambda (buffer)
+                               (push (cons buffer opencode-open-same-window) shown))))
+                    (opencode-test-send "Start them")
+                    (opencode-test-llm-wait-held)
+                    (opencode-test-wait-until (string-search "Jobs (2 running)" (sidebar-text)))
+                    (should (string-match-p (rx "\n $ echo hello; while " (+ nonl) " " (+ digit) "s\n")
+                                            (sidebar-text)))
+                    (should (string-match-p (rx "\n ● @general Long task " (+ digit) "s\n")
+                                            (sidebar-text)))
+                    ;; the shell's output
+                    (goto-job "echo hello")
+                    (let* ((shell (with-current-buffer sidebar
+                                    (prog1 (alist-get 'shellID (car (opencode-sidebar--job-at-point)))
+                                      (opencode-sidebar-visit-job))))
+                           (output (opencode-test-wait-until
+                                    (seq-find (lambda (buffer)
+                                                (equal shell (buffer-local-value
+                                                              'opencode-shell-output--id buffer)))
+                                              (buffer-list)))))
+                      (with-current-buffer output
+                        (opencode-test-wait-until (string-search "\nhello\n" (buffer-string)))
+                        (should (timerp opencode-shell-output--timer)))
+                      ;; in another window
+                      (should (equal (cons output nil) (car shown)))
+                      ;; the subagent's session
+                      (goto-job "Long task")
+                      (let ((child (with-current-buffer sidebar
+                                     (alist-get 'childSessionID
+                                                (car (opencode-sidebar--job-at-point))))))
                         (with-current-buffer sidebar
-                          (opencode-sidebar-cancel-job))
-                        (opencode-test-wait-until (string-search "Jobs (1 running)" (sidebar-text)))
-                        (with-current-buffer output
-                          (opencode-test-wait-until (not opencode-shell-output--timer))
-                          (should (string-match-p (rx "\n[" (or "killed" "exited") (* nonl) "]\n" eos)
-                                                  (buffer-string))))
-                        (opencode-test-wait-until
-                         (opencode-test-event-p "session.execution.started" nil since))
-                        (opencode-test-wait-finished since))
-                      (should-not (string-search "echo hello" (sidebar-text)))
-                      ;; and the subagent
-                      (let ((since (length opencode-test-events)))
-                        (goto-job "Long task")
-                        (with-current-buffer sidebar
-                          (opencode-sidebar-cancel-job))
-                        (opencode-test-wait-until
-                         (opencode-test-event-p "session.execution.interrupted" child))
-                        (setq opencode-test-llm-held nil)
-                        (opencode-test-wait-until (not (string-search "Jobs" (sidebar-text))))
-                        (opencode-test-wait-until
-                         (opencode-test-event-p "session.execution.started" nil since))
-                        (opencode-test-wait-finished since))))))))
-        (kill-buffer sidebar)))))
+                          (opencode-sidebar-visit-job))
+                        (opencode-test-wait-until (opencode--session-buffer child))
+                        (should (equal (cons (opencode--session-buffer child) nil) (car shown)))
+                        ;; cancelling the shell ends its output
+                        (let ((since (length opencode-test-events)))
+                          (goto-job "echo hello")
+                          (with-current-buffer sidebar
+                            (opencode-sidebar-cancel-job))
+                          (opencode-test-wait-until (string-search "Jobs (1 running)" (sidebar-text)))
+                          (with-current-buffer output
+                            (opencode-test-wait-until (not opencode-shell-output--timer))
+                            (should (string-match-p (rx "\n[" (or "killed" "exited") (* nonl) "]\n" eos)
+                                                    (buffer-string))))
+                          (opencode-test-wait-until
+                           (opencode-test-event-p "session.execution.started" nil since))
+                          (opencode-test-wait-finished since))
+                        (should-not (string-search "echo hello" (sidebar-text)))
+                        ;; and the subagent
+                        (let ((since (length opencode-test-events)))
+                          (goto-job "Long task")
+                          (with-current-buffer sidebar
+                            (opencode-sidebar-cancel-job))
+                          (opencode-test-wait-until
+                           (opencode-test-event-p "session.execution.interrupted" child))
+                          (setq opencode-test-llm-held nil)
+                          (opencode-test-wait-until (not (string-search "Jobs" (sidebar-text))))
+                          (opencode-test-wait-until
+                           (opencode-test-event-p "session.execution.started" nil since))
+                          (opencode-test-wait-finished since))))))))
+          (kill-buffer sidebar))))))
 
 (ert-deftest opencode-integration-session-preview-test ()
   "A session that isn't open is previewed with its last reply's text."
@@ -1031,30 +1033,31 @@ session.  x cancels them, and they're no longer shown."
 
 (ert-deftest opencode-integration-finished-editing-diagnostics-test ()
   "Diagnostics reported after a turn's edits are sent to the LLM in a new turn."
-  (opencode-test-with-session '(("a.txt" . "alpha\n"))
-    (let* ((reported nil)
-           (opencode-files-finished-editing-functions
-            (list (lambda (_files done)
-                    (if reported
-                        (funcall done)
-                      (setq reported t)
-                      (funcall done "- a.txt:1:1: error: ALPHA is wrong"))))))
-      (opencode-test-llm-reply
-       '((:tool "edit" ((path . "a.txt") (oldString . "alpha") (newString . "ALPHA"))))
-       "Edited."
-       "Fixed.")
-      (opencode-test-send "Shout alpha")
-      (opencode-test-wait-for-output "Fixed.")
-      (opencode-test-wait-until (opencode-test-at-prompt-p))
-      (let ((text (opencode-test-llm-user-text (car (last opencode-test-llm-requests)))))
-        (should (string-prefix-p "Diagnostics were reported after editing files." text))
-        (should (string-search "- a.txt:1:1: error: ALPHA is wrong" text)))
-      ;; The diagnostics are the input of the latest turn
-      (should (equal 2 (length opencode--turns)))
-      (should (string-prefix-p "Diagnostics were reported"
-                               (buffer-substring-no-properties
-                                (opencode--turn-start (car opencode--turns))
-                                (point-max)))))))
+  (let ((opencode-test-snapshots t))
+    (opencode-test-with-session '(("a.txt" . "alpha\n"))
+      (let* ((reported nil)
+             (opencode-files-finished-editing-functions
+              (list (lambda (_files done)
+                      (if reported
+                          (funcall done)
+                        (setq reported t)
+                        (funcall done "- a.txt:1:1: error: ALPHA is wrong"))))))
+        (opencode-test-llm-reply
+         '((:tool "edit" ((path . "a.txt") (oldString . "alpha") (newString . "ALPHA"))))
+         "Edited."
+         "Fixed.")
+        (opencode-test-send "Shout alpha")
+        (opencode-test-wait-for-output "Fixed.")
+        (opencode-test-wait-until (opencode-test-at-prompt-p))
+        (let ((text (opencode-test-llm-user-text (car (last opencode-test-llm-requests)))))
+          (should (string-prefix-p "Diagnostics were reported after editing files." text))
+          (should (string-search "- a.txt:1:1: error: ALPHA is wrong" text)))
+        ;; The diagnostics are the input of the latest turn
+        (should (equal 2 (length opencode--turns)))
+        (should (string-prefix-p "Diagnostics were reported"
+                                 (buffer-substring-no-properties
+                                  (opencode--turn-start (car opencode--turns))
+                                  (point-max))))))))
 
 (provide 'opencode-integration-test)
 ;;; opencode-integration-test.el ends here

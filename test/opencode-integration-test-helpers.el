@@ -89,6 +89,10 @@ Those to generate a session title aren't included.")
 (defvar opencode-test-title "Test title"
   "Title the scripted LLM gives sessions.")
 
+(defvar opencode-test-snapshots nil
+  "Non-nil to turn on the server's snapshots in projects made by `opencode-test-make-project'.
+Turn diffs, the sidebar's changed files and reverting need them.")
+
 ;;; Server
 
 (defun opencode-test--environment ()
@@ -130,6 +134,10 @@ Those to generate a session title aren't included.")
        (json-encode
         `((model . ,opencode-test-model)
           (update . "disable")
+          ;; They cost a git snapshot before and after each step, so they're
+          ;; only on in projects of tests that need them, see
+          ;; `opencode-test-snapshots'
+          (snapshots . :json-false)
           (permissions . [((action . "*") (resource . "*") (effect . "allow"))])
           (providers
            . ((sim . ((name . "Sim")
@@ -493,7 +501,10 @@ used."
 FILES is an alist of file names to their contents, committed in it.  The
 server identifies a project by its root commit, so the commit message
 names the directory, to keep projects with the same files made in the
-same second apart."
+same second apart.  With `opencode-test-snapshots', the project's config
+turns on snapshots."
+  (when opencode-test-snapshots
+    (setq files (cons '(".opencode/opencode.json" . "{\"snapshots\": true}\n") files)))
   (let ((directory (file-name-as-directory
                     (file-name-concat opencode-test--root "projects"
                                       (format "project-%d"

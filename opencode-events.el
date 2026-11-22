@@ -183,8 +183,12 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            (opencode--redisplay-session-control-buffers)
            (opencode--with-session-buffer .sessionID
              (delete-process)))
-          ((session.created session.archived session.unarchived
-                            session.moved session.forked)
+          (session.moved
+           (opencode--with-session-buffer .sessionID
+             (when (opencode--session-moved data)
+               (opencode-sidebar-session-moved)))
+           (opencode--redisplay-session-control-buffers))
+          ((session.created session.archived session.unarchived session.forked)
            (opencode--redisplay-session-control-buffers))
           (session.agent.selected
            (opencode--with-session-buffer .sessionID

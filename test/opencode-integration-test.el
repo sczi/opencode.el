@@ -531,6 +531,44 @@ A shell command isn't a user message."
       ;; the server expands the command into the text of its message
       (should (equal users (mapcar id-at '("Hello" "Greet bob")))))))
 
+(ert-deftest opencode-integration-session-moved-test ()
+  "A session moved to a worktree follows it, with a notice of the move.
+Its directory and project root are the worktree's, its shell commands run
+there, and the notice is shown once, also when it's reloaded."
+  (opencode-test-with-session '(("a.txt" . "alpha\n"))
+    (let ((worktree (file-name-as-directory
+                     (concat (directory-file-name default-directory) "-moved")))
+          (notice-count (lambda ()
+                          (let ((output (opencode-test-output))
+                                (count 0)
+                                (start 0))
+                            (while (setq start (string-search "📁 Moved to" output start))
+                              (cl-incf count)
+                              (cl-incf start))
+                            count))))
+      (unless (zerop (call-process "git" nil nil nil "worktree" "add" "-q"
+                                   "-b" "moved" (directory-file-name worktree)))
+        (error "Git worktree add failed"))
+      (opencode-test-llm-reply "Hi.")
+      (opencode-test-send "Hello")
+      (opencode-api-move-session (opencode-session-id)
+          `((directory . ,(opencode--to-server-path (directory-file-name worktree))))
+          _result)
+      (opencode-test-wait-until (equal worktree default-directory))
+      (should (equal worktree opencode--project-root))
+      (opencode-test-wait-until (opencode-test-at-prompt-p))
+      (should (string-suffix-p (format "Hi.\n\n📁 Moved to %s\n\n❯ "
+                                       (abbreviate-file-name worktree))
+                               (opencode-test-output)))
+      (should (= 1 (funcall notice-count)))
+      (opencode-test-send "!pwd")
+      (should (string-search (concat (directory-file-name worktree) "\n")
+                             (opencode-test-output)))
+      (opencode--reload-session)
+      (opencode-test-wait-until (and (opencode-test-at-prompt-p)
+                                     (string-search "❯ !pwd" (opencode-test-output))))
+      (should (= 1 (funcall notice-count))))))
+
 (ert-deftest opencode-integration-resend-reverted-message-test ()
   "A reverted slash command resent is of its new user message, not the old one."
   (opencode-test-with-session '((".opencode/command/greet.md" . "Greet $ARGUMENTS\n"))

@@ -534,6 +534,17 @@ KEYS of its data that the change made stale are refetched."
         ((opencode-sidebar--shown-p (current-buffer))
          (opencode-sidebar--schedule-redraw))))
 
+(defun opencode-sidebar-session-moved ()
+  "Update the sidebars for the current session buffer moving to another directory.
+The `default-directory' of those showing it, for commands run in them,
+follows the session's, and what depends on its location is refetched."
+  (let ((session (current-buffer)))
+    (dolist (sidebar (opencode-sidebar--sidebars))
+      (with-current-buffer sidebar
+        (when (eq opencode-sidebar--session session)
+          (setq default-directory (buffer-local-value 'default-directory session)))))
+    (opencode-sidebar-session-changed :session :diff :mcps :branch)))
+
 (defun opencode-sidebar--invalidate-all (key)
   "Refetch KEY of the sidebar data of every session buffer that has it."
   (dolist (buffer (buffer-list))

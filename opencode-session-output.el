@@ -899,6 +899,15 @@ Return the plist of the call, from `opencode--tool-calls'."
   (opencode-session--start-block 'compaction)
   (opencode--output (propertize "🗜 Compacting session...\n" 'font-lock-face 'shadow)))
 
+(defun opencode--insert-location-switched (directory)
+  "Insert the status line for the session moving to server DIRECTORY."
+  (opencode-session--start-block 'location-switched)
+  (opencode--output
+   (propertize (format "📁 Moved to %s\n"
+                       (abbreviate-file-name
+                        (file-name-as-directory (opencode--from-server-path directory))))
+               'font-lock-face 'shadow)))
+
 (defun opencode--insert-compaction-summary (summary)
   "Insert the SUMMARY of a finished compaction, folded."
   (opencode-session--start-block 'compaction-summary)
@@ -1409,6 +1418,8 @@ Calls not yet finished are recorded so that later events finish them."
        (pcase .status
          ("completed" (opencode--insert-compaction-summary .summary))
          ("failed" (opencode--insert-error .error.message))))
+      ("location-switched"
+       (opencode--insert-location-switched .location.directory))
       ("idle"
        (opencode--end-turn .time.created)
        (pcase .outcome

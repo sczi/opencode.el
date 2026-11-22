@@ -212,6 +212,7 @@ may start with :else HANDLER to handle errors."
  (patch archive-session "/api/session/%s")
  (delete delete-session "/api/session/%s")
  (post fork-session "/api/session/%s/fork")
+ (post move-session "/api/session/%s/move")
  (post compact-session "/api/session/%s/compact")
  (post nodata interrupt-session "/api/session/%s/interrupt")
  (post nodata background-session "/api/session/%s/background")

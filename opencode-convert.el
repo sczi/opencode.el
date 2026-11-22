@@ -86,7 +86,9 @@
        (list (concat "### Synthetic context\n\n"
                      (opencode--fenced-block .text "text"))))
       ("compaction"
-       (list .summary)))))
+       (list .summary))
+      ("location-switched"
+       (list (format "Moved to `%s`" .location.directory))))))
 
 (defun opencode--conversation-to-markdown (messages)
   "Return MESSAGES as a Markdown conversation transcript."
@@ -95,7 +97,10 @@
                   for parts = (delq nil (opencode--conversation-message-parts message))
                   when parts
                   collect (string-join
-                           (cons (format "## %s" (capitalize (alist-get 'type message)))
+                           (cons (format "## %s"
+                                         (pcase (alist-get 'type message)
+                                           ("location-switched" "Moved")
+                                           (type (capitalize type))))
                                  parts)
                            "\n\n"))))
     (format "# OpenCode Conversation\n\n%s\n"

@@ -951,6 +951,29 @@ directory itself when it's outside the project, such as a worktree."
             (string-remove-suffix (concat "/" .subpath) directory)
           directory))))))
 
+(defun opencode--session-moved (moved)
+  "Move the current session buffer to the location of MOVED.
+MOVED is the data of a session.moved event, with the session's new
+location, project and subpath.  Return non-nil if its directory changed,
+as the event is sent to both its old and new locations.  Its
+directory-local variables and tags table are kept."
+  (let* ((server-directory (map-nested-elt moved '(location directory)))
+         (directory (file-name-as-directory
+                     (opencode--from-server-path server-directory))))
+    (unless (equal directory default-directory)
+      (setq default-directory directory
+            opencode--project-root (opencode--session-project-root moved))
+      (opencode--download-slash-commands directory)
+      (opencode--download-skills directory)
+      ;; when it's moved while idle, like from another client
+      (let ((prompt (opencode--prompt-showing-p)))
+        (when prompt
+          (opencode--retract-prompt))
+        (opencode--insert-location-switched server-directory)
+        (when prompt
+          (opencode--show-prompt)))
+      t)))
+
 (defun opencode--use-project-tags ()
   "Complete from the TAGS file at the session's project root, if any.
 Set `tags-table-list' locally too, so etags doesn't ask whether to add

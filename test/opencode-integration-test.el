@@ -600,6 +600,69 @@ It has the name given, or one the server picks."
       (should (equal "feature" (funcall open-worktree "feature")))
       (should-not (member (funcall open-worktree nil) '("feature" ""))))))
 
+(ert-deftest opencode-integration-new-worktree-move-session-test ()
+  "In a session a new worktree is moved to, with the tree's uncommitted changes.
+It goes to the same subdirectory of the worktree, the changes are gone from
+the original tree, and it's the same session.  Other stashes aren't touched."
+  (opencode-test-with-server
+    (let* ((project (opencode-test-make-project '(("a.txt" . "alpha\n")
+                                                  ("src/b.txt" . "beta\n"))))
+           (process-environment (opencode-test--environment))
+           (buffer (opencode-test-new-session (file-name-concat project "src/"))))
+      (with-current-buffer buffer
+        (let ((session-id opencode-session-id))
+          (with-temp-file "other.txt" (insert "other\n"))
+          (should (zerop (call-process "git" nil nil nil "stash" "push" "-u" "-m" "other")))
+          (with-temp-file "b.txt" (insert "changed\n"))
+          (with-temp-file "c.txt" (insert "new\n"))
+          (let (asked)
+            (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) (setq asked t))))
+              (opencode-new-worktree "feature"))
+            (should asked))
+          (opencode-test-wait-until (string-suffix-p "/feature/src/" default-directory))
+          (should (equal session-id opencode-session-id))
+          (should (equal "changed\n" (with-temp-buffer
+                                       (insert-file-contents "b.txt")
+                                       (buffer-string))))
+          (should (file-exists-p "c.txt"))
+          (let ((default-directory project))
+            (should-not (magit-git-lines "status" "--porcelain"))
+            ;; Only the stash that was already there is left
+            (should (equal '("On main: other") (magit-git-lines "stash" "list" "--format=%gs")))
+            (should-not (magit-git-lines "for-each-ref" "refs/opencode/")))
+          (opencode-test-wait-until (opencode-test-at-prompt-p))
+          (opencode-test-send "!pwd")
+          (should (string-search (concat (directory-file-name default-directory) "\n")
+                                 (opencode-test-output))))))))
+
+(ert-deftest opencode-integration-new-worktree-keep-changes-test ()
+  "Declining to move the uncommitted changes leaves them in the original tree."
+  (opencode-test-with-session '(("a.txt" . "alpha\n"))
+    (let ((project default-directory))
+      (with-temp-file "a.txt" (insert "changed\n"))
+      (cl-letf (((symbol-function 'y-or-n-p) #'ignore))
+        (opencode-new-worktree "feature"))
+      (opencode-test-wait-until (string-suffix-p "/feature/" default-directory))
+      (should (equal "alpha\n" (with-temp-buffer
+                                 (insert-file-contents "a.txt")
+                                 (buffer-string))))
+      (let ((default-directory project))
+        (should (equal '(" M a.txt") (magit-git-lines "status" "--porcelain")))
+        (should-not (magit-git-lines "for-each-ref" "refs/opencode/"))))))
+
+(ert-deftest opencode-integration-new-worktree-busy-session-test ()
+  "A busy session isn't moved to a new worktree."
+  (opencode-test-with-session nil
+    (opencode-test-llm-reply '("Working" (:hold)))
+    (opencode-test-send "Take your time" t)
+    (opencode-test-wait-for-output "Working")
+    (let ((directory default-directory))
+      (should-error (opencode-new-worktree "feature") :type 'user-error)
+      (should (equal directory default-directory)))
+    (should (= 1 (length (magit-list-worktrees))))
+    (opencode-test-llm-finish (opencode-test-llm-wait-held))
+    (opencode-test-wait-until (opencode-test-at-prompt-p))))
+
 (ert-deftest opencode-integration-resend-reverted-message-test ()
   "A reverted slash command resent is of its new user message, not the old one."
   (opencode-test-with-session '((".opencode/command/greet.md" . "Greet $ARGUMENTS\n"))

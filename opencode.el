@@ -16,6 +16,9 @@
 ;;; Code:
 
 (require 'json)
+(require 'magit-git)
+(require 'magit-process)
+(require 'magit-stash)
 (require 'opencode-api)
 (require 'opencode-common)
 (require 'opencode-edit-hooks)
@@ -70,28 +73,70 @@ first commit or adding a remote."
     (setf (opencode-connection-locations (opencode--conn)) nil)
     (message "Reloaded opencode locations")))
 
+(defun opencode--move-changes-to-worktree (worktree)
+  "Move the uncommitted changes of `default-directory's tree to WORKTREE.
+They're stashed, including untracked files, then applied in WORKTREE.  The
+stash is kept in a ref of its own rather than on the stash list, which all
+worktrees of the repository share, so others pushing and popping it at
+the same time can't interfere.  If applying fails the ref is kept, with a
+message saying so."
+  (let* ((name (format "opencode-new-worktree-%x" (random most-positive-fixnum)))
+         (ref (concat "refs/opencode/" name)))
+    ;; It makes no stash without changes
+    (magit-stash-save name t t t nil nil t ref)
+    (when-let* ((sha (magit-rev-parse ref)))
+      (if (zerop (let ((default-directory worktree))
+                   (magit-call-git "stash" "apply" sha)))
+          (magit-call-git "update-ref" "-d" ref)
+        (message "Applying the changes in %s failed, they're kept in %s" worktree ref)))))
+
 ;;;###autoload
 (defun opencode-new-worktree (&optional name)
   "Create a worktree of the current project and open a new session in it.
 The server creates it with a detached HEAD in its worktree directory,
 configured by opencode's worktree.directory setting.  The server picks
-its NAME, or with a prefix argument it's read from the minibuffer."
+its NAME, or with a prefix argument it's read from the minibuffer.
+
+In a session buffer the session is moved to the worktree instead, to the
+same subdirectory of it.  If its current tree has uncommitted changes,
+it asks whether to move them along with it."
   (interactive
    (list (when current-prefix-arg
            (let ((name (string-trim (read-string "Worktree name: "))))
              (unless (string-empty-p name) name)))))
-  (opencode-autoconnect
-   (lambda ()
-     (opencode-api--cached-location
-      (lambda (location)
-        (opencode-api-create-worktree
-            `((projectID . ,(map-nested-elt location '(project id)))
-              ,@(when name `((name . ,name))))
-            worktree
-          (let ((default-directory
-                 (file-name-as-directory
-                  (opencode--from-server-path (alist-get 'directory worktree)))))
-            (opencode-new-session))))))))
+  (let* ((session-id opencode-session-id)
+         (root (when session-id (or opencode--project-root default-directory)))
+         (subdirectory (when session-id (file-relative-name default-directory root)))
+         move-changes)
+    (when (and session-id (not (equal opencode-session-status "idle")))
+      (user-error "Wait for the session to be idle before moving it to a worktree"))
+    (setq move-changes
+          (and session-id
+               (let ((default-directory root))
+                 (or (magit-anything-modified-p) (magit-untracked-files)))
+               (y-or-n-p "Move uncommitted changes to the worktree? ")))
+    (opencode-autoconnect
+     (lambda ()
+       (opencode-api--cached-location
+        (lambda (location)
+          (opencode-api-create-worktree
+              `((projectID . ,(map-nested-elt location '(project id)))
+                ,@(when name `((name . ,name))))
+              worktree
+            (let ((worktree (file-name-as-directory
+                             (opencode--from-server-path
+                              (alist-get 'directory worktree)))))
+              (if (not session-id)
+                  (let ((default-directory worktree))
+                    (opencode-new-session))
+                (when move-changes
+                  (let ((default-directory root))
+                    (opencode--move-changes-to-worktree worktree)))
+                (opencode-api-move-session (session-id)
+                    `((directory . ,(directory-file-name
+                                     (opencode--to-server-path
+                                      (expand-file-name subdirectory worktree)))))
+                    _result))))))))))
 
 ;;;###autoload
 (defun opencode-select-project (&optional connection)

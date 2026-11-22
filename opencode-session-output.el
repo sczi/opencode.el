@@ -117,6 +117,13 @@ Their blocks had output in the replay, without this client seeing any delta.")
   "Overlay separating input typed while busy from the output before it.
 It also shows `opencode--queued-inputs'.")
 
+(defvar opencode--inhibit-pending-input-update nil
+  "Non-nil while `opencode--update-pending-input' shouldn't run.
+Bound around buffer changes that update it afterwards themselves.")
+
+(defvar-local opencode--queued-inputs-cache nil
+  "(INPUTS . STRING): a copy of `opencode--queued-inputs' and their display.")
+
 (cl-defstruct (opencode--queued (:constructor opencode--queued-create)
                                 (:copier nil))
   "Input queued until the session's running work finishes."
@@ -269,7 +276,9 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
   "Output STRING as comint output.
 It's marked as the output of `opencode--output-message', if any."
   (let ((start (and opencode--output-message (opencode--session-process-position))))
-    (comint-output-filter (get-buffer-process (current-buffer)) string)
+    ;; Updated once below, not on each change comint makes.
+    (let ((opencode--inhibit-pending-input-update t))
+      (comint-output-filter (get-buffer-process (current-buffer)) string))
     (when start
       (with-silent-modifications
         (put-text-property start (opencode--session-process-position)
@@ -683,22 +692,38 @@ Pending input after it stays, and a later prompt goes before it."
       (opencode--update-pending-input))))
 
 (defun opencode--queued-inputs-string ()
-  "Return the display of `opencode--queued-inputs', a line for each."
-  (let ((margin (opencode--margin-string 'opencode-request-margin-highlight)))
-    (mapconcat (lambda (queued)
-                 (let ((text (copy-sequence (opencode--queued-text queued))))
-                   (add-face-text-property 0 (length text) 'shadow t text)
-                   (concat margin
-                           (string-replace "\n" (concat "\n" margin) text)
-                           (propertize "  (queued)" 'face '(shadow italic))
-                           "\n")))
-               opencode--queued-inputs)))
+  "Return the display of `opencode--queued-inputs', a line for each.
+It's cached, as it's called on each output."
+  (cond
+   ((not opencode--queued-inputs) "")
+   ((equal (car opencode--queued-inputs-cache) opencode--queued-inputs)
+    (cdr opencode--queued-inputs-cache))
+   (t
+    (let* ((margin (opencode--margin-string 'opencode-request-margin-highlight))
+           (string
+            (mapconcat (lambda (queued)
+                         (let ((text (copy-sequence (opencode--queued-text queued))))
+                           (add-face-text-property 0 (length text) 'shadow t text)
+                           (concat margin
+                                   (string-replace "\n" (concat "\n" margin) text)
+                                   (propertize "  (queued)" 'face '(shadow italic))
+                                   "\n")))
+                       opencode--queued-inputs)))
+      ;; Copy the structs too, as they're modified in place.
+      (setq opencode--queued-inputs-cache
+            (cons (mapcar #'copy-sequence opencode--queued-inputs) string))
+      string))))
 
 (defun opencode--update-pending-input (&rest _)
   "Separate input typed while busy from the output before it.
 Display a blank line and the request margin before the pending input.
 `opencode--queued-inputs' are shown before it, or before the prompt if
 one is showing."
+  (unless opencode--inhibit-pending-input-update
+    (opencode--update-pending-input-1)))
+
+(defun opencode--update-pending-input-1 ()
+  "Do the work of `opencode--update-pending-input'."
   (let* ((proc (get-buffer-process (current-buffer)))
          (pmark (and proc (marker-position (process-mark proc))))
          (busy (equal opencode-session-status "busy"))
@@ -716,16 +741,22 @@ one is showing."
               (move-overlay opencode--pending-input-overlay start (point-max))
             (setq opencode--pending-input-overlay
                   (make-overlay start (point-max) nil t t)))
-          (overlay-put opencode--pending-input-overlay 'before-string
-                       (let ((queued (opencode--queued-inputs-string)))
-                         (if (/= start pmark)
-                             ;; before the blank line, and the prompt has
-                             ;; its own margin
-                             (concat "\n" queued)
-                           (concat (opencode--block-spacing pmark)
-                                   (and opencode--queued-inputs (concat queued "\n"))
-                                   (opencode--margin-string
-                                    'opencode-request-margin-highlight))))))
+          (let ((string
+                 (let ((queued (opencode--queued-inputs-string)))
+                   (if (/= start pmark)
+                       ;; before the blank line, and the prompt has
+                       ;; its own margin
+                       (concat "\n" queued)
+                     (concat (opencode--block-spacing pmark)
+                             (and opencode--queued-inputs (concat queued "\n"))
+                             (opencode--margin-string
+                              'opencode-request-margin-highlight))))))
+            ;; overlay-put with a non-eq value forces redisplay`
+            (unless (equal-including-properties
+                     string (overlay-get opencode--pending-input-overlay
+                                         'before-string))
+              (overlay-put opencode--pending-input-overlay
+                           'before-string string))))
       (when opencode--pending-input-overlay
         (delete-overlay opencode--pending-input-overlay)
         (setq opencode--pending-input-overlay nil)))))

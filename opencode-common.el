@@ -501,18 +501,33 @@ It's the last line if there are fewer than LINE."
 (defun opencode--call-preserving-lines (fn)
   "Call FN, then restore the lines of point in the current buffer and its windows.
 The line of each window's start is restored too, so redrawing the whole
-buffer doesn't scroll windows it isn't selected in."
-  (let ((line (line-number-at-pos))
-        (windows (mapcar (lambda (window)
-                           (list window
-                                 (line-number-at-pos (window-point window))
-                                 (line-number-at-pos (window-start window))))
-                         (get-buffer-window-list nil nil t))))
+buffer doesn't scroll windows it isn't selected in.  So are the lines
+windows that previously showed the buffer remember in `window-prev-buffers',
+which `switch-to-buffer' returns to when `switch-to-buffer-preserve-window-point'
+is set, and which erasing the buffer would move to its start."
+  (let* ((buffer (current-buffer))
+         (line (line-number-at-pos))
+         (windows (mapcar (lambda (window)
+                            (list window
+                                  (line-number-at-pos (window-point window))
+                                  (line-number-at-pos (window-start window))))
+                          (get-buffer-window-list nil nil t)))
+         (markers (cl-loop for window in (window-list-1 nil 'nomini t)
+                           for entry = (assq buffer (window-prev-buffers window))
+                           when entry
+                           nconc (cl-loop for marker in (cdr entry)
+                                          when (and (markerp marker)
+                                                    (eq (marker-buffer marker) buffer))
+                                          collect (cons marker
+                                                        (line-number-at-pos marker))))))
     (funcall fn)
     (goto-char (opencode--line-position line))
+    (pcase-dolist (`(,marker . ,marker-line) markers)
+      (when (eq (marker-buffer marker) buffer)
+        (set-marker marker (opencode--line-position marker-line))))
     (pcase-dolist (`(,window ,point-line ,start-line) windows)
       (when (and (window-live-p window)
-                 (eq (window-buffer window) (current-buffer)))
+                 (eq (window-buffer window) buffer))
         (set-window-start window (opencode--line-position start-line) t)
         (set-window-point window (opencode--line-position point-line))))))
 

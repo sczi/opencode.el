@@ -1543,6 +1543,33 @@ mode line."
             (should (equal "*OpenCode Sessions: global*" (buffer-name (car buffers)))))
         (mapc #'kill-buffer (delete-dups buffers))))))
 
+(ert-deftest opencode-preserved-lines-in-previous-window-buffers-test ()
+  "Redrawing a buffer no window shows keeps the line windows remember for it.
+`switch-to-buffer' returns there, eg after creating a session from the
+session control buffer and switching back to it."
+  (let ((buffer (generate-new-buffer "*opencode-redraw-test*"))
+        (other (generate-new-buffer "*opencode-redraw-other*"))
+        (switch-to-buffer-preserve-window-point t)
+        (draw (lambda ()
+                (erase-buffer)
+                (dotimes (i 20) (insert (format "line %d\n" i))))))
+    (save-window-excursion
+      (unwind-protect
+          (with-selected-window (split-window (frame-first-window))
+            (switch-to-buffer buffer)
+            (funcall draw)
+            (goto-char (point-min))
+            (forward-line 10)
+            (switch-to-buffer other)
+            (with-current-buffer buffer
+              (goto-char (point-min))
+              (opencode--with-preserved-lines
+                (funcall draw)))
+            (switch-to-buffer buffer)
+            (should (= 11 (line-number-at-pos))))
+        (kill-buffer buffer)
+        (kill-buffer other)))))
+
 (ert-deftest opencode-session-sync-only-what-differs-test ()
   "The agent and model are only switched if they differ from the server's.
 Switching agent always records a message, and each switch is a round trip."

@@ -201,7 +201,7 @@ Unless it already was downloaded, or FORCE."
 (defun opencode-insert-slash-command ()
   "Insert an opencode slash command."
   (interactive)
-  (if (= (point) (cdr comint-last-prompt))
+  (if (= (point) (opencode--session-process-position))
       (let* ((commands (opencode--directory-slash-commands))
              (command (opencode--annotated-completion
                        "Slash command: "

@@ -673,33 +673,12 @@ from a session buffer whatever languages the project uses."
                        (or (fboundp symbol) (boundp symbol) (facep symbol)))
           :exclusive 'no)))
 
-;; This is now fixed in doom as of 21/11/2026 but we'll leave for a time as many
-;; doom users probably haven't upgraded yet
-(defun opencode--skip-doom-protect-output (process &rest _)
-  "Return non-nil if PROCESS's buffer is an opencode session.
-Then skip Doom's advice that marks all output since the last input
-read-only, on every output, which is quadratic while streaming."
-  (when-let* ((buffer (process-buffer process)))
-    (with-current-buffer buffer
-      (derived-mode-p 'opencode-session-mode))))
-
 (define-derived-mode opencode-session-mode comint-mode "OpenCode"
   "Major mode for interacting with an opencode session."
   (setq-local comint-use-prompt-regexp nil
               comint-input-sender 'opencode--send-input
               comint-highlight-input nil
               left-margin-width (1+ left-margin-width))
-  ;; Output comes from the server, never a password prompt or terminal
-  ;; escapes, and these filters are costly when replaying large sessions.
-  ;; They're global, so `remove-hook' can't remove them locally.
-  (setq-local comint-output-filter-functions
-              (seq-difference comint-output-filter-functions
-                              '(comint-watch-for-password-prompt
-                                ansi-color-process-output)))
-  ;; Doom defines it `after! comint', which has run as we derive from comint.
-  (when (fboundp 'comint-output-filter@protect-output)
-    (advice-add 'comint-output-filter@protect-output :before-until
-                #'opencode--skip-doom-protect-output))
   (setq-local markdown-ts-hide-markup t
               markdown-ts-enable-code-block-context-mode nil
               markdown-ts-enable-table-mode nil)

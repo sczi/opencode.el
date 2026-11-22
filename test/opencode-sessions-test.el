@@ -754,6 +754,31 @@ Keep their text properties if PROPERTIES is non-nil."
       (should-not (opencode-session-test--margin-p pos)))
     (should (opencode-session-test--margin-p (+ (point-min) 9)))))
 
+(ert-deftest opencode-session-output-test ()
+  "Output goes before pending input, is read-only, and isn't a prompt."
+  (with-opencode-session-test-buffer
+    (let ((comint-prompt-read-only t))
+      (opencode--output "hello world\nsec")
+      (goto-char (point-max))
+      (insert "typed")
+      (goto-char (process-mark process))
+      (opencode--output "ond")
+      (should (equal (buffer-string) "hello world\nsecondtyped"))
+      ;; Point at the process mark follows the output.
+      (should (= (point) (process-mark process) 19))
+      (should (eq (get-text-property 1 'field) 'output))
+      (should-not (get-text-property 19 'field))
+      ;; Unlike comint's, the last output line isn't highlighted as a prompt.
+      (should-not (get-text-property 14 'font-lock-face))
+      ;; Output can't be edited, even within it, but input can be typed.
+      (dolist (pos '(1 4 13 14))
+        (goto-char pos)
+        (should-error (insert "X") :type 'text-read-only))
+      (goto-char (process-mark process))
+      (should-error (delete-char -1) :type 'text-read-only)
+      (insert "X")
+      (should (equal (buffer-string) "hello world\nsecondXtyped")))))
+
 (ert-deftest opencode-session-folding-test ()
   "Fold reasoning, edit diffs and tool output, but not user shell output."
   (with-opencode-session-test-buffer
@@ -942,8 +967,7 @@ Keep their text properties if PROPERTIES is non-nil."
 
 (ert-deftest opencode-session-replay-undo-test ()
   "Replay isn't recorded for undo, even if output resets the undo list.
-Doom resets it after comint output, which made `combine-change-calls'
-warn that it was truncated."
+Resetting it made `combine-change-calls' warn that it was truncated."
   (with-opencode-session-test-buffer
     (buffer-enable-undo)
     (opencode--output "logo\n\n")
@@ -951,7 +975,7 @@ warn that it was truncated."
           (reset (lambda (&rest _) (setq buffer-undo-list nil)))
           messages)
       (should (consp undo-list))
-      (advice-add 'comint-output-filter :after reset)
+      (advice-add 'opencode--output :after reset)
       (unwind-protect
           (cl-letf (((symbol-function 'message)
                      (lambda (&rest args) (push (apply #'format-message args) messages))))
@@ -959,7 +983,7 @@ warn that it was truncated."
              '(((id . "msg_1") (type . "user") (text . "hello"))
                ((id . "msg_2") (type . "idle") (outcome . "failed")
                 (error . ((type . "unknown") (message . "It broke")))))))
-        (advice-remove 'comint-output-filter reset))
+        (advice-remove 'opencode--output reset))
       (should (opencode-session-test--error-face-p "It broke"))
       (should-not messages)
       (should (eq buffer-undo-list undo-list)))))

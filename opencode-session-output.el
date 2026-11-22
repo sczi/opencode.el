@@ -273,16 +273,30 @@ END defaults to the process marker.  Fold it now unless SHOWN is non-nil."
   (opencode--output (opencode--block-spacing (opencode--session-process-position))))
 
 (defun opencode--output (string)
-  "Output STRING as comint output.
-It's marked as the output of `opencode--output-message', if any."
-  (let ((start (and opencode--output-message (opencode--session-process-position))))
-    ;; Updated once below, not on each change comint makes.
-    (let ((opencode--inhibit-pending-input-update t))
-      (comint-output-filter (get-buffer-process (current-buffer)) string))
-    (when start
-      (with-silent-modifications
-        (put-text-property start (opencode--session-process-position)
-                           'opencode-message opencode--output-message))))
+  "Insert STRING as output at the process mark, before any pending input.
+It's marked as the output of `opencode--output-message', if any.
+
+Not `comint-output-filter', which treats the output since the last
+newline as a prompt, and rehighlights all of it on each call.  That's
+quadratic in the length of a line streamed in small deltas."
+  (let ((pmark (process-mark (get-buffer-process (current-buffer))))
+        ;; Point at the process mark moves past the output.
+        (saved-point (copy-marker (point) t))
+        (inhibit-read-only t)
+        ;; Updated once below, not on each change.
+        (opencode--inhibit-pending-input-update t))
+    (save-restriction
+      (widen)
+      (goto-char pmark)
+      (insert string)
+      (opencode--mark-as-output pmark (point))
+      (when opencode--output-message
+        (with-silent-modifications
+          (put-text-property pmark (point)
+                             'opencode-message opencode--output-message)))
+      (set-marker pmark (point)))
+    (goto-char saved-point)
+    (set-marker saved-point nil))
   (opencode--update-pending-input))
 
 (defun opencode--start-text-lines ()
@@ -535,11 +549,16 @@ Markdown that was received."
       (opencode--rerender-tables))))
 
 (defun opencode--mark-as-output (beg end)
-  "Mark text from BEG to END, inserted outside `comint-output-filter', as output."
+  "Mark text from BEG to END as output, read-only if `comint-prompt-read-only'."
   (comint--mark-as-output beg end)
   (when comint-prompt-read-only
+    ;; Front sticky so text can't be inserted within the output either, but
+    ;; still rear nonsticky (from comint) so input can be after it.
     (with-silent-modifications
-      (put-text-property beg end 'read-only t))))
+      (add-text-properties
+       beg end
+       '(read-only t
+         front-sticky (field inhibit-line-move-field-capture read-only))))))
 
 (defvar opencode--table-query nil
   "Compiled query for Markdown tables, compiled on first use.")
@@ -661,8 +680,8 @@ input, which commands acting on the input line, like evil's `dd', expect."
                  'invisible t)
     (setq opencode--prompt (cons (copy-marker start)
                                  (copy-marker (opencode--session-process-position)))))
-  (opencode--add-margin (car comint-last-prompt)
-                        (cdr comint-last-prompt)
+  (opencode--add-margin (car opencode--prompt)
+                        (cdr opencode--prompt)
                         'opencode-request-margin-highlight)
   ;; queued input shows before the prompt
   (opencode--update-pending-input))
@@ -687,8 +706,7 @@ Pending input after it stays, and a later prompt goes before it."
       (set-marker (process-mark (get-buffer-process (current-buffer))) start)
       (set-marker start nil)
       (set-marker end nil)
-      (setq opencode--prompt nil
-            comint-last-prompt nil)
+      (setq opencode--prompt nil)
       (opencode--update-pending-input))))
 
 (defun opencode--queued-inputs-string ()
@@ -1403,9 +1421,6 @@ Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
   (let ((inhibit-redisplay t)
         ;; collect once afterwards, rather than many times during the replay
         (gc-cons-threshold most-positive-fixnum)
-        (comint-output-filter-functions
-         (remove #'comint-postoutput-scroll-to-bottom
-                 comint-output-filter-functions))
         (opencode--replaying-legacy
          (not (seq-some (lambda (message) (equal "idle" (alist-get 'type message)))
                         messages))))
@@ -1413,9 +1428,8 @@ Those from REVERT-MESSAGE-ID on have a staged revert, so are hidden."
     ;; rather than for every insertion.
     (combine-change-calls (point-min) (point-max)
       ;; Replayed history isn't undoable.  Recording it would be wasted
-      ;; work, and anything resetting the undo list meanwhile, like Doom's
-      ;; `comint-output-filter' advice, makes `combine-change-calls' warn
-      ;; that it was truncated.
+      ;; work, and anything resetting the undo list meanwhile makes
+      ;; `combine-change-calls' warn that it was truncated.
       (let ((buffer-undo-list t))
         (dolist (message messages)
           (unless (and revert-message-id

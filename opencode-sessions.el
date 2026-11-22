@@ -908,6 +908,7 @@ If CALLBACK is given, it will be called with SESSION afterwards."
       (setq opencode--replayed-unfinished-messages nil
             opencode-session-todos nil
             opencode-session-cost (or .cost 0)
+            opencode--server-model .model
             opencode--server-agent
             (or .agent
                 ;; sessions migrated from v1 only have it on their messages

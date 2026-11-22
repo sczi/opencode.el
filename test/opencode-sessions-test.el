@@ -1529,7 +1529,8 @@ mode line."
         (mapc #'kill-buffer (delete-dups buffers))))))
 
 (ert-deftest opencode-session-sync-only-what-differs-test ()
-  "Switching agent always records a message, so is only done if it differs."
+  "The agent and model are only switched if they differ from the server's.
+Switching agent always records a message, and each switch is a round trip."
   (with-opencode-session-test-buffer
     (let (requests sent)
       (cl-letf (((symbol-function 'opencode-api--request)
@@ -1538,16 +1539,27 @@ mode line."
                    (funcall (plist-get args :then) nil))))
         (setq opencode-session-agent '((id . "build")
                                        (model . ((id . "m") (providerID . "p"))))
-              opencode--server-agent "build")
+              opencode--server-agent "build"
+              opencode--server-model nil)
         (opencode--sync-agent-and-model (lambda () (setq sent t)))
         (should sent)
         (should (equal requests '("/api/session/session/model")))
-        (setq requests nil
-              opencode--server-agent "plan")
+        ;; The server's model is now known, and no variant is its default
+        (should (opencode--same-model-p
+                 opencode--server-model '((id . "m") (providerID . "p") (variant . "default"))))
+        (setq requests nil sent nil)
+        (opencode--sync-agent-and-model (lambda () (setq sent t)))
+        (should sent)
+        (should-not requests)
+        (setq opencode--server-agent "plan")
         (opencode--sync-agent-and-model #'ignore)
-        (should (equal requests '("/api/session/session/model"
-                                  "/api/session/session/agent")))
-        (should (equal opencode--server-agent "build"))))))
+        (should (equal requests '("/api/session/session/agent")))
+        (should (equal opencode--server-agent "build"))
+        (setq requests nil)
+        (setq opencode-session-agent
+              '((id . "build") (model . ((id . "m") (providerID . "p") (variant . "high")))))
+        (opencode--sync-agent-and-model #'ignore)
+        (should (equal requests '("/api/session/session/model")))))))
 
 (ert-deftest opencode-session-load-selection-test ()
   "Opening a session selects what it has, or what its messages used if migrated."

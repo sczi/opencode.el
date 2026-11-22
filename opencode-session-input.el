@@ -31,6 +31,19 @@ Buffer local so we can configure models and variants per agent per session.")
 (defvar-local opencode--server-agent nil
   "Id of the agent the server has selected for this buffer's session.")
 
+(defvar-local opencode--server-model nil
+  "Model the server has selected for this buffer's session, or nil if unknown.")
+
+(defun opencode--same-model-p (a b)
+  "Return non-nil if the models A and B are the same, as the server compares them."
+  (let-alist a
+    (let ((variant .variant) (provider .providerID) (id .id))
+      (let-alist b
+        (and provider id
+             (equal provider .providerID)
+             (equal id .id)
+             (equal (or variant "default") (or .variant "default")))))))
+
 (defvar-local opencode--temp-files nil
   "Temporary files to delete after sending or killing a session buffer.")
 
@@ -528,16 +541,17 @@ No events will follow to do so."
 
 (defun opencode--sync-agent-and-model (callback)
   "Make the server select the local agent and model, then run CALLBACK.
-The server ignores a switch to the same model, but a switch of agent always
-records a message, so that's only done if it differs."
+Each is only switched if it differs from the server's, to save a round
+trip, and since a switch of agent always records a message."
   (let ((agent (alist-get 'id opencode-session-agent))
         (model (alist-get 'model opencode-session-agent)))
     (cl-flet ((sync-model ()
-                (if model
+                (if (and model (not (opencode--same-model-p model opencode--server-model)))
                     (opencode-api-session-model (opencode-session-id)
                         `((model . ,model))
                         _response
                       :else #'opencode--send-failed
+                      (setq opencode--server-model (copy-alist model))
                       (funcall callback))
                   (funcall callback))))
       (if (or (null agent) (equal agent opencode--server-agent))

@@ -198,6 +198,7 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
                 .agent (alist-get 'model opencode-session-agent)))))
           (session.model.selected
            (opencode--with-session-buffer .sessionID
+             (setq opencode--server-model .model)
              (opencode--adopt-selection nil .model)))
           ((session.text.delta session.reasoning.delta)
            (opencode-session--block-delta .sessionID block-key .delta))

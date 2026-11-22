@@ -600,6 +600,22 @@ have none, even if copied from sent input, as after a revert."
       (self-insert-command 1))
     (should-not (get-char-property (1- (point-max)) 'invisible))))
 
+(ert-deftest opencode-session-copy-hidden-fence-test ()
+  "Copying from a hidden opening fence drops it, unless the whole block is copied."
+  (with-opencode-session-test-buffer
+    (opencode--output "```python\nx = 1\ny = 2\n```\n\nAfter\n")
+    (font-lock-ensure)
+    (let ((start (point-min)))
+      (goto-char start)
+      (search-forward "y = 2\n")
+      (should (equal (substring-no-properties
+                      (filter-buffer-substring start (point)))
+                     "x = 1\ny = 2\n"))
+      (search-forward "```\n")
+      (should (equal (substring-no-properties
+                      (filter-buffer-substring start (point)))
+                     "```python\nx = 1\ny = 2\n```\n")))))
+
 (ert-deftest opencode-session-yank-code-block-test ()
   "Copy only code from a fenced block, including embedded fences."
   (with-opencode-session-test-buffer

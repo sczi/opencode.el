@@ -740,6 +740,8 @@ from a session buffer whatever languages the project uses."
   ;; its `invisible', and redisplay skipping it never fontifies it visible.
   (setq-local text-property-default-nonsticky
               (cons '(invisible . t) text-property-default-nonsticky))
+  (add-function :filter-return (local 'filter-buffer-substring-function)
+                #'opencode--drop-stray-hidden-fence)
   (opencode--setup-mode-line)
   ;; typing while busy starts or ends pending input
   (add-hook 'after-change-functions #'opencode--update-pending-input nil t)
@@ -778,6 +780,21 @@ from a session buffer whatever languages the project uses."
 
 ;; Markdown hides whole fence lines, including their newline, only in view mode.
 (derived-mode-add-parents 'opencode-session-mode '(markdown-ts-view-mode))
+
+(defun opencode--drop-stray-hidden-fence (text)
+  "Return TEXT without a hidden opening fence line it starts with.
+Point drawn at the start of a code block can be before its hidden
+opening fence, so a copy starting there would include the fence by
+accident.  Keep it if TEXT also ends with a hidden fence: the whole
+block was copied on purpose."
+  (let ((fence "[`~]\\{3,\\}"))
+    (if (and (string-match-p (concat "\\`" fence ".*\n") text)
+             (get-text-property 0 'invisible text)
+             (not (and (string-match (concat "^" fence "[ \t]*\n?\\'") text)
+                       (> (match-beginning 0) 0)
+                       (get-text-property (match-beginning 0) 'invisible text))))
+        (substring text (1+ (string-search "\n" text)))
+      text)))
 
 (defun opencode-yank-code-block ()
   "Yank the code inside the markdown code block under point."

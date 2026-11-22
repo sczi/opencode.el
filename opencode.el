@@ -127,6 +127,7 @@ it asks whether to move them along with it."
             (let ((worktree (file-name-as-directory
                              (opencode--from-server-path
                               (alist-get 'directory worktree)))))
+              (opencode--trust-worktree worktree)
               (if (not session-id)
                   (let ((default-directory worktree))
                     (opencode-new-session))

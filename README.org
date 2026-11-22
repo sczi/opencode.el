@@ -68,6 +68,11 @@ of advantages over the official TUI:
      When run from inside a session, it will create a new worktree and move the
      session into it, prompting whether to also move uncommitted changes into
      the new worktree, if there are any.
+
+     We automatically add new worktrees to =safe-local-variable-directories= if
+     the git top level directory was already considered safe, to maintain
+     project settings like =opencode-project-files-finished-editing-functions= you
+     may have in =.dir-locals.el=
    - =`file`= and =file:line= references in LLM output are turned into clickable buttons
    - complete on project symbols from within chat sessions
      In chat buffers, we set =completion-at-point-functions= to complete with

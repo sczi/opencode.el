@@ -534,9 +534,11 @@ A shell command isn't a user message."
 (ert-deftest opencode-integration-session-moved-test ()
   "A session moved to a worktree follows it, with a notice of the move.
 Its directory and project root are the worktree's, its shell commands run
-there, and the notice is shown once, also when it's reloaded."
+there, and the notice is shown once, also when it's reloaded.  The
+worktree is trusted, as the main one is."
   (opencode-test-with-session '(("a.txt" . "alpha\n"))
-    (let ((worktree (file-name-as-directory
+    (let ((safe-local-variable-directories (list default-directory))
+          (worktree (file-name-as-directory
                      (concat (directory-file-name default-directory) "-moved")))
           (notice-count (lambda ()
                           (let ((output (opencode-test-output))
@@ -556,6 +558,8 @@ there, and the notice is shown once, also when it's reloaded."
           _result)
       (opencode-test-wait-until (equal worktree default-directory))
       (should (equal worktree opencode--project-root))
+      (should (seq-some (lambda (dir) (file-equal-p dir worktree))
+                        safe-local-variable-directories))
       (opencode-test-wait-until (opencode-test-at-prompt-p))
       (should (string-suffix-p (format "Hi.\n\n📁 Moved to %s\n\n❯ "
                                        (abbreviate-file-name worktree))
@@ -571,10 +575,12 @@ there, and the notice is shown once, also when it's reloaded."
 
 (ert-deftest opencode-integration-new-worktree-test ()
   "A new worktree is made by the server, detached, and a session opened in it.
-It has the name given, or one the server picks."
+It has the name given, or one the server picks.  It's trusted, as the
+main worktree is."
   (opencode-test-with-server
     (let* ((project (opencode-test-make-project '(("a.txt" . "alpha\n"))))
            (default-directory project)
+           (safe-local-variable-directories (list project))
            (process-environment (opencode-test--environment))
            (new-session (symbol-function 'opencode-new-session))
            (open-worktree
@@ -592,6 +598,8 @@ It has the name given, or one the server picks."
                   (should-not (equal project default-directory))
                   (should (equal default-directory opencode--project-root))
                   (should (file-exists-p "a.txt"))
+                  (should (seq-some (lambda (dir) (file-equal-p dir default-directory))
+                                    safe-local-variable-directories))
                   ;; A linked worktree, with a detached HEAD
                   (should (file-regular-p ".git"))
                   (should-not (zerop (call-process "git" nil nil nil
@@ -636,13 +644,16 @@ the original tree, and it's the same session.  Other stashes aren't touched."
                                  (opencode-test-output))))))))
 
 (ert-deftest opencode-integration-new-worktree-keep-changes-test ()
-  "Declining to move the uncommitted changes leaves them in the original tree."
+  "Declining to move the uncommitted changes leaves them in the original tree.
+The worktree isn't trusted, as the main one isn't."
   (opencode-test-with-session '(("a.txt" . "alpha\n"))
-    (let ((project default-directory))
+    (let ((project default-directory)
+          (safe-local-variable-directories nil))
       (with-temp-file "a.txt" (insert "changed\n"))
       (cl-letf (((symbol-function 'y-or-n-p) #'ignore))
         (opencode-new-worktree "feature"))
       (opencode-test-wait-until (string-suffix-p "/feature/" default-directory))
+      (should-not safe-local-variable-directories)
       (should (equal "alpha\n" (with-temp-buffer
                                  (insert-file-contents "a.txt")
                                  (buffer-string))))

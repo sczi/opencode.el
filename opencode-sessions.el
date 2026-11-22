@@ -15,6 +15,7 @@
 (require 'comint)
 (require 'hideshow)
 (require 'imenu)
+(require 'magit-git)
 (require 'markdown-ts-mode)
 (require 'opencode-api)
 (require 'opencode-common)
@@ -951,6 +952,22 @@ directory itself when it's outside the project, such as a worktree."
             (string-remove-suffix (concat "/" .subpath) directory)
           directory))))))
 
+(defun opencode--trust-worktree (directory)
+  "Trust the git worktree of DIRECTORY if its main worktree is trusted.
+When the root of the repository's main worktree is in
+`safe-local-variable-directories', add the root of DIRECTORY's
+worktree to it, for this Emacs session only."
+  (let ((default-directory directory))
+    (when-let* ((root (magit-toplevel))
+                (main (car (car (magit-list-worktrees))))
+                (trusted-p (lambda (dir)
+                             (seq-some (lambda (safe) (file-equal-p safe dir))
+                                       safe-local-variable-directories))))
+      (when (and (not (file-equal-p root main))
+                 (funcall trusted-p main)
+                 (not (funcall trusted-p root)))
+        (push (file-name-as-directory root) safe-local-variable-directories)))))
+
 (defun opencode--session-moved (moved)
   "Move the current session buffer to the location of MOVED.
 MOVED is the data of a session.moved event, with the session's new
@@ -963,6 +980,7 @@ directory-local variables and tags table are kept."
     (unless (equal directory default-directory)
       (setq default-directory directory
             opencode--project-root (opencode--session-project-root moved))
+      (opencode--trust-worktree directory)
       (opencode--download-slash-commands directory)
       (opencode--download-skills directory)
       ;; when it's moved while idle, like from another client

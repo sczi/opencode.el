@@ -490,7 +490,10 @@ used."
 
 (defun opencode-test-make-project (&optional files)
   "Make a new git project on the test server, and return its directory.
-FILES is an alist of file names to their contents, committed in it."
+FILES is an alist of file names to their contents, committed in it.  The
+server identifies a project by its root commit, so the commit message
+names the directory, to keep projects with the same files made in the
+same second apart."
   (let ((directory (file-name-as-directory
                     (file-name-concat opencode-test--root "projects"
                                       (format "project-%d"
@@ -502,9 +505,11 @@ FILES is an alist of file names to their contents, committed in it."
         (make-directory (file-name-directory file) t)
         (with-temp-file file (insert contents))))
     (let ((default-directory directory))
-      (dolist (args '(("init" "-q" "-b" "main")
+      (dolist (args `(("init" "-q" "-b" "main")
                       ("add" "-A")
-                      ("commit" "-q" "--allow-empty" "-m" "Initial commit")))
+                      ("commit" "-q" "--allow-empty" "-m"
+                       ,(concat "Initial commit of " (file-name-nondirectory
+                                                      (directory-file-name directory))))))
         (unless (zerop (apply #'call-process "git" nil nil nil args))
           (error "Git %s failed in %s" (car args) directory))))
     directory))

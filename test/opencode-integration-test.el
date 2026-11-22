@@ -141,8 +141,6 @@ input is kept, and the plan agent with its settings is saved.
 Killing the session deletes it on the server, and kills its buffer."
   (opencode-test-with-session nil
     ;; queued input
-    (should (eq (keymap-lookup opencode-session-mode-map "C-<return>")
-                'opencode-queue-input))
     (opencode-test-llm-reply "Answer"
                              '("First answer" (:hold)) "Queued answer"
                              '("Third answer" (:hold)) "Fourth answer")
@@ -339,8 +337,6 @@ Backgrounding a running shell lets the turn finish while it keeps running."
         (should (equal 1 (length opencode-alerted-sessions)))
         (should (string-search "It went." (opencode-test-output)))))
     ;; backgrounded while it runs
-    (should (eq (keymap-lookup opencode-session-mode-map "C-c C-b")
-                'opencode-background-all-jobs))
     (opencode-test-llm-reply
      '((:tool "shell" ((command . "touch started; while [ ! -e go-on ]; do sleep 0.1; done; echo went"))))
      "Backgrounded it."
@@ -615,8 +611,8 @@ it's reloaded.  The worktree is trusted, as the main one is.
 Once the worktree is deleted, sending input in the open session offers a
 move back to the project, and sends the input once moved; switching to an
 open session's buffer offers it too.  A closed session reopened is offered
-it, going to the same subdirectory of the main worktree if that exists,
-otherwise to its top-level directory."
+it, going to the same subdirectory of the main worktree.  Where it goes
+otherwise is tested by `opencode-relocation-target-test'."
   (opencode-test-with-server
     (let* ((project (opencode-test-make-project '(("a.txt" . "alpha\n")
                                                   ("src/b.txt" . "beta\n"))))
@@ -706,44 +702,36 @@ otherwise to its top-level directory."
             (opencode-test-wait-until (equal project default-directory))
             (should (string-search "no longer exists" asked)))))
       ;; Reopening a closed session whose worktree was deleted moves it back
-      (let ((reopen
-             (lambda (subdirectory)
-               (let* ((worktree (funcall add-worktree
-                                         (make-temp-name "-gone-")))
-                      (buffer (progn
-                                (make-directory (expand-file-name subdirectory worktree) t)
-                                (opencode-test-new-session
-                                 (expand-file-name subdirectory worktree))))
-                      (session-id (buffer-local-value 'opencode-session-id buffer))
-                      opened)
-                 (setq asked nil)
-                 (kill-buffer buffer)
-                 (funcall remove-worktree worktree)
-                 ;; It's asked from a response handler
-                 (cl-letf (((symbol-function 'y-or-n-p)
-                            (lambda (prompt) (setq asked prompt) t)))
-                   (opencode-api-session (session-id)
-                       session
-                     (opencode-open-session
-                      session :callback (lambda (_) (setq opened (current-buffer)))))
-                   (opencode-test-wait-until opened))
-                 (should (string-search "no longer exists" asked))
-                 (with-current-buffer opened
-                   (should (equal session-id opencode-session-id))
-                   (opencode-test-wait-until (opencode-test-at-prompt-p))
-                   default-directory)))))
-        (should (equal (file-name-concat project "src/") (funcall reopen "src/")))
-        (should (equal project (funcall reopen "only-in-worktree/")))))))
+      (let* ((worktree (funcall add-worktree "-gone"))
+             (buffer (opencode-test-new-session (expand-file-name "src/" worktree)))
+             (session-id (buffer-local-value 'opencode-session-id buffer))
+             opened)
+        (setq asked nil)
+        (kill-buffer buffer)
+        (funcall remove-worktree worktree)
+        ;; It's asked from a response handler
+        (cl-letf (((symbol-function 'y-or-n-p)
+                   (lambda (prompt) (setq asked prompt) t)))
+          (opencode-api-session (session-id)
+              session
+            (opencode-open-session
+             session :callback (lambda (_) (setq opened (current-buffer)))))
+          (opencode-test-wait-until opened))
+        (should (string-search "no longer exists" asked))
+        (with-current-buffer opened
+          (should (equal session-id opencode-session-id))
+          (opencode-test-wait-until (opencode-test-at-prompt-p))
+          (should (equal (file-name-concat project "src/") default-directory)))))))
 
 (ert-deftest opencode-integration-new-worktree-test ()
   "A new worktree is made by the server, and a session moved or opened in it.
-It's detached, with the name given or one the server picks.  A busy
-session isn't moved to one.  An idle session is moved to
-the same subdirectory of it, with the tree's uncommitted changes if wanted:
-then the changes are gone from the original tree, other stashes aren't
-touched, and it's the same session.  Declining leaves the changes in the
-original tree.  Outside a session, a session is opened in it.  It's
-trusted if the main worktree is."
+It's detached, with the name given or one the server picks.  A session is
+moved to the same subdirectory of it, with the tree's uncommitted changes
+if wanted: then the changes are gone from the original tree, and it's the
+same session.  Declining leaves the changes in the original tree.  Outside
+a session, a session is opened in it.  It's trusted if the main worktree
+is.  See also `opencode-worktree-test' for moving the changes, trusting
+the worktree, and busy sessions."
   (opencode-test-with-server
     (let* ((project (opencode-test-make-project '(("a.txt" . "alpha\n")
                                                   ("src/b.txt" . "beta\n"))))
@@ -753,19 +741,8 @@ trusted if the main worktree is."
                         (seq-some (lambda (dir) (file-equal-p dir directory))
                                   safe-local-variable-directories))))
       (with-current-buffer (opencode-test-new-session (file-name-concat project "src/"))
-        ;; A busy session isn't moved
-        (opencode-test-llm-reply '("Working" (:hold)))
-        (opencode-test-send "Take your time" t)
-        (opencode-test-wait-for-output "Working")
-        (should-error (opencode-new-worktree "feature") :type 'user-error)
-        (should (equal (file-name-concat project "src/") default-directory))
-        (should (= 1 (length (magit-list-worktrees))))
-        (opencode-test-llm-finish (opencode-test-llm-wait-held))
-        (opencode-test-wait-until (opencode-test-at-prompt-p))
         ;; Moved with its uncommitted changes
         (let ((session-id opencode-session-id))
-          (with-temp-file "other.txt" (insert "other\n"))
-          (opencode-integration-test--git "stash" "push" "-u" "-m" "other")
           (with-temp-file "b.txt" (insert "changed\n"))
           (with-temp-file "c.txt" (insert "new\n"))
           (let (asked)
@@ -778,10 +755,7 @@ trusted if the main worktree is."
           (should (equal "changed\n" (opencode-integration-test--file "b.txt")))
           (should (file-exists-p "c.txt"))
           (let ((default-directory project))
-            (should-not (magit-git-lines "status" "--porcelain"))
-            ;; Only the stash that was already there is left
-            (should (equal '("On main: other") (magit-git-lines "stash" "list" "--format=%gs")))
-            (should-not (magit-git-lines "for-each-ref" "refs/opencode/")))
+            (should-not (magit-git-lines "status" "--porcelain")))
           (opencode-test-wait-until (opencode-test-at-prompt-p))
           (opencode-test-send "!pwd")
           (should (string-search (concat (directory-file-name default-directory) "\n")

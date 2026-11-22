@@ -396,6 +396,13 @@ have none, even if copied from sent input, as after a revert."
       (opencode-send-input)
       (should (equal sent '("hi"))))))
 
+(ert-deftest opencode-session-keys-test ()
+  "Queueing input and backgrounding jobs have their keys."
+  (should (eq (keymap-lookup opencode-session-mode-map "C-<return>")
+              'opencode-queue-input))
+  (should (eq (keymap-lookup opencode-session-mode-map "C-c C-b")
+              'opencode-background-all-jobs)))
+
 (ert-deftest opencode-session-label-test ()
   "Show the label name, and send it as code along with the label's part."
   (dolist (case '(("AGENTS.md" . "`AGENTS.md`")

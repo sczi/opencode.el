@@ -1022,11 +1022,30 @@ use when the project has no TAGS file, a directory-local
         (setq-local tags-file-name tags
                     tags-table-list (list tags))))))
 
+(defun opencode--relocation-target (session projects)
+  "Return the directory to move SESSION to, as its directory no longer exists.
+It's the same subdirectory of the main directory of its project, among
+PROJECTS, if that exists, otherwise the project's top-level directory,
+or nil if that doesn't exist either."
+  (let-alist session
+    (let* ((project (cl-find .projectID projects
+                             :key (lambda (p) (alist-get 'id p)) :test #'equal))
+           (root (and project (alist-get 'canonical project)
+                      (file-name-as-directory
+                       (opencode--from-server-path (alist-get 'canonical project)))))
+           (subdirectory (and root .subpath
+                              (not (member .subpath '("" ".")))
+                              (not (string-prefix-p ".." .subpath))
+                              (file-name-as-directory
+                               (expand-file-name .subpath root)))))
+      (cond ((and subdirectory (file-directory-p subdirectory))
+             subdirectory)
+            ((and root (file-directory-p root)) root)))))
+
 (defun opencode--offer-relocation (session-id then)
   "Offer to move SESSION-ID, whose directory no longer exists, back to its project.
-Such as a session in a worktree that's since been deleted.  It goes to the
-same subdirectory of the project's main directory if that exists, otherwise
-to its top-level directory.  Once moved, THEN is called with the moved
+Such as a session in a worktree that's since been deleted.  It goes to
+`opencode--relocation-target'.  Once moved, THEN is called with the moved
 session, in the buffer current now."
   ;; Requests from the missing directory fail to find its location
   (let ((default-directory (expand-file-name "~/")))
@@ -1035,20 +1054,8 @@ session, in the buffer current now."
       (let ((default-directory (expand-file-name "~/")))
         (opencode-api-projects projects
           (let-alist session
-            (let* ((missing (opencode--from-server-path .location.directory))
-                   (project (cl-find .projectID projects
-                                     :key (lambda (p) (alist-get 'id p)) :test #'equal))
-                   (root (and project (alist-get 'canonical project)
-                              (file-name-as-directory
-                               (opencode--from-server-path (alist-get 'canonical project)))))
-                   (subdirectory (and root .subpath
-                                      (not (member .subpath '("" ".")))
-                                      (not (string-prefix-p ".." .subpath))
-                                      (file-name-as-directory
-                                       (expand-file-name .subpath root))))
-                   (target (cond ((and subdirectory (file-directory-p subdirectory))
-                                  subdirectory)
-                                 ((and root (file-directory-p root)) root))))
+            (let ((missing (opencode--from-server-path .location.directory))
+                  (target (opencode--relocation-target session projects)))
               (unless target
                 (user-error "This session's directory %s no longer exists, nor does its project's"
                             (abbreviate-file-name missing)))

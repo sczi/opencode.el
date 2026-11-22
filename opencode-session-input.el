@@ -581,6 +581,13 @@ records a message, so that's only done if it differs."
   "How input being sent is delivered to a running turn, or nil to steer it.
 `queue' is bound by `opencode-queue-input'.")
 
+(defun opencode--queue-input-p (string)
+  "Return non-nil if input STRING sent now is queued, not sent to the session.
+Slash and shell commands aren't queued."
+  (and opencode--input-delivery
+       (equal opencode-session-status "busy")
+       (not (string-match-p "\\`[/!]" string))))
+
 (defun opencode--send-input (_proc string)
   "Send STRING as input to current opencode session.
 The input is marked as of its user message once the server creates it.
@@ -588,9 +595,7 @@ With `opencode--input-delivery' while busy, a prompt is queued instead."
   ;; STRING is the buffer text of the input, where each label is one character
   (pcase-let* ((start (marker-position comint-last-input-start))
                (end (+ start (length string)))
-               (queue (and opencode--input-delivery
-                           (equal opencode-session-status "busy")
-                           (not (string-match-p "\\`[/!]" string))))
+               (queue (opencode--queue-input-p string))
                (`(,string . ,extra-parts) (opencode--input-text-and-parts start end))
                (temp-files opencode--temp-files))
     (unless queue
@@ -748,18 +753,32 @@ Events are lost when not connected, so this is the only way to see it."
 The input is the current input, or with point before it, the old input
 `comint-get-old-input' copies, like `comint-send-input' sends."
   (interactive nil opencode-session-mode)
-  (let ((pmark (process-mark (get-buffer-process (current-buffer)))))
-    (unless (string-empty-p
-             (if (>= (point) pmark)
-                 (buffer-substring-no-properties pmark (point-max))
-               (funcall comint-get-old-input)))
+  (let* ((pmark (process-mark (get-buffer-process (current-buffer))))
+         (pending (>= (point) pmark))
+         (input (if pending
+                    (buffer-substring-no-properties pmark (point-max))
+                  (funcall comint-get-old-input))))
+    (unless (string-empty-p input)
+      (when (and pending (opencode--steering-p input))
+        (opencode--with-pending-input-aside
+          (opencode--show-prompt)))
       (comint-send-input))))
+
+(defun opencode--steering-p (string)
+  "Return non-nil if input STRING sent now steers the running turn.
+No prompt shows while a turn runs, so steering input needs one shown
+before it, to be separated from the output with a margin like any other."
+  (and (equal opencode-session-status "busy")
+       (not (opencode--prompt-showing-p))
+       (not (opencode--queue-input-p string))))
 
 (defun opencode-session--send-synthetic-input (string)
   "Send STRING to the current opencode session as if typed and sent.
 Pending input is kept, with the temporary files of its labels."
   (opencode--with-pending-input-aside
     (let ((opencode--temp-files nil))
+      (when (opencode--steering-p string)
+        (opencode--show-prompt))
       (insert string)
       (comint-send-input))))
 

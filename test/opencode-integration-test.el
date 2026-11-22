@@ -229,6 +229,36 @@ and shown pending again when the session is reloaded."
     (should-not opencode--queued-inputs)
     (should (string-suffix-p "❯ Fourth\n\nFourth answer\n\n❯ " (opencode-test-output)))))
 
+(ert-deftest opencode-integration-steer-input-test ()
+  "Input sent while a turn runs is shown after a prompt, as input sent idle.
+It's separated from the output before it, and has the request margin."
+  (opencode-test-with-session nil
+    ;; the steering input is delivered after the held response, as the
+    ;; next turn
+    (opencode-test-llm-reply '("First answer" (:hold)) "Steered answer")
+    (let ((since (length opencode-test-events)))
+      (opencode-test-send "First" t)
+      (opencode-test-wait-for-output "First answer")
+      (opencode-test-type "Steer")
+      (opencode-send-input)
+      (should (string-suffix-p "First answer\n\n❯ Steer\n\n" (opencode-test-output)))
+      ;; at the start of its line, where it's displayed
+      (let ((start (save-excursion (goto-char (opencode-test--search "Steer"))
+                                   (line-beginning-position))))
+        (should (eq 'opencode-request-margin-highlight
+                    (seq-some (lambda (ov)
+                                (when-let* ((prefix (overlay-get ov 'line-prefix)))
+                                  (get-text-property
+                                   0 'face (cadr (get-text-property 0 'display prefix)))))
+                              (overlays-at start)))))
+      (opencode-test-llm-finish (opencode-test-llm-wait-held))
+      (opencode-test-wait-finished since))
+    (opencode-test-wait-for-output "Steered answer")
+    (opencode-test-wait-until (opencode-test-at-prompt-p))
+    (should (equal "Steer" (opencode-test-llm-user-text
+                            (car (last opencode-test-llm-requests)))))
+    (should (string-search "❯ Steer\n" (opencode-test-output)))))
+
 (ert-deftest opencode-integration-background-all-jobs-test ()
   "Backgrounding a running shell lets the turn finish while it keeps running."
   (opencode-test-with-session nil

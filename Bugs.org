@@ -52,3 +52,10 @@ emojify-mode. emojify-mode is no longer needed since emacs 29, so the fix
 is just to disable it.
 ** [[https://github.com/r0man/plz-event-source/pull/15][plz-event-source-parser-parse-line: Stack overflow in regexp matcher]]
 make sure you are using at least version 0.1.5-pre
+** [[https://github.com/doomemacs/core/issues/8910][doomemacs/core#8910 comint-output-filter@protect-output is quadratic in perfo...]]
+doom adds a comint output filter that was quadratic in performance with length
+of the output since the last prompt, when streaming in small chunks. For small
+fast models that have really long reasoning outputs, this made it slow to a
+crawl.  We still have the workaround for now in
+=opencode--skip-doom-protect-output= as most users likely haven't upgraded doom
+yet.

@@ -673,6 +673,8 @@ from a session buffer whatever languages the project uses."
                        (or (fboundp symbol) (boundp symbol) (facep symbol)))
           :exclusive 'no)))
 
+;; This is now fixed in doom as of 21/11/2026 but we'll leave for a time as many
+;; doom users probably haven't upgraded yet
 (defun opencode--skip-doom-protect-output (process &rest _)
   "Return non-nil if PROCESS's buffer is an opencode session.
 Then skip Doom's advice that marks all output since the last input
@@ -754,6 +756,10 @@ read-only, on every output, which is quadratic while streaming."
   (setq-local font-lock-extra-managed-props
               (cl-set-difference font-lock-extra-managed-props
                                  '(button category action help-echo display)))
+  ;; Input typed after hidden markup, like a closing fence, would inherit
+  ;; its `invisible', and redisplay skipping it never fontifies it visible.
+  (setq-local text-property-default-nonsticky
+              (cons '(invisible . t) text-property-default-nonsticky))
   (opencode--setup-mode-line)
   ;; typing while busy starts or ends pending input
   (add-hook 'after-change-functions #'opencode--update-pending-input nil t)

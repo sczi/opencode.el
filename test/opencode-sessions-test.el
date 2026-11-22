@@ -589,6 +589,17 @@ have none, even if copied from sent input, as after a revert."
     (search-forward "After")
     (should-not (get-char-property (1- (pos-bol)) 'invisible))))
 
+(ert-deftest opencode-session-input-after-hidden-fence-test ()
+  "Input typed after a hidden closing fence isn't hidden with it."
+  (with-opencode-session-test-buffer
+    (opencode--output "```bash\nsleep 10\n```\n")
+    (font-lock-ensure)
+    (should (get-char-property (1- (point-max)) 'invisible))
+    (goto-char (point-max))
+    (let ((last-command-event ?x))
+      (self-insert-command 1))
+    (should-not (get-char-property (1- (point-max)) 'invisible))))
+
 (ert-deftest opencode-session-yank-code-block-test ()
   "Copy only code from a fenced block, including embedded fences."
   (with-opencode-session-test-buffer

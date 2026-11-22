@@ -1005,17 +1005,113 @@ use when the project has no TAGS file, a directory-local
         (setq-local tags-file-name tags
                     tags-table-list (list tags))))))
 
+(defun opencode--offer-relocation (session-id then)
+  "Offer to move SESSION-ID, whose directory no longer exists, back to its project.
+Such as a session in a worktree that's since been deleted.  It goes to the
+same subdirectory of the project's main directory if that exists, otherwise
+to its top-level directory.  Once moved, THEN is called with the moved
+session, in the buffer current now."
+  ;; Requests from the missing directory fail to find its location
+  (let ((default-directory (expand-file-name "~/")))
+    (opencode-api-session (session-id)
+        session
+      (let ((default-directory (expand-file-name "~/")))
+        (opencode-api-projects projects
+          (let-alist session
+            (let* ((missing (opencode--from-server-path .location.directory))
+                   (project (cl-find .projectID projects
+                                     :key (lambda (p) (alist-get 'id p)) :test #'equal))
+                   (root (and project (alist-get 'canonical project)
+                              (file-name-as-directory
+                               (opencode--from-server-path (alist-get 'canonical project)))))
+                   (subdirectory (and root .subpath
+                                      (not (member .subpath '("" ".")))
+                                      (not (string-prefix-p ".." .subpath))
+                                      (file-name-as-directory
+                                       (expand-file-name .subpath root))))
+                   (target (cond ((and subdirectory (file-directory-p subdirectory))
+                                  subdirectory)
+                                 ((and root (file-directory-p root)) root))))
+              (unless target
+                (user-error "This session's directory %s no longer exists, nor does its project's"
+                            (abbreviate-file-name missing)))
+              (unless (y-or-n-p (format "This session's directory %s no longer exists, move it to %s? "
+                                        (abbreviate-file-name missing)
+                                        (abbreviate-file-name target)))
+                (user-error "Session not moved, its directory %s no longer exists"
+                            (abbreviate-file-name missing)))
+              (let ((default-directory target))
+                (opencode-api-move-session (session-id)
+                    `((directory . ,(directory-file-name (opencode--to-server-path target))))
+                    _result
+                  (let ((default-directory target))
+                    (opencode-api-session (session-id)
+                        moved
+                      (funcall then moved))))))))))))
+
+(defun opencode--relocate-session-buffer (then)
+  "Offer to move the current buffer's session, if its directory no longer exists.
+Return non-nil if it's offered.  Once moved, the buffer follows it, and THEN
+is called with no arguments in it, if given."
+  (unless (file-directory-p default-directory)
+    (opencode--offer-relocation
+     opencode-session-id
+     (lambda (moved)
+       (opencode--session-moved moved)
+       (when then
+         (funcall then))))
+    t))
+
+(defun opencode-send-input ()
+  "Send input like `comint-send-input', unless it is empty.
+The input is the current input, or with point before it, the old input
+`comint-get-old-input' copies, like `comint-send-input' sends.
+If the session's directory no longer exists, it offers to move the session
+back to its project first, and sends once moved."
+  (interactive nil opencode-session-mode)
+  (let* ((pmark (process-mark (get-buffer-process (current-buffer))))
+         (pending (>= (point) pmark))
+         (input (if pending
+                    (buffer-substring-no-properties pmark (point-max))
+                  (funcall comint-get-old-input))))
+    (unless (or (string-empty-p input)
+                (opencode--relocate-session-buffer #'opencode-send-input))
+      (when (and pending (opencode--steering-p input))
+        (opencode--with-pending-input-aside
+          (opencode--show-prompt)))
+      (comint-send-input))))
+
+(defun opencode-queue-input ()
+  "Send input like `opencode-send-input', but queued while a turn runs.
+Input sent while a turn runs steers it, the model sees it after its next
+step.  Queued input waits until the turn finishes, then starts the next.
+It's shown pending until then.  Slash and shell commands aren't queued."
+  (interactive nil opencode-session-mode)
+  (let ((opencode--input-delivery 'queue))
+    (opencode-send-input)))
+
 (cl-defun opencode-open-session (session &key callback)
   "Open comint based shell for SESSION.
 Returns the buffer.  SESSION is on the current connection's server, or on
 that of its `opencode-connection' if it has one.
-If CALLBACK is given, it will be called with the session after it is initialized."
+If CALLBACK is given, it will be called with the session after it is initialized.
+If SESSION's directory no longer exists, offer to move it back to its
+project's directory, see `opencode--offer-relocation'.  It's opened once
+moved, or if already open, its buffer follows it."
   (opencode--with-connection-of session
     (let-alist session
       (let* ((connection (opencode--conn))
              (old-buffer (opencode--session-buffer .id)))
-        (if old-buffer
-            (opencode--switch-to-buffer old-buffer)
+        (cond
+         (old-buffer
+          (prog1 (opencode--switch-to-buffer old-buffer)
+            (with-current-buffer old-buffer
+              (opencode--relocate-session-buffer nil))))
+         ((not (file-directory-p (opencode--from-server-path .location.directory)))
+          (opencode--offer-relocation
+           .id (lambda (moved) (opencode-open-session moved :callback callback)))
+          nil)
+         (t
           (let ((buffer (generate-new-buffer
                          (format "*OpenCode: %s*" (opencode--session-title session))))
                 (agents (opencode--inherited-agents)))
@@ -1042,7 +1138,7 @@ If CALLBACK is given, it will be called with the session after it is initialized
                 (add-hook 'kill-buffer-hook #'opencode--session-cleanup nil t)
                 (opencode-insert-logo)
                 (opencode--load-session session callback))
-              (opencode--switch-to-buffer buffer))))))))
+              (opencode--switch-to-buffer buffer)))))))))
 
 (defun opencode--reload-session ()
   "Redisplay the current session from the server, keeping any typed input.

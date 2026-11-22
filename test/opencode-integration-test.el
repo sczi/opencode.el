@@ -573,6 +573,102 @@ worktree is trusted, as the main one is."
                                      (string-search "❯ !pwd" (opencode-test-output))))
       (should (= 1 (funcall notice-count))))))
 
+(ert-deftest opencode-integration-session-directory-deleted-test ()
+  "A session whose worktree was deleted is offered a move back to the project.
+It goes to the same subdirectory of the main worktree if that exists,
+otherwise to its top-level directory, and opens there."
+  (opencode-test-with-server
+    (let* ((project (opencode-test-make-project '(("a.txt" . "alpha\n")
+                                                  ("src/b.txt" . "beta\n"))))
+           (process-environment (opencode-test--environment))
+           (reopen
+            (lambda (subdirectory)
+              (let* ((worktree (file-name-as-directory
+                                (make-temp-name
+                                 (concat (directory-file-name project) "-gone-"))))
+                     (buffer (let ((default-directory project))
+                               (unless (zerop (call-process
+                                               "git" nil nil nil "worktree" "add" "-q"
+                                               "--detach" (directory-file-name worktree)))
+                                 (error "Git worktree add failed"))
+                               (make-directory (expand-file-name subdirectory worktree) t)
+                               (opencode-test-new-session
+                                (expand-file-name subdirectory worktree))))
+                     (session-id (buffer-local-value 'opencode-session-id buffer))
+                     asked opened)
+                (kill-buffer buffer)
+                (let ((default-directory project))
+                  (unless (zerop (call-process "git" nil nil nil "worktree" "remove"
+                                               "--force" (directory-file-name worktree)))
+                    (error "Git worktree remove failed")))
+                ;; It's asked from a response handler
+                (cl-letf (((symbol-function 'y-or-n-p)
+                           (lambda (prompt) (setq asked prompt) t)))
+                  (opencode-api-session (session-id)
+                      session
+                    (opencode-open-session
+                     session :callback (lambda (_) (setq opened (current-buffer)))))
+                  (opencode-test-wait-until opened))
+                (should (string-search "no longer exists" asked))
+                (with-current-buffer opened
+                  (should (equal session-id opencode-session-id))
+                  (opencode-test-wait-until (opencode-test-at-prompt-p))
+                  default-directory)))))
+      (should (equal (file-name-concat project "src/") (funcall reopen "src/")))
+      (should (equal project (funcall reopen "only-in-worktree/"))))))
+
+(ert-deftest opencode-integration-open-session-directory-deleted-test ()
+  "An open session whose worktree was deleted is offered a move back.
+Sending input offers it, and sends the input once moved.  Switching to the
+buffer offers it too."
+  (opencode-test-with-server
+    (let* ((project (opencode-test-make-project '(("a.txt" . "alpha\n"))))
+           (process-environment (opencode-test--environment))
+           (worktree-session
+            (lambda (name)
+              (let ((worktree (file-name-as-directory
+                               (concat (directory-file-name project) "-" name))))
+                (let ((default-directory project))
+                  (unless (zerop (call-process "git" nil nil nil "worktree" "add" "-q"
+                                               "--detach" (directory-file-name worktree)))
+                    (error "Git worktree add failed")))
+                (prog1 (with-current-buffer (opencode-test-new-session worktree)
+                         ;; Let the requests made on loading it finish first
+                         (opencode-test-wait-until
+                          (and (opencode--directory-cache-entry
+                                'slash-commands default-directory)
+                               (opencode--directory-cache-entry
+                                'skills default-directory)))
+                         (opencode-test-llm-reply "Hi.")
+                         (opencode-test-send "Hello")
+                         (current-buffer))
+                  (let ((default-directory project))
+                    (unless (zerop (call-process "git" nil nil nil "worktree" "remove"
+                                                 "--force" (directory-file-name worktree)))
+                      (error "Git worktree remove failed")))))))
+           asked)
+      (cl-letf (((symbol-function 'y-or-n-p)
+                 (lambda (prompt) (setq asked prompt) t)))
+        (with-current-buffer (funcall worktree-session "send")
+          (opencode-test-llm-reply "Moved and answered.")
+          (goto-char (point-max))
+          (insert "Hello")
+          (opencode-send-input)
+          (opencode-test-wait-until (equal project default-directory))
+          (should (string-search "no longer exists" asked))
+          (opencode-test-wait-for-output "Moved and answered.")
+          (opencode-test-wait-until (opencode-test-at-prompt-p))
+          (should (string-search "📁 Moved to" (opencode-test-output))))
+        (setq asked nil)
+        (let ((buffer (funcall worktree-session "switch")))
+          (with-current-buffer buffer
+            (let ((default-directory project))
+              (opencode-api-session (opencode-session-id)
+                  session
+                (opencode-open-session session)))
+            (opencode-test-wait-until (equal project default-directory))
+            (should (string-search "no longer exists" asked))))))))
+
 (ert-deftest opencode-integration-new-worktree-test ()
   "A new worktree is made by the server, detached, and a session opened in it.
 It has the name given, or one the server picks.  It's trusted, as the

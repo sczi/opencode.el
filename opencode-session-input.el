@@ -686,15 +686,6 @@ Those comint gives sent input are removed."
      0 (length input) '(read-only help-echo mouse-face) input)
     input))
 
-(defun opencode-queue-input ()
-  "Send input like `opencode-send-input', but queued while a turn runs.
-Input sent while a turn runs steers it, the model sees it after its next
-step.  Queued input waits until the turn finishes, then starts the next.
-It's shown pending until then.  Slash and shell commands aren't queued."
-  (interactive nil opencode-session-mode)
-  (let ((opencode--input-delivery 'queue))
-    (opencode-send-input)))
-
 (defun opencode--queued-input (id)
   "Return the input of `opencode--queued-inputs' with inbox item ID, or nil."
   (seq-find (lambda (queued) (equal id (opencode--queued-id queued)))
@@ -747,22 +738,6 @@ Events are lost when not connected, so this is the only way to see it."
         (opencode--add-queued-input (alist-get 'id item) item)))))
 
 (add-hook 'opencode-session-loaded-functions #'opencode--fetch-queued-inputs)
-
-(defun opencode-send-input ()
-  "Send input like `comint-send-input', unless it is empty.
-The input is the current input, or with point before it, the old input
-`comint-get-old-input' copies, like `comint-send-input' sends."
-  (interactive nil opencode-session-mode)
-  (let* ((pmark (process-mark (get-buffer-process (current-buffer))))
-         (pending (>= (point) pmark))
-         (input (if pending
-                    (buffer-substring-no-properties pmark (point-max))
-                  (funcall comint-get-old-input))))
-    (unless (string-empty-p input)
-      (when (and pending (opencode--steering-p input))
-        (opencode--with-pending-input-aside
-          (opencode--show-prompt)))
-      (comint-send-input))))
 
 (defun opencode--steering-p (string)
   "Return non-nil if input STRING sent now steers the running turn.

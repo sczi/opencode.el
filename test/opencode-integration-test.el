@@ -569,6 +569,37 @@ there, and the notice is shown once, also when it's reloaded."
                                      (string-search "❯ !pwd" (opencode-test-output))))
       (should (= 1 (funcall notice-count))))))
 
+(ert-deftest opencode-integration-new-worktree-test ()
+  "A new worktree is made by the server, detached, and a session opened in it.
+It has the name given, or one the server picks."
+  (opencode-test-with-server
+    (let* ((project (opencode-test-make-project '(("a.txt" . "alpha\n"))))
+           (default-directory project)
+           (process-environment (opencode-test--environment))
+           (new-session (symbol-function 'opencode-new-session))
+           (open-worktree
+            (lambda (name)
+              (let (buffer)
+                (cl-letf (((symbol-function 'opencode-new-session)
+                           (lambda ()
+                             (funcall new-session
+                                      :callback (lambda (_session)
+                                                  (setq buffer (current-buffer)))))))
+                  (opencode-new-worktree name)
+                  (opencode-test-wait-until buffer))
+                (with-current-buffer buffer
+                  (opencode-test-wait-until (opencode-test-at-prompt-p))
+                  (should-not (equal project default-directory))
+                  (should (equal default-directory opencode--project-root))
+                  (should (file-exists-p "a.txt"))
+                  ;; A linked worktree, with a detached HEAD
+                  (should (file-regular-p ".git"))
+                  (should-not (zerop (call-process "git" nil nil nil
+                                                   "symbolic-ref" "-q" "HEAD")))
+                  (file-name-nondirectory (directory-file-name default-directory)))))))
+      (should (equal "feature" (funcall open-worktree "feature")))
+      (should-not (member (funcall open-worktree nil) '("feature" ""))))))
+
 (ert-deftest opencode-integration-resend-reverted-message-test ()
   "A reverted slash command resent is of its new user message, not the old one."
   (opencode-test-with-session '((".opencode/command/greet.md" . "Greet $ARGUMENTS\n"))

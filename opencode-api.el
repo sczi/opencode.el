@@ -197,6 +197,7 @@ may start with :else HANDLER to handle errors."
  (mcps "/api/mcp")
  (post nodata enable-mcp "/api/experimental/mcp/%s/connect")
  (post nodata disable-mcp "/api/experimental/mcp/%s/disconnect")
+ (post create-worktree "/api/worktree")
  (session "/api/session/%s")
  (root-sessions-for-project
   "/api/session?project=%s&archived=false&limit=200&parentID=null")

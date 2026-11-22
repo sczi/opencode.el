@@ -16,7 +16,6 @@
 ;;; Code:
 
 (require 'json)
-(require 'magit)
 (require 'opencode-api)
 (require 'opencode-common)
 (require 'opencode-edit-hooks)
@@ -71,19 +70,28 @@ first commit or adding a remote."
     (setf (opencode-connection-locations (opencode--conn)) nil)
     (message "Reloaded opencode locations")))
 
-(defvar opencode-worktree-directory (expand-file-name "~/opencode_worktrees/")
-  "Directory to store worktrees created for opencode.")
-
 ;;;###autoload
-(defun opencode-new-worktree ()
-  "Create a new git branch, and worktree prompting for a name.
-Then open an opencode session in it."
-  (interactive)
-  (let* ((name (read-string "Worktree and branch name: "))
-         (directory (file-name-concat opencode-worktree-directory name)))
-    (when (magit-worktree-branch directory name "HEAD")
-      (let ((default-directory directory))
-        (opencode-new-session)))))
+(defun opencode-new-worktree (&optional name)
+  "Create a worktree of the current project and open a new session in it.
+The server creates it with a detached HEAD in its worktree directory,
+configured by opencode's worktree.directory setting.  The server picks
+its NAME, or with a prefix argument it's read from the minibuffer."
+  (interactive
+   (list (when current-prefix-arg
+           (let ((name (string-trim (read-string "Worktree name: "))))
+             (unless (string-empty-p name) name)))))
+  (opencode-autoconnect
+   (lambda ()
+     (opencode-api--cached-location
+      (lambda (location)
+        (opencode-api-create-worktree
+            `((projectID . ,(map-nested-elt location '(project id)))
+              ,@(when name `((name . ,name))))
+            worktree
+          (let ((default-directory
+                 (file-name-as-directory
+                  (opencode--from-server-path (alist-get 'directory worktree)))))
+            (opencode-new-session))))))))
 
 ;;;###autoload
 (defun opencode-select-project (&optional connection)

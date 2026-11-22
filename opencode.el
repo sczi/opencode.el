@@ -5,7 +5,7 @@
 ;; Author: Scott Zimmermann <sczi@disroot.org>
 ;; Keywords: tools, llm, opencode
 ;; Package-Version: 0.0.1
-;; Package-Requires: ((emacs "31.1") (magit "4.0") (plz "0.9") (plz-media-type "0.2.4") (plz-event-source "0.1.5-pre"))
+;; Package-Requires: ((emacs "31.1") (magit "4.0") (plz "0.9") (plz-media-type "0.2.4") (plz-event-source "0.1.4"))
 ;; URL: https://codeberg.org/sczi/opencode.el/
 
 ;;; Commentary:
@@ -31,8 +31,9 @@
 (require 'plz-event-source)
 (require 'project)
 
-;; pending fix upstream at https://github.com/r0man/plz-event-source/pull/15
-;; see also: https://codeberg.org/sczi/opencode.el/issues/12
+;; fixed upstream at https://github.com/r0man/plz-event-source/pull/15
+;; but we wait for 0.1.5 to be published in elpa with the fix before removing this
+;; as to get packaged for MELPA we can just depend on version from gnu, not gnu-devel
 (setq plz-event-source-parser--line-regexp
       (rx (*? not-newline) (or "\r\n" "\n" "\r")))
 

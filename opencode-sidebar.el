@@ -1158,17 +1158,13 @@ session's buffer, for its server and directory."
 
 (defun opencode-shell-output--insert (text)
   "Insert TEXT at the end of the output, following it where point is at the end."
-  (let ((inhibit-read-only t)
-        (windows (seq-filter (lambda (window) (= (window-point window) (point-max)))
-                             (get-buffer-window-list nil nil t)))
-        (at-end (= (point) (point-max))))
-    (save-excursion
-      (goto-char (point-max))
-      (insert text))
-    (when at-end
-      (goto-char (point-max)))
-    (dolist (window windows)
-      (set-window-point window (point-max)))))
+  (let ((inhibit-read-only t))
+    ;; windows at the end follow by `window-point-insertion-type'
+    (if (= (point) (point-max))
+        (insert text)
+      (save-excursion
+        (goto-char (point-max))
+        (insert text)))))
 
 (defun opencode-shell-output--insert-status (text face)
   "Insert TEXT in FACE after the output, on a line of its own after a blank one."
@@ -1277,6 +1273,7 @@ and then it's no longer followed."
   "Major mode showing the output of an opencode shell command.
 It's followed while the command runs."
   :interactive nil
+  (setq-local window-point-insertion-type t)
   (add-hook 'kill-buffer-hook #'opencode-shell-output--stop nil t))
 
 (defun opencode-sidebar-refresh ()

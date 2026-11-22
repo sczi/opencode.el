@@ -706,6 +706,102 @@ records.  They're all the same once the session is reloaded."
                (string-search "Usage\n ↑2k ↓400 🧠0\n" (sidebar-text)))))
         (kill-buffer sidebar)))))
 
+(ert-deftest opencode-integration-sidebar-jobs-test ()
+  "The sidebar shows a session's running subagents and background shells.
+RET on a shell shows its output, followed while it runs, and on a subagent
+opens its session.  x cancels them, and they're no longer shown."
+  (opencode-test-with-session nil
+    (let* ((session (current-buffer))
+           (sidebar (generate-new-buffer " *opencode-sidebar-test*"))
+           (reply (lambda (body)
+                    (if (string-search "You are a subagent" (opencode-test-llm-user-text body))
+                        '("Child working" (:hold))
+                      "Noted."))))
+      (opencode-test-llm-reply
+       '((:tool "shell" ((command . "echo hello; while [ ! -e go ]; do sleep 0.1; done")
+                         (background . t)))
+         (:tool "subagent" ((agent . "general") (description . "Long task")
+                            (prompt . "Work slowly"))))
+       reply reply
+       ;; woken by the shell, then the subagent, being cancelled
+       reply reply)
+      (unwind-protect
+          (cl-flet ((sidebar-text ()
+                      (with-current-buffer sidebar
+                        (opencode-sidebar--redraw)
+                        (buffer-substring-no-properties (point-min) (point-max))))
+                    (goto-job (text)
+                      (with-current-buffer sidebar
+                        (goto-char (point-min))
+                        (search-forward text))))
+            (with-current-buffer sidebar
+              (opencode-sidebar-mode))
+            (cl-letf* ((shown nil)
+                       ((symbol-function 'opencode-sidebar--shown-p)
+                        (lambda (buffer) (eq buffer session)))
+                       ;; the buffers shown, and whether in the same window
+                       ((symbol-function 'opencode--switch-to-buffer)
+                        (lambda (buffer) (push (cons buffer opencode-open-same-window) shown))))
+              (opencode-sidebar--set-session sidebar session)
+              (opencode-test-send "Start them")
+              (opencode-test-llm-wait-held)
+              (opencode-test-wait-until (string-search "Jobs (2 running)" (sidebar-text)))
+              (should (string-match-p (rx "\n $ echo hello; while " (+ nonl) " " (+ digit) "s\n")
+                                      (sidebar-text)))
+              (should (string-match-p (rx "\n ● @general Long task " (+ digit) "s\n")
+                                      (sidebar-text)))
+              ;; the shell's output
+              (goto-job "echo hello")
+              (let* ((shell (with-current-buffer sidebar
+                              (prog1 (alist-get 'shellID (car (opencode-sidebar--job-at-point)))
+                                (opencode-sidebar-visit-job))))
+                     (output (opencode-test-wait-until
+                              (seq-find (lambda (buffer)
+                                          (equal shell (buffer-local-value
+                                                        'opencode-shell-output--id buffer)))
+                                        (buffer-list)))))
+                (with-current-buffer output
+                  (opencode-test-wait-until (string-search "\nhello\n" (buffer-string)))
+                  (should (timerp opencode-shell-output--timer)))
+                ;; in another window
+                (should (equal (cons output nil) (car shown)))
+                ;; the subagent's session
+                (goto-job "Long task")
+                (let ((child (with-current-buffer sidebar
+                               (alist-get 'childSessionID
+                                          (car (opencode-sidebar--job-at-point))))))
+                  (with-current-buffer sidebar
+                    (opencode-sidebar-visit-job))
+                  (opencode-test-wait-until (opencode--session-buffer child))
+                  (should (equal (cons (opencode--session-buffer child) nil) (car shown)))
+                  ;; cancelling the shell ends its output
+                  (let ((since (length opencode-test-events)))
+                    (goto-job "echo hello")
+                    (with-current-buffer sidebar
+                      (opencode-sidebar-cancel-job))
+                    (opencode-test-wait-until (string-search "Jobs (1 running)" (sidebar-text)))
+                    (with-current-buffer output
+                      (opencode-test-wait-until (not opencode-shell-output--timer))
+                      (should (string-match-p (rx "\n[" (or "killed" "exited") (* nonl) "]\n" eos)
+                                              (buffer-string))))
+                    (opencode-test-wait-until
+                     (opencode-test-event-p "session.execution.started" nil since))
+                    (opencode-test-wait-finished since))
+                  (should-not (string-search "echo hello" (sidebar-text)))
+                  ;; and the subagent
+                  (let ((since (length opencode-test-events)))
+                    (goto-job "Long task")
+                    (with-current-buffer sidebar
+                      (opencode-sidebar-cancel-job))
+                    (opencode-test-wait-until
+                     (opencode-test-event-p "session.execution.interrupted" child))
+                    (setq opencode-test-llm-held nil)
+                    (opencode-test-wait-until (not (string-search "Jobs" (sidebar-text))))
+                    (opencode-test-wait-until
+                     (opencode-test-event-p "session.execution.started" nil since))
+                    (opencode-test-wait-finished since))))))
+        (kill-buffer sidebar)))))
+
 (ert-deftest opencode-integration-kill-session-test ()
   "Killing a session deletes it on the server, and kills its buffer."
   (opencode-test-with-session nil

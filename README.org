@@ -255,9 +255,10 @@ top shows the keybindings you can use to change the time period or information s
 
 * Sidebar
 =C-c s= toggles the display of a sidebar with information about the active session
-and the turn at point. =RET= on an MCP in the sidebar will toggle it. You can
-configure what is shown in the sidebar with =opencode-sidebar= and define your own
-sidebar sections with =opencode-sidebar-define-section=.
+and the turn at point. =RET= on an MCP in the sidebar will toggle it. =RET= on a
+subagent or background shell in the Jobs section will open it, and =x= will cancel
+it. You can configure what is shown in the sidebar with =opencode-sidebar= and
+define your own sidebar sections with =opencode-sidebar-define-section=.
 
 * Commands
 #+begin_src emacs-lisp :results table :colnames '("Command" "Description") :exports results

@@ -14,6 +14,7 @@
 
 ;;; Code:
 
+(require 'ansi-color)
 (require 'cl-lib)
 (require 'magit-git)
 (require 'magit-section)
@@ -114,7 +115,7 @@ A definition is a plist of :function, :fetch and :join, as given to
 `opencode-sidebar-define-section'.")
 
 (defcustom opencode-sidebar
-  '(title last-updated agent activity changes context usage todos mcp location)
+  '(title last-updated agent activity jobs changes context usage todos mcp location)
   "Sections of the sidebar, in order.
 Each is the name of a section defined with `opencode-sidebar-define-section'.
 The built-in ones are:
@@ -124,6 +125,8 @@ The built-in ones are:
                 `opencode-sidebar-updated-after'
   agent         the agent and model of the step at point
   activity      the turn of the step at point, its time and speed
+  jobs          the running subagents and shell commands of the session
+                and its subagents, RET on one opens it and x cancels it
   changes       how many files the session changed
   context       the context's tokens, and the share of the model's limit
   usage         the session's tokens, cache rate and cost
@@ -133,7 +136,7 @@ The built-in ones are:
 
 Only the data the sections shown use is fetched from the server."
   :type '(repeat (choice (const title) (const last-updated) (const agent)
-                         (const activity) (const changes) (const context)
+                         (const activity) (const jobs) (const changes) (const context)
                          (const usage) (const todos) (const mcp) (const location)
                          (symbol :tag "Other section")))
   :initialize #'custom-initialize-default
@@ -209,7 +212,8 @@ Signal an error if there's none, unless NOERROR."
 KEY is one of those of a section's :fetch, see
 `opencode-sidebar-define-section'.  The built-in ones are :session, its
 Session.Info, :diff, its diffstat from `opencode-sidebar--diffstat',
-:mcps, its MCP servers, and :branch, its git branch."
+:mcps, its MCP servers, :jobs, its running subagent and shell Job.Info,
+and :branch, its git branch."
   (plist-get (buffer-local-value 'opencode-sidebar--data (opencode-sidebar-session))
              key))
 
@@ -224,7 +228,8 @@ It's found once per redraw."
 
 (defvar-local opencode-sidebar--data nil
   "Plist of what a session buffer's sidebar shows, fetched from the server.
-The keys are :diff, :mcps and :branch.  A missing key hasn't been fetched.")
+The keys are :session, :diff, :mcps, :jobs and :branch, see
+`opencode-sidebar-data'.  A missing key hasn't been fetched.")
 
 (defvar opencode-sidebar--timer nil
   "Timer of the pending redraw of the sidebars.")
@@ -444,6 +449,21 @@ three."
             (opencode-sidebar-store :mcps nil))
     (opencode-sidebar-store :mcps mcps)))
 
+(defun opencode-sidebar--fetch-jobs ()
+  "Fetch the running subagents and shell commands of the current buffer's session.
+Including those of its subagents, oldest first."
+  (opencode-api-session-running-jobs (opencode-session-id)
+      jobs
+    :else (lambda (message)
+            (opencode--log-event "WARNING SIDEBAR" (format "Job list failed: %s" message))
+            (opencode-sidebar-store :jobs nil))
+    (opencode-sidebar-store
+     :jobs (seq-sort-by (lambda (job) (map-nested-elt job '(time started)))
+                        #'<
+                        (seq-filter (lambda (job)
+                                      (member (alist-get 'kind job) '("subagent" "shell")))
+                                    jobs)))))
+
 (defun opencode-sidebar--fetch-branch ()
   "Find the git branch of the current session buffer's directory.
 Not over Tramp, as it's slow and can be run from a process filter."
@@ -514,12 +534,22 @@ KEYS of its data that the change made stale are refetched."
         ((opencode-sidebar--shown-p (current-buffer))
          (opencode-sidebar--schedule-redraw))))
 
-(defun opencode-sidebar-mcps-changed ()
-  "Refetch the MCP servers of every session buffer's sidebar."
+(defun opencode-sidebar--invalidate-all (key)
+  "Refetch KEY of the sidebar data of every session buffer that has it."
   (dolist (buffer (buffer-list))
     (when (and (buffer-local-value 'opencode-session-id buffer)
-               (plist-member (buffer-local-value 'opencode-sidebar--data buffer) :mcps))
-      (opencode-sidebar--invalidate buffer :mcps))))
+               (plist-member (buffer-local-value 'opencode-sidebar--data buffer) key))
+      (opencode-sidebar--invalidate buffer key))))
+
+(defun opencode-sidebar-mcps-changed ()
+  "Refetch the MCP servers of every session buffer's sidebar."
+  (opencode-sidebar--invalidate-all :mcps))
+
+(defun opencode-sidebar-jobs-changed ()
+  "Refetch the jobs of every session buffer's sidebar.
+A job may be of a subagent of a session, at any depth, so they're all
+refetched rather than finding which sessions it's of."
+  (opencode-sidebar--invalidate-all :jobs))
 
 (defun opencode-sidebar--session-loaded (_session-id)
   "Refetch the current session buffer's sidebar data, as it's been (re)loaded.
@@ -689,6 +719,39 @@ A running turn's time counts up, by redrawing the sidebar every second."
                          (not ended)))))
       (when-let* ((speed (opencode-sidebar--speed (plist-get step :message))))
         (insert " " speed "\n")))))
+
+(defvar-keymap opencode-sidebar-job-map
+  :doc "Keymap of a job in the sidebar."
+  "<remap> <magit-visit-thing>" #'opencode-sidebar-visit-job
+  "RET" #'opencode-sidebar-visit-job
+  "x" #'opencode-sidebar-cancel-job)
+
+(defun opencode-sidebar--job-text (job)
+  "Return the text of JOB's item, a subagent or shell Job.Info."
+  (let-alist job
+    (if (equal .kind "shell")
+        (let ((lines (string-lines (string-trim .command))))
+          (concat (car lines) (when (cdr lines) " …")))
+      (concat "@" .agent " " .description))))
+
+(opencode-sidebar-define-section jobs
+  "Insert the running subagents and shell commands of the session and its subagents.
+RET on one opens it, and x cancels it.  Their times count up, by
+redrawing the sidebar every second."
+  :fetch ((:jobs . opencode-sidebar--fetch-jobs))
+  (when-let* ((jobs (opencode-sidebar-data :jobs)))
+    (opencode-sidebar--heading "Jobs" (format "(%d running)" (length jobs)))
+    (let ((now (opencode-sidebar-with-session (opencode--server-now-ms))))
+      (dolist (job jobs)
+        (magit-insert-section section (opencode-sidebar-job job)
+                              (oset section keymap 'opencode-sidebar-job-map)
+                              (opencode-sidebar--item
+                               (if (equal (alist-get 'kind job) "shell") "$" "●")
+                               (concat (opencode-sidebar--job-text job)
+                                       (propertize (concat " " (opencode-sidebar--duration
+                                                                (- now (map-nested-elt job '(time started)))
+                                                                t))
+                                                   'font-lock-face 'shadow))))))))
 
 (opencode-sidebar-define-section context
   "Insert the context's tokens, and the share of the model's limit."
@@ -919,14 +982,17 @@ that's empty, it's inserted in its place."
           opencode-sidebar--tick-timer (run-with-timer 1 1 #'opencode-sidebar--tick))))
 
 (defun opencode-sidebar--running-p ()
-  "Return non-nil if the current sidebar shows a running turn, the step at point's."
+  "Return non-nil if the current sidebar shows something running.
+That's a running turn, the step at point's, or jobs."
   (and (buffer-live-p opencode-sidebar--session)
        (with-current-buffer opencode-sidebar--session
-         (when-let* ((turn (car (opencode--message-at (point)))))
-           (not (opencode--turn-ended turn))))))
+         (or (and (memq 'jobs opencode-sidebar)
+                  (plist-get opencode-sidebar--data :jobs))
+             (when-let* ((turn (car (opencode--message-at (point)))))
+               (not (opencode--turn-ended turn)))))))
 
 (defun opencode-sidebar--tick ()
-  "Redraw the visible sidebars showing a running turn, as its time counts up.
+  "Redraw the visible sidebars showing something running, as its time counts up.
 And every minute all of them, as when idle sessions were last updated ages.
 Run every second while a sidebar is visible."
   (if-let* ((sidebars (opencode-sidebar--sidebars)))
@@ -959,6 +1025,248 @@ Run every second while a sidebar is visible."
             _
           (message "Connected MCP %s" name)
           (opencode-sidebar--invalidate session :mcps))))))
+
+(defun opencode-sidebar--job-at-point ()
+  "Return the job at point and the session buffer of the sidebar, as a cons."
+  (let ((section (magit-current-section))
+        (session opencode-sidebar--session))
+    (unless (and section (eq (oref section type) 'opencode-sidebar-job))
+      (user-error "No job at point"))
+    (unless (buffer-live-p session)
+      (user-error "The session's buffer was killed"))
+    (cons (oref section value) session)))
+
+(defun opencode-sidebar-visit-job ()
+  "Open the job at point: a subagent's session, or a shell command's output.
+It's opened in another window than the session's, which stays visible."
+  (interactive)
+  (pcase-let ((`(,job . ,session) (opencode-sidebar--job-at-point)))
+    ;; the sidebar's window is dedicated, so pop it up from the session's
+    (when-let* ((window (get-buffer-window session)))
+      (select-window window))
+    (with-current-buffer session
+      (let-alist job
+        (if (equal .kind "subagent")
+            (opencode-api-session (.childSessionID)
+                child
+              (let ((opencode-open-same-window nil))
+                (opencode-open-session child)))
+          (opencode-shell-output job))))))
+
+(defun opencode-sidebar-cancel-job ()
+  "Cancel the job at point, a subagent or shell command."
+  (interactive)
+  (pcase-let ((`(,job . ,session) (opencode-sidebar--job-at-point)))
+    (with-current-buffer session
+      (opencode--cancel-job job))))
+
+;;; Shell output
+
+(defconst opencode-shell-output--page (* 64 1024)
+  "Bytes of a shell command's output fetched at once.
+At most this much of what it's output already is shown when it's opened.")
+
+(defcustom opencode-shell-output-interval 1
+  "Seconds between fetches of a running shell command's new output."
+  :type 'number
+  :group 'opencode-sidebar)
+
+(defconst opencode-shell-output--past-end 9007199254740991
+  "A cursor past the end of any output, the largest the server accepts.")
+
+(defvar-local opencode-shell-output--id nil
+  "The id of the shell command whose output the buffer shows.")
+
+(defvar-local opencode-shell-output--job nil
+  "The Job.Shell of the shell command, to cancel it.")
+
+(defvar-local opencode-shell-output--cursor nil
+  "Byte offset of the output fetched so far, nil before it's first fetched.")
+
+(defvar-local opencode-shell-output--timer nil
+  "Timer fetching the new output, while the command runs.")
+
+(defvar-local opencode-shell-output--fetching nil
+  "Non-nil while a fetch is in progress.")
+
+(defvar-local opencode-shell-output--killed nil
+  "Non-nil once the shell command was killed from Emacs.
+Its output's removed with it, so it's then no longer found.")
+
+(defun opencode--cancel-job (job)
+  "Cancel JOB, a subagent or shell Job.Info, and refetch the jobs the sidebars show.
+A subagent's session is interrupted, and a shell command is killed and
+removed, with its output."
+  (let* ((text (opencode-sidebar--job-text job))
+         (done (lambda (_)
+                 (message "Cancelled %s" text)
+                 (opencode-sidebar-jobs-changed))))
+    (let-alist job
+      (if (equal .kind "subagent")
+          (opencode-api-interrupt-session (.childSessionID)
+              result
+            (funcall done result))
+        (dolist (buffer (buffer-list))
+          (when (equal .shellID (buffer-local-value 'opencode-shell-output--id buffer))
+            (with-current-buffer buffer
+              (setq opencode-shell-output--killed t))))
+        (opencode-api-remove-shell (.shellID)
+            result
+          (funcall done result))))))
+
+(defun opencode-shell-output (job)
+  "Show the output of the shell command of JOB, a Job.Shell.
+It's followed while it runs, and shown in another window.  Run in its
+session's buffer, for its server and directory."
+  (let* ((id (alist-get 'shellID job))
+         (command (alist-get 'command job))
+         (buffer (or (seq-find (lambda (buffer)
+                                 (equal id (buffer-local-value 'opencode-shell-output--id
+                                                               buffer)))
+                               (buffer-list))
+                     (let ((connection (opencode--conn))
+                           (directory default-directory)
+                           (buffer (generate-new-buffer
+                                    (format "*OpenCode shell: %s*"
+                                            (truncate-string-to-width
+                                             (car (string-lines (string-trim command)))
+                                             40 nil nil "…")))))
+                       (with-current-buffer buffer
+                         (opencode-shell-output-mode)
+                         (setq opencode-buffer-connection connection
+                               default-directory directory
+                               opencode-shell-output--id id
+                               opencode-shell-output--job job)
+                         (let ((inhibit-read-only t))
+                           (insert (propertize (concat "$ " command "\n")
+                                               'font-lock-face 'opencode-sidebar-heading)))
+                         (opencode-shell-output--poll))
+                       buffer))))
+    (let ((opencode-open-same-window nil))
+      (opencode--switch-to-buffer buffer))))
+
+(defun opencode-shell-output--insert (text)
+  "Insert TEXT at the end of the output, following it where point is at the end."
+  (let ((inhibit-read-only t)
+        (windows (seq-filter (lambda (window) (= (window-point window) (point-max)))
+                             (get-buffer-window-list nil nil t)))
+        (at-end (= (point) (point-max))))
+    (save-excursion
+      (goto-char (point-max))
+      (insert text))
+    (when at-end
+      (goto-char (point-max)))
+    (dolist (window windows)
+      (set-window-point window (point-max)))))
+
+(defun opencode-shell-output--insert-status (text face)
+  "Insert TEXT in FACE after the output, on a line of its own after a blank one."
+  (opencode-shell-output--insert
+   (propertize (concat (unless (memq (char-before (point-max)) '(?\n nil)) "\n")
+                       "\n" text "\n")
+               'font-lock-face face)))
+
+(defun opencode-shell-output--read (then else)
+  "Fetch the output since the last fetch, then call THEN.
+At first only the last `opencode-shell-output--page' bytes of it.  Call
+ELSE with the error message if a request fails."
+  (let ((id opencode-shell-output--id))
+    (cl-labels ((page ()
+                  (opencode-api-shell-output (id opencode-shell-output--cursor
+                                                 opencode-shell-output--page)
+                      result
+                    :else else
+                    (let-alist result
+                      (let ((advanced (> .cursor opencode-shell-output--cursor)))
+                        (opencode-shell-output--insert (ansi-color-apply .output))
+                        (setq opencode-shell-output--cursor .cursor)
+                        (if (and advanced (< .cursor .size))
+                            (page)
+                          (funcall then)))))))
+      (if opencode-shell-output--cursor
+          (page)
+        ;; its size, from past its end
+        (opencode-api-shell-output (id opencode-shell-output--past-end 1)
+            head
+          :else else
+          (setq opencode-shell-output--cursor
+                (max 0 (- (alist-get 'size head) opencode-shell-output--page)))
+          (when (plusp opencode-shell-output--cursor)
+            (opencode-shell-output--insert
+             (propertize "[earlier output omitted]\n" 'font-lock-face 'shadow)))
+          (page))))))
+
+(defun opencode-shell-output--status (shell)
+  "Return the line saying how SHELL, a Shell.Info that's not running, ended."
+  (let-alist shell
+    (pcase .status
+      ("exited" (format "[exited %s]" (if (numberp .exit) (truncate .exit) "?")))
+      ("timeout" "[timed out]")
+      ("killed" (if .signal (format "[killed by %s]" .signal) "[killed]"))
+      (status (format "[%s]" status)))))
+
+(defun opencode-shell-output--poll ()
+  "Fetch the shell command's new output, and whether it's still running.
+Its status is fetched first, so once it's ended all its output is read,
+and then it's no longer followed."
+  (unless opencode-shell-output--fetching
+    (setq opencode-shell-output--fetching t)
+    (let ((fail (lambda (message)
+                  (setq opencode-shell-output--fetching nil)
+                  (opencode-shell-output--stop)
+                  (cond ((not (string-search "ShellNotFoundError" message))
+                         (opencode-shell-output--insert-status message 'error))
+                        (opencode-shell-output--killed
+                         (opencode-shell-output--insert-status "[killed]" 'shadow))
+                        (t (opencode-shell-output--insert-status
+                            "Shell output is no longer available." 'error))))))
+      (opencode-api-shell (opencode-shell-output--id)
+          shell
+        :else fail
+        (opencode-shell-output--read
+         (lambda ()
+           (setq opencode-shell-output--fetching nil)
+           (if (equal (alist-get 'status shell) "running")
+               (unless (timerp opencode-shell-output--timer)
+                 (let ((buffer (current-buffer)))
+                   (setq opencode-shell-output--timer
+                         (run-with-timer opencode-shell-output-interval
+                                         opencode-shell-output-interval
+                                         (lambda ()
+                                           (when (buffer-live-p buffer)
+                                             (with-current-buffer buffer
+                                               (opencode-shell-output--poll))))))))
+             (opencode-shell-output--stop)
+             (opencode-shell-output--insert-status (opencode-shell-output--status shell)
+                                                   'shadow)))
+         fail)))))
+
+(defun opencode-shell-output--stop ()
+  "Stop following the shell command's output."
+  (when (timerp opencode-shell-output--timer)
+    (cancel-timer opencode-shell-output--timer))
+  (setq opencode-shell-output--timer nil))
+
+(defun opencode-shell-output-refresh ()
+  "Fetch the shell command's new output, following it again if it's running."
+  (interactive)
+  (opencode-shell-output--poll))
+
+(defun opencode-shell-output-kill ()
+  "Kill the shell command, by cancelling its job."
+  (interactive)
+  (opencode--cancel-job opencode-shell-output--job))
+
+(defvar-keymap opencode-shell-output-mode-map
+  :doc "Keymap of `opencode-shell-output-mode'."
+  "g" #'opencode-shell-output-refresh
+  "x" #'opencode-shell-output-kill)
+
+(define-derived-mode opencode-shell-output-mode special-mode "OpenCode Shell"
+  "Major mode showing the output of an opencode shell command.
+It's followed while the command runs."
+  :interactive nil
+  (add-hook 'kill-buffer-hook #'opencode-shell-output--stop nil t))
 
 (defun opencode-sidebar-refresh ()
   "Refetch everything the sidebar shows."

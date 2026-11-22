@@ -204,6 +204,9 @@ may start with :else HANDLER to handle errors."
  (sessions-active "/api/session/active")
  (session-running-jobs
   "/api/experimental/job?sessionID=%s&descendants=true&status=running")
+ (shell "/api/shell/%s")
+ (delete remove-shell "/api/shell/%s")
+ (shell-output "/api/shell/%s/output?cursor=%d&limit=%d")
  (post create-session "/api/session")
  (patch rename-session "/api/session/%s")
  (patch archive-session "/api/session/%s")

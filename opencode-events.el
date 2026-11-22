@@ -212,6 +212,10 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
                         .sessionID tool-key
                         `((status . ,(if (eq type 'session.tool.success) "completed" "error"))
                           (error . ,.error) (content . ,.content) (metadata . ,.metadata)))))
+             ;; a shell command's job starts when it's run in, or moved to,
+             ;; the background, which ends its call
+             (when (equal (plist-get call :name) "shell")
+               (opencode-sidebar-jobs-changed))
              (when (eq type 'session.tool.success)
                (opencode--with-session-buffer .sessionID
                  (when (opencode--record-todos (plist-get call :name) (plist-get call :input))
@@ -247,7 +251,12 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
           (form.created (opencode--form-request .form))
           ((form.replied form.cancelled)
            (opencode--form-settled .id))
-          (otherwise (opencode--log-event "WARNING" "unhandled message type")))))))
+          (otherwise (opencode--log-event "WARNING" "unhandled message type")))
+        ;; subagents' jobs start and end with their executions, and
+        ;; shell commands' end by waking the sessions that started them
+        (when (memq type '(session.execution.started session.execution.succeeded
+                           session.execution.failed session.execution.interrupted))
+          (opencode-sidebar-jobs-changed))))))
 
 (defun opencode--handle-event (connection event)
   "Handle EVENT from the event stream of CONNECTION's server."

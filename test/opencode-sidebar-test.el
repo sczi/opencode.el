@@ -35,6 +35,7 @@ The data's all there, so the sidebar doesn't fetch any."
         opencode-sidebar--data (list :session opencode-sidebar-test--session
                                      :diff '(3 10 4 0 0 0)
                                      :mcps opencode-sidebar-test--mcps
+                                     :jobs nil
                                      :branch "main")))
 
 (defmacro opencode-sidebar-test--with-sidebar (&rest body)
@@ -83,6 +84,31 @@ bound to `session'."
     (search-forward "broken")
     (should (equal "boom" (get-text-property (point) 'help-echo)))
     (should (eq 'opencode-sidebar-toggle-mcp (key-binding (kbd "RET"))))))
+
+(ert-deftest opencode-sidebar-jobs-test ()
+  "Running subagents and shell commands are shown after the activity, with their times.
+A multi-line command shows its first line.  RET opens one and x cancels it."
+  (opencode-sidebar-test--with-sidebar
+    (cl-letf (((symbol-function 'opencode--server-now-ms) (lambda () 100000)))
+      (with-current-buffer session
+        (setq opencode-sidebar--data
+              (plist-put opencode-sidebar--data :jobs
+                         '(((kind . "subagent") (id . "job1") (agent . "general")
+                            (description . "Explore") (childSessionID . "ses_child")
+                            (time (started . 58000)))
+                           ((kind . "shell") (id . "job2") (shellID . "sh1")
+                            (command . "make test\necho done") (time (started . 95000)))))))
+      (opencode-sidebar--redraw)
+      (should (string-search
+               "Session title\n\nJobs (2 running)\n ● @general Explore 42s\n $ make test … 5s\n\nChanged"
+               (opencode-sidebar-test--text)))
+      (goto-char (point-min))
+      (search-forward "make test")
+      (should (eq 'opencode-sidebar-visit-job (key-binding (kbd "RET"))))
+      (should (eq 'opencode-sidebar-cancel-job (key-binding (kbd "x"))))
+      (should (equal "sh1" (alist-get 'shellID (car (opencode-sidebar--job-at-point)))))
+      ;; its times count up
+      (should (opencode-sidebar--running-p)))))
 
 (ert-deftest opencode-sidebar-test-file-p-test ()
   "Paths with the word test, as in camelCase too, are test files.

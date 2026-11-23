@@ -6,7 +6,6 @@ of advantages over the official TUI:
 
 1) A better TUI and GUI
 
-   #+begin_verse
    Emacs is a mature TUI and GUI framework, that while janky in its own way, is
    far less janky than the TUIs the new agentic coding tools have written from
    scratch. This package builds on a solid foundation of [[https://www.emacswiki.org/emacs/ComintMode][comint]], [[https://www.gnu.org/software/emacs/manual/html_mono/vtable.html][vtable]],
@@ -17,7 +16,6 @@ of advantages over the official TUI:
    and filtering works the same as everywhere else in emacs, and everything is
    just a text buffer where all your usual editing and other commands work as
    expected.
-   #+end_verse
 
 2) Emacs integration
 
@@ -65,6 +63,7 @@ of advantages over the official TUI:
      will diagnose all failed tests, but with a prefix argument will just
      diagnose the test at point.
    - =opencode-new-worktree= creates a new worktree and starts a session in it.
+
      When run from inside a session, it will create a new worktree and move the
      session into it, prompting whether to also move uncommitted changes into
      the new worktree, if there are any.
@@ -75,6 +74,7 @@ of advantages over the official TUI:
      may have in =.dir-locals.el=
    - =`file`= and =file:line= references in LLM output are turned into clickable buttons
    - complete on project symbols from within chat sessions
+
      In chat buffers, we set =completion-at-point-functions= to complete with
      eglot or slime if you're connected, and to complete elisp symbols if your
      project contains elisp. We also complete using the TAGS file if your
@@ -110,11 +110,11 @@ add to =packages.el= and run =doom sync=
 * Connecting
 ** Automatic
 =M-x opencode= will try to connect to an opencode server at
-=opencode-host:opencode-port= or will start a headless opencode server if one
-isn't already running. Then it opens a [[#6679896c-5b9d-4e87-9e03-6ed060dec278][Session Management]] buffer for the current
-project.
+=opencode-host:opencode-port= or will start a headless opencode server with a
+random password if one isn't already running. Then it opens a [[#session-management][Session Management]]
+buffer for the current project.
 ** Manual
-=M-x opencode-connect= will prompt for the host and port of an opencode server to
+=M-x opencode-connect= will prompt for the host, port, and password of an opencode server to
 connect to.
 
 * Project Management
@@ -122,15 +122,12 @@ In opencode, sessions are grouped by project, where each git repository is a
 different project. Different git worktrees for the same repository will be
 grouped in the same project. Sessions started in directories outside of any git
 repository will go in the global =/= project. =opencode-select-project= will fuzzy
-complete on all projects and open the [[#6679896c-5b9d-4e87-9e03-6ed060dec278][Session Management]] buffer for the project
+complete on all projects and open the [[#session-management][Session Management]] buffer for the project
 you select. When creating a new git repository or adding a git remote, you need
 to run =opencode-reload-locations= for the OpenCode server to pick up the changed
 project.
 
 * Session Management
-:PROPERTIES:
-:CUSTOM_ID: 6679896c-5b9d-4e87-9e03-6ed060dec278
-:END:
 [[file:screenshots/session_management.png]]
 
 Here you see a table view with information on all sessions for a given project.
@@ -224,7 +221,7 @@ pacman -Sy texlive-latex texlive-latexrecommended texlive-fontsrecommended dvisv
 |  =C-c f=  | select a file to add to context, if called with a prefix argument then select a directory                                                                                                                                  |
 |  =C-c b=  | /btw — ask a side question about the conversation without adding to it, the answer opens in a new buffer                                                                                                                   |
 |  =C-c B=  | select a buffer to add to context                                                                                                                                                                                          |
-| C-c C-b | send all shell and other jobs blocking the session to the background                                                                                                                                                       |
+| =C-c C-b= | send all shell and other jobs blocking the session to the background                                                                                                                                                       |
 |  =C-c m=  | select model                                                                                                                                                                                                               |
 |  =C-c g=  | switch to the Build agent and send "go"                                                                                                                                                                                    |
 |  =M-TAB=  | cycle to the next reasoning level                                                                                                                                                                                          |
@@ -374,6 +371,97 @@ PRs for relatively small changes or fixes are welcome. For large new features or
 changes, please instead open an issue with a markdown specification we can
 discuss.
 
+* Comparison to Agent Shell
+The most common question I get from people seeing this package for the first
+time, is how does it compare to the alternatives. I'll just compare it to [[https://github.com/xenodium/agent-shell][Agent
+Shell]], which is the most mature alternative and the most popular way to use
+OpenCode from emacs. Agent Shell is an excellent package, by a fantastic
+developer, with a much larger community than opencode.el, so it's more mature in
+many ways. The main advantage of Agent Shell, that it supports all major coding
+harnesses through [[https://agentcommunicationprotocol.dev/introduction/welcome][ACP]], is also it's limitation. Talking with OpenCode through
+[[https://opencode.ai/docs/api][it's own API]] instead of ACP gives us significant advantages in both
+functionality and performance. I'll group it into three sections: what I
+consider most important, other functionality that's not as essential but that I
+do use regularly, and other opencode functionality we support but I rarely use
+myself.
+
+** Essentials
+*** Performance
+Agent shell maintains a separate ACP connection per session buffer. This means
+any operation like listing sessions and opening an old one, creating a new
+session, or forking a session, takes multiple seconds. And you have an =opencode acp=
+and =opencode serve= process running for every open session. In opencode.el we run a
+single =opencode serve= process, and all those actions are almost instant.
+*** Project Management
+Agent shell has no equivalent to =opencode-select-project= and the [[#session-management][Session Management]] buffer.
+*** deleting a session
+This is actually supported by ACP and [[https://github.com/xenodium/acp.el][acp.el]], so probably support in Agent Shell
+is coming soon
+*** forking a session
+=agent-shell-fork= is more of a clone session command, as you can't actually fork
+a session from a previous turn. =opencode-fork-session= forks the session from the
+turn at point, which can be any past turn.
+** Other stuff I use regularly
+*** opencode-revert-message
+Reverts the user message at point and everything after it, including LLM edits.
+Opencode maintains a shadow git repository at each LLM turn, allowing it to undo
+edits.
+*** opencode-ediff-turn
+Open llm edits for the turn at point in ediff, again enabled by opencode's
+shadow git repository.
+*** editing hooks
+See the section on Emacs integration. We provide various hooks like running
+flycheck on files the LLM has edited during it's turn, and reporting any
+warnings back to the LLM, and the ability to add your own hooks. Again this is
+enabled by opencode's shadow git repo that includes edits LLMs make with bash or
+python or anything and not just with the edit tool.
+*** Navigate to idle sessions
+Sessions that have finished their response that you haven't read yet, or are
+otherwise waiting for the user to look at (to respond to a question or
+permission), are indicated in the [[#session-management][Session Management]] buffer and you can quickly
+navigate to them with =opencode-visit-last-idle= and =opencode-select-idle=.
+*** Side questions
+Ask quick side questions with =opencode-btw=.
+*** Completion
+In chat sessions, we set =dabbrev-select-buffers-function= to complete from all
+project buffers, along with offering completions from your project from eglot,
+slime, elisp symbols, or TAGS.
+*** Elisp development
+I have a handful of hooks, for fixing parentheses and reloading elisp files
+after edits, reporting ERT test failures and flycheck and checkdoc warnings to
+the LLM at the end of it's turn, and autofixing ERT test failures, that together
+with [[https://github.com/sczi/eval-elisp-mcp][eval-elisp-mcp]] make opencode.el a nice harness for elisp development.
+*** Python development
+[[https://codeberg.org/sczi/swanky-python/][Swanky Python]] has similar hooks and integrations with opencode.el for python development.
+*** Small details
+ie opencode.el receives the session updated event from opencode, to show the
+title opencode generates from the first prompt of a session
+** Other stuff I use rarely
+*** Subagents and background jobs
+In the sidebar you can view running subagents and background shell commands for
+a session, and open or cancel them. You can send a shell command that is
+blocking a session to the background, and see past inactive subagents for a
+session with =opencode-select-child-session=.
+*** More info in mode and headerline
+Our mode and headerline is fully configurable, and claude subscription usage is
+the main thing I care about seeing, that we can report but Agent Shell doesn't
+have.
+*** Workspaces
+=opencode-new-workspace= can open a new session in a new workspace, or move an
+existing session (optionally along with all uncommitted changes) into a new workspace
+*** Toggle MCPs
+You can toggle MCPs at runtime rather than just in the config when starting a session.
+*** Search
+Full text search across all open sessions with =opencode-consult-sessions=
+*** [[#usage-statistics][Stats page]]
+I just wanted to vibe code a flashy emacs GUI to =opencode stats=. I don't
+actually look at anything on it, except to sometimes check the cache % reported
+for all providers and models, to see if some provider isn't getting a good cache
+hit rate.
+*** [[#sidebar][Sidebar]]
+*** [[#multiple-opencode-connections-and-tramp][Better support for managing connections to multiple opencode servers]]
+ie different default servers for different projects
+
 * Configuration
 - =opencode-command= and =opencode-serve-command= can be used to configure how to
   run a headless opencode server
@@ -392,7 +480,7 @@ discuss.
 - =opencode-shown-outputs= lists what to show unfolded: =reasoning=, tool
   names like =shell= or =edit=, or =shell-non-zero= to show shell tool output only when the
   command failed. Shell commands you run yourself are always shown. Shown outputs
-  can still be folded the same way
+  can still be folded
 - =opencode-open-same-window= controls whether to open opencode buffers
   (sessions, session control, stats) in a new window or in the current window
 - =opencode-session-control-table-columns= configures what columns are shown in

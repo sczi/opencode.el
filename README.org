@@ -1,114 +1,34 @@
 #+TITLE: opencode.el
 #+OPTIONS: toc:nil
-/Jump to:/ [[#overview][Overview]] · [[#installation][Installation]] · [[#global-shortcuts][Global Shortcuts]] · [[#connecting][Connecting]] · [[#project-management][Project Management]] · [[#session-management][Session Management]] · [[#chat-sessions][Chat Sessions]] · [[#notifications][Notifications]] · [[#usage-statistics][Statistics]] · [[#sidebar][Sidebar]] · [[#commands][Commands]] · [[#question-tool][Question Tool]] · [[#multiple-opencode-connections-and-tramp][Multiple Connections and TRAMP]] · [[#security][Security]] · [[#bugs][Bugs]] · [[#contributing][Contributing]] · [[#comparison-to-agent-shell][Comparison to Agent Shell]] · [[#configuration][Configuration]]
+/Jump to:/ [[#overview][Overview]] · [[#installation][Installation]] · [[#global-shortcuts][Global Shortcuts]] · [[#connecting][Connecting]] · [[#project-management][Project Management]] · [[#session-management][Session Management]] · [[#chat-sessions][Chat Sessions]] · [[#emacs-integrations][Emacs Integrations]] · [[#notifications][Notifications]] · [[#usage-statistics][Statistics]] · [[#sidebar][Sidebar]] · [[#commands][Commands]] · [[#question-tool][Question Tool]] · [[#multiple-opencode-connections-and-tramp][Multiple Connections and TRAMP]] · [[#security][Security]] · [[#bugs][Bugs]] · [[#contributing][Contributing]] · [[#comparison-to-agent-shell][Comparison to Agent Shell]] · [[#configuration][Configuration]]
+
+[[file:screenshots/overview.png]]
 
 * Overview
 :PROPERTIES:
 :CUSTOM_ID: overview
 :END:
-An emacs UI to [[https://opencode.ai/][opencode]] - an open source AI coding agent. This provides two sets
-of advantages over the official TUI:
-
-1) A better TUI and GUI
-
-   Emacs is a mature TUI and GUI framework, that while janky in its own way, is
-   far less janky than the TUIs the new agentic coding tools have written from
-   scratch. This package builds on a solid foundation of [[https://www.emacswiki.org/emacs/ComintMode][comint]], [[https://www.gnu.org/software/emacs/manual/html_mono/vtable.html][vtable]],
-   [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Diff-Mode.html][diff-mode]], [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Hideshow.html][hideshow]], =markdown-ts-mode=, emacs' completion system, and more, to
-   offer a (IMO) nicer UI. Also if you're an emacs user, the UI is more
-   consistent: goto next or previous prompt, history search, and everything else
-   works the same as in any other repl or shell based on comint mode, completion
-   and filtering works the same as everywhere else in emacs, and everything is
-   just a text buffer where all your usual editing and other commands work as
-   expected.
-
-2) Emacs integration
-
-   - runs =opencode-file-edited-functions= after edit tool calls. The default
-     hook will reload file after edits to emacs lisp files. You can also add
-     =opencode-fix-parens= to fix parentheses with parinfer if =parinfer-rust-mode=
-     is installed after edits to lisp files.
-   - calls =opencode-files-finished-editing-functions= with a list of all files
-     changed in the last assistant turn, including by shell commands, according
-     to the server's snapshot diff, so it requires a git repository and gitignored
-     files aren't included. Add =opencode-indent-files= here to
-     automatically fix indentation with =indent-region=, and
-     =opencode-flycheck-edited-files= to run flycheck and report all errors and
-     warnings in the edited files to the LLM.
-
-     #+begin_quote
-     *⚠️ WARNING:* opencode-fix-parens, opencode-indent-files, and
-     opencode-flycheck-edited-files are all disabled by default, but if you use
-     them they call revert-buffer, discarding changes in emacs in favor of llm
-     edits. I use git worktrees or just stash, if I am editing at the same time
-     as an llm.
-     #+end_quote
-
-     You can set project specific hooks in
-     =opencode-project-files-finished-editing-functions=. We include
-     =opencode-uv-pytest= and =opencode-emacs-ert= which will run all tests from
-     pytest and ERT and report errors to the LLM. They are defined using
-     =opencode-run-command-diagnostic= which you can use to run any shell command
-     and report errors to the LLM. To set up a python project to run pytest
-     after LLM edits add your project directory to
-     =safe-local-variable-directories= and then create a =.dir-locals.el= in the
-     project directory with:
-     #+begin_src elisp
-((nil . ((opencode-project-files-finished-editing-functions . (opencode-uv-pytest)))))
-     #+end_src
-   - add any emacs buffer to chat context with =opencode-add-buffer-dwim=
-   - add files to context with =opencode-add-file-dwim=
-   - add selected region to context with =opencode-add-region=
-   - add function at point to context with =opencode-add-defun=
-   - start a new session to fix all flycheck errors in the current buffer with
-     =opencode-fix-flycheck=, or with a prefix argument it will just fix the
-     flycheck errors at point
-   - start a new session to diagnose and fix failed tests from the ERT results
-     buffer with =opencode-fix-ert=, bound to =o= in =ert-results-mode=. By default it
-     will diagnose all failed tests, but with a prefix argument will just
-     diagnose the test at point.
-   - =opencode-new-worktree= creates a new worktree and starts a session in it.
-
-     When run from inside a session, it will create a new worktree and move the
-     session into it, prompting whether to also move uncommitted changes into
-     the new worktree, if there are any.
-
-     We automatically add new worktrees to =safe-local-variable-directories= if
-     the git top level directory was already considered safe, to maintain
-     project settings like =opencode-project-files-finished-editing-functions= you
-     may have in =.dir-locals.el=
-   - =`file`= and =file:line= references in LLM output are turned into clickable buttons
-   - complete on project symbols from within chat sessions
-
-     In chat buffers, we set =completion-at-point-functions= to complete with
-     eglot or slime if you're connected, and to complete elisp symbols if your
-     project contains elisp. We also complete using the TAGS file if your
-     project contains one.
-   - use =dabbrev-expand= in the chat window to complete long variable or function
-     names from your code buffers. We set =dabbrev-select-buffers-function= in the
-     chat windows, to include all other buffers from your project.
-   - configure how your custom MCP and tools are displayed with =opencode-tool-formatters=
-   - I use with [[https://github.com/sczi/eval-elisp-mcp][eval-elisp-mcp]] when developing in elisp.
-   - For python development integrated with opencode.el, with features like AI
-     autodebugging exceptions, check out [[https://codeberg.org/sczi/swanky-python/][Swanky Python]]
+An Emacs frontend to [[https://opencode.ai/][OpenCode]] - an open source AI coding agent. Chat sessions
+are ordinary comint buffers, like any other shell or repl in Emacs. We integrate
+OpenCode with Emacs, letting you quickly add buffers, regions, and more to
+context, complete names as you do in your code buffers for the same project,
+extend with hooks, review changes with Ediff, and [[#emacs-integrations][more]].
 
 * Installation
 :PROPERTIES:
 :CUSTOM_ID: installation
 :END:
-When this package is a bit more stable I'll package it on MELPA, for now install
-from git. This package requires Emacs 31.1 with the =markdown= and =markdown-inline=
-Tree-sitter grammars (install with =M-x markdown-ts-mode-install-parsers=), plus
-[[https://github.com/magit/magit][magit]], [[https://github.com/alphapapa/plz.el][plz]], [[https://github.com/r0man/plz-media-type][plz-media-type]], and [[https://github.com/r0man/plz-event-source/][plz-event-source]]. With the following
-instructions dependencies will automatically be installed, except for the tree
-sitter grammars, which you will be prompted to install when they are first
-needed.
+This package requires Emacs 31.1 as we make use of the excellent recent work on
+=markdown-ts-mode= and hideshow mode. You'll need the =markdown= and =markdown-inline=
+tree-sitter grammars, which you can install with =M-x markdown-ts-mode-install-parsers=
+or just answer =y= when you're prompted to install them upon opening your first
+chat session.
 ** Emacs use-package
 #+begin_src emacs-lisp
 (use-package opencode 
   :vc (:url "https://github.com/sczi/opencode.el" :rev :newest))
 #+end_src
-** In Doom Emacs
+** Doom Emacs
 add to =packages.el= and run =doom sync=
 #+begin_src emacs-lisp
 (package! opencode
@@ -143,13 +63,16 @@ I use the following global shortcuts for opencode.el in doom emacs:
 :CUSTOM_ID: connecting
 :END:
 ** Automatic
-=M-x opencode= will try to connect to an opencode server at
-=opencode-host:opencode-port= or will start a headless opencode server with a
-random password if one isn't already running. Then it opens a [[#session-management][Session Management]]
-buffer for the current project.
+Most commands that make sense to run before you've opened your first chat
+session (opencode, opencode-new-session, opencode-select-project,
+opencode-select-session, opencode-new-worktree, and opencode-stats) will
+automatically start an opencode server in the background if you're not already
+connected.
 ** Manual
-=M-x opencode-connect= will prompt for the host, port, and password of an opencode server to
-connect to.
+=M-x opencode-connect= will prompt for the host, port, and password of an opencode
+server to connect to. For more advanced configurations, see opencode-command,
+opencode-serve-command, opencode-host, opencode-port, opencode-server-password,
+opencode-servers, opencode-default-server, and opencode-project-servers.
 
 * Project Management
 :PROPERTIES:
@@ -158,11 +81,11 @@ connect to.
 In opencode, sessions are grouped by project, where each git repository is a
 different project. Different git worktrees for the same repository will be
 grouped in the same project. Sessions started in directories outside of any git
-repository will go in the global =/= project. =opencode-select-project= will fuzzy
-complete on all projects and open the [[#session-management][Session Management]] buffer for the project
-you select. When creating a new git repository or adding a git remote, you need
-to run =opencode-reload-locations= for the OpenCode server to pick up the changed
-project.
+repository will go in a project for that directory. =opencode-select-project= will
+fuzzy complete on all projects and open the [[#session-management][Session Management]] buffer for the
+project you select. When creating a new git repository or adding a git remote,
+you need to run =opencode-reload-locations= for the OpenCode server to pick up the
+changed project.
 
 * Session Management
 :PROPERTIES:
@@ -171,7 +94,9 @@ project.
 [[file:screenshots/session_management.png]]
 
 Here you see a table view with information on all sessions for a given project.
-You can configure what columns are shown with =opencode-session-control-table-columns=.
+Open it with =opencode-select-project=, or simply =opencode= to open it for the
+project for your current buffer's directory. You can configure what columns are
+shown with =opencode-session-control-table-columns=.
 
 With a claude subscription plan, the cost column will show an estimate in
 dollars at API pricing, and show the estimated percent of the 5 hour limit a
@@ -229,10 +154,9 @@ everything in the modeline, so it added a header line, and filled it with extra
 information like subscription usage. What is shown in the modeline and
 headerline is fully configurable.
 
-Reasoning, tool output, and the diffs of edits are folded with =hs-minor-mode=,
-leaving their first line visible. Click the ellipsis or use =hs-toggle-hiding=
-(=C-c @ C-c=) on the first line to expand them, and =hs-show-all= (=C-c @ C-M-s=)
-to expand everything.
+Reasoning and tool output are folded with =hs-minor-mode=. Click the ellipsis or
+use =hs-toggle-hiding= (=C-c @ C-c=) to expand things, shift click on an output
+folds it again, and there's a bunch of other =hs-= commands.
 
 Imenu contains all user messages for the session, so you can use =consult-imenu=
 to quickly search through and jump to past messages.
@@ -242,6 +166,9 @@ formulas will also be rendered. To install in arch linux run:
 #+begin_src sh
 pacman -Sy texlive-latex texlive-latexrecommended texlive-fontsrecommended dvisvgm
 #+end_src
+
+With the default shortcuts, =RET= sends the input, while you use =C-j= or =S-RET= or
+whatever you have =newline= bound to to write multiline prompts.
 
 |   Key   | Description                                                                                                                                                                                                                |
 |---------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -276,6 +203,76 @@ pacman -Sy texlive-latex texlive-latexrecommended texlive-fontsrecommended dvisv
 |  =C-c e=  | ediff changes during the turn of the message at point                                                                                                                                                                      |
 |    =/=    | when at the start of a user prompt, select a slash command to run                                                                                                                                                          |
 |    =@=    | reference a sub-agent                                                                                                                                                                                                      |
+
+* Emacs Integrations
+:PROPERTIES:
+:CUSTOM_ID: emacs-integrations
+:END:
+- runs =opencode-file-edited-functions= after edit tool calls. The default
+    hook will reload file after edits to emacs lisp files. You can also add
+    =opencode-fix-parens= to fix parentheses with parinfer if =parinfer-rust-mode=
+    is installed after edits to lisp files.
+- calls =opencode-files-finished-editing-functions= with a list of all files
+    changed in the last assistant turn, including by shell commands, according
+    to the server's snapshot diff, so it requires a git repository and gitignored
+    files aren't included. Add =opencode-indent-files= here to
+    automatically fix indentation with =indent-region=, and
+    =opencode-flycheck-edited-files= to run flycheck and report all errors and
+    warnings in the edited files to the LLM.
+    #+begin_quote
+    *⚠️ WARNING:* opencode-fix-parens, opencode-indent-files, and
+    opencode-flycheck-edited-files are all disabled by default, but if you use
+    them they call revert-buffer, discarding changes in emacs in favor of llm
+    edits. I use git worktrees or just stash, if I am editing at the same time
+    as an llm.
+    #+end_quote
+    You can set project specific hooks in
+    =opencode-project-files-finished-editing-functions=. We include
+    =opencode-uv-pytest= and =opencode-emacs-ert= which will run all tests from
+    pytest and ERT and report errors to the LLM. They are defined using
+    =opencode-run-command-diagnostic= which you can use to run any shell command
+    and report errors to the LLM. To set up a python project to run pytest
+    after LLM edits add your project directory to
+    =safe-local-variable-directories= and then create a =.dir-locals.el= in the
+    project directory with:
+    #+begin_src elisp
+((nil . ((opencode-project-files-finished-editing-functions . (opencode-uv-pytest)))))
+    #+end_src
+- add any emacs buffer to chat context with =opencode-add-buffer-dwim=
+- add files to context with =opencode-add-file-dwim=
+- add selected region to context with =opencode-add-region=
+- add function at point to context with =opencode-add-defun=
+- start a new session to fix all flycheck errors in the current buffer with
+    =opencode-fix-flycheck=, or with a prefix argument it will just fix the
+    flycheck errors at point
+- start a new session to diagnose and fix failed tests from the ERT results
+    buffer with =opencode-fix-ert=, bound to =o= in =ert-results-mode=. By default it
+    will diagnose all failed tests, but with a prefix argument will just
+    diagnose the test at point.
+- =opencode-new-worktree= creates a new worktree and starts a session in it.
+
+    When run from inside a session, it will create a new worktree and move the
+    session into it, prompting whether to also move uncommitted changes into
+    the new worktree, if there are any.
+
+    We automatically add new worktrees to =safe-local-variable-directories= if
+    the git top level directory was already considered safe, to maintain
+    project settings like =opencode-project-files-finished-editing-functions= you
+    may have in =.dir-locals.el=
+- =`file`= and =file:line= references in LLM output are turned into clickable buttons
+- complete on project symbols from within chat sessions
+
+    In chat buffers, we set =completion-at-point-functions= to complete with
+    eglot or slime if you're connected, and to complete elisp symbols if your
+    project contains elisp. We also complete using the TAGS file if your
+    project contains one.
+- use =dabbrev-expand= in the chat window to complete long variable or function
+    names from your code buffers. We set =dabbrev-select-buffers-function= in the
+    chat windows, to include all other buffers from your project.
+- configure how your custom MCP and tools are displayed with =opencode-tool-formatters=
+- I use with [[https://github.com/sczi/eval-elisp-mcp][eval-elisp-mcp]] when developing in elisp.
+- For python development integrated with opencode.el, with features like AI
+    autodebugging exceptions, check out [[https://codeberg.org/sczi/swanky-python/][Swanky Python]]
 
 * Notifications
 :PROPERTIES:
@@ -445,8 +442,8 @@ discuss.
 :PROPERTIES:
 :CUSTOM_ID: comparison-to-agent-shell
 :END:
-The most common question I get from people seeing this package for the first
-time, is how does it compare to the alternatives. I'll just compare it to [[https://github.com/xenodium/agent-shell][Agent
+The most common question I get is how does this compare to the many new and
+interesting packages for using LLMs from Emacs. I'll just compare it to [[https://github.com/xenodium/agent-shell][Agent
 Shell]], which is the most mature alternative and the most popular way to use
 OpenCode from emacs. Agent Shell is an excellent package, by a fantastic
 developer, with a much larger community than opencode.el, so it's more mature in
@@ -459,81 +456,103 @@ do use regularly, and other opencode functionality we support but I rarely use
 myself.
 
 ** Essentials
-*** Performance
-Agent shell maintains a separate ACP connection per session buffer. This means
-any operation like listing sessions and opening an old one, creating a new
-session, or forking a session, takes multiple seconds. And you have an =opencode acp=
-and =opencode serve= process running for every open session. In opencode.el we run a
-single =opencode serve= process, and all those actions are almost instant.
-*** Project Management
-Agent shell has no equivalent to =opencode-select-project= and the [[#session-management][Session Management]] buffer.
-*** deleting a session
-This is actually supported by ACP and [[https://github.com/xenodium/acp.el][acp.el]], so probably support in Agent Shell
-is coming soon
-*** forking a session
-=agent-shell-fork= is more of a clone session command, as you can't actually fork
-a session from a previous turn. =opencode-fork-session= forks the session from the
-turn at point, which can be any past turn.
+- Performance
+
+  Agent shell maintains a separate ACP connection per session buffer. This means
+  that operations like listing sessions and opening an old one, creating a new
+  session, or forking a session, take multiple seconds. And you have an =opencode acp=
+  and =opencode serve= process running for every open session. In opencode.el we
+  run a single =opencode serve= process, and all those actions are almost instant.
+- Project Management
+
+  Agent shell has no equivalent to =opencode-select-project= and the [[#session-management][Session
+  Management]] buffer.
+- deleting a session
+
+  This is actually supported by ACP and [[https://github.com/xenodium/acp.el][acp.el]], so probably support in Agent
+  Shell is coming soon.
+- forking a session
+
+  =agent-shell-fork= is more of a clone session command, as you can't actually
+  fork a session from a previous turn. =opencode-fork-session= forks the session
+  from the turn at point, which can be any past turn.
 ** Other stuff I use regularly
-*** opencode-revert-message
-Reverts the user message at point and everything after it, including LLM edits.
-Opencode maintains a shadow git repository at each LLM turn, allowing it to undo
-edits.
-*** opencode-ediff-turn
-Open llm edits for the turn at point in ediff, again enabled by opencode's
-shadow git repository.
-*** editing hooks
-See the section on Emacs integration. We provide various hooks like running
-flycheck on files the LLM has edited during it's turn, and reporting any
-warnings back to the LLM, and the ability to add your own hooks. Again this is
-enabled by opencode's shadow git repo that includes edits LLMs make with bash or
-python or anything and not just with the edit tool.
-*** Navigate to idle sessions
-Sessions that have finished their response that you haven't read yet, or are
-otherwise waiting for the user to look at (to respond to a question or
-permission), are indicated in the [[#session-management][Session Management]] buffer and you can quickly
-navigate to them with =opencode-visit-last-idle= and =opencode-select-idle=.
-*** Side questions
-Ask quick side questions with =opencode-btw=.
-*** Completion
-In chat sessions, we set =dabbrev-select-buffers-function= to complete from all
-project buffers, along with offering completions from your project from eglot,
-slime, elisp symbols, or TAGS.
-*** Elisp development
-I have a handful of hooks, for fixing parentheses and reloading elisp files
-after edits, reporting ERT test failures and flycheck and checkdoc warnings to
-the LLM at the end of it's turn, and autofixing ERT test failures, that together
-with [[https://github.com/sczi/eval-elisp-mcp][eval-elisp-mcp]] make opencode.el a nice harness for elisp development.
-*** Python development
-[[https://codeberg.org/sczi/swanky-python/][Swanky Python]] has similar hooks and integrations with opencode.el for python development.
-*** Small details
-ie opencode.el receives the session updated event from opencode, to show the
-title opencode generates from the first prompt of a session
+- opencode-revert-message
+
+  Reverts the user message at point and everything after it, including LLM
+  edits. Opencode maintains a shadow git repository at each LLM turn, allowing
+  it to undo edits.
+- opencode-ediff-turn
+
+  Open llm edits for the turn at point in ediff, again enabled by opencode's
+  shadow git repository.
+- editing hooks
+
+  See the section on [[#emacs-integrations][emacs integrations]]. We provide various hooks like running
+  flycheck on files the LLM has edited during it's turn, and reporting any
+  warnings back to the LLM, and the ability to add your own hooks. Again this is
+  enabled by opencode's shadow git repo that includes edits LLMs make with bash
+  or python or anything and not just with the edit tool.
+- Navigate to idle sessions
+
+  Sessions that have finished their response that you haven't read yet, or are
+  otherwise waiting for the user to look at (to respond to a question or
+  permission), are indicated in the [[#session-management][Session Management]] buffer and you can
+  quickly navigate to them with =opencode-visit-last-idle= and
+  =opencode-select-idle=.
+- Side questions
+
+  Ask quick side questions with =opencode-btw=.
+- Completion
+
+  In chat sessions, we set =dabbrev-select-buffers-function= to complete from all
+  project buffers, along with offering completions from your project from eglot,
+  slime, elisp symbols, or TAGS.
+- Elisp development
+
+  I have a handful of hooks, for fixing parentheses and reloading elisp files
+  after edits, reporting ERT test failures and flycheck and checkdoc warnings to
+  the LLM at the end of it's turn, and autofixing ERT test failures, that
+  together with [[https://github.com/sczi/eval-elisp-mcp][eval-elisp-mcp]] make opencode.el a nice harness for elisp
+  development.
+- Python development
+
+  [[https://codeberg.org/sczi/swanky-python/][Swanky Python]] has similar hooks and integrations with opencode.el for python
+  development.
 ** Other stuff I use rarely
-*** Subagents and background jobs
-In the sidebar you can view running subagents and background shell commands for
-a session, and open or cancel them. You can send a shell command that is
-blocking a session to the background, and see past inactive subagents for a
-session with =opencode-select-child-session=.
-*** More info in mode and headerline
-Our mode and headerline is fully configurable, and claude subscription usage is
-the main thing I care about seeing, that we can report but Agent Shell doesn't
-have.
-*** Workspaces
-=opencode-new-workspace= can open a new session in a new workspace, or move an
-existing session (optionally along with all uncommitted changes) into a new workspace
-*** Toggle MCPs
-You can toggle MCPs at runtime rather than just in the config when starting a session.
-*** Search
-Full text search across all open sessions with =opencode-consult-sessions=
-*** [[#usage-statistics][Stats page]]
-I just wanted to vibe code a flashy emacs GUI to =opencode stats=. I don't
-actually look at anything on it, except to sometimes check the cache % reported
-for all providers and models, to see if some provider isn't getting a good cache
-hit rate.
-*** [[#sidebar][Sidebar]]
-*** [[#multiple-opencode-connections-and-tramp][Better support for managing connections to multiple opencode servers]]
-ie different default servers for different projects
+- Subagents and background jobs
+
+  In the sidebar you can view running subagents and background shell commands
+  for a session, and open or cancel them. You can send a shell command that is
+  blocking a session to the background, and see past inactive subagents for a
+  session with =opencode-select-child-session=.
+- More info in mode and headerline
+
+  Our mode and headerline is fully configurable, and claude subscription usage
+  is the main thing I care about seeing, that we can report but Agent Shell
+  doesn't have.
+- Workspaces
+
+  =opencode-new-workspace= can open a new session in a new workspace, or move an
+  existing session (optionally along with all uncommitted changes) into a new
+  workspace
+- Toggle MCPs
+
+  You can toggle MCPs at runtime rather than just in the config when starting a
+  session.
+- Search
+
+  Full text search across all open sessions with =opencode-consult-sessions=
+- [[#usage-statistics][Stats page]]
+
+  I just wanted to vibe code a flashy emacs GUI to =opencode stats=. I don't
+  actually look at anything on it, except to sometimes check the cache %
+  reported for all providers and models, to see if some provider isn't getting a
+  good cache hit rate.
+- [[#sidebar][Sidebar]]
+- [[#multiple-opencode-connections-and-tramp][Better support for managing connections to multiple opencode servers]]
+
+  ie different default servers for different projects
 
 * Configuration
 :PROPERTIES:

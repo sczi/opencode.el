@@ -1865,7 +1865,7 @@ MENUS collects their selections.  Timers run immediately."
   (opencode-forms-test--with-server
     (let ((inputs '("" "abc" "1.5" "200" "7" "")) prompts)
       (cl-letf (((symbol-function 'read-string)
-                 (lambda (prompt &optional _initial)
+                 (lambda (prompt &rest _rest)
                    (push prompt prompts)
                    (pop inputs))))
         (opencode--form-request
@@ -2027,7 +2027,8 @@ MENUS collects their selections.  Timers run immediately."
                  (lambda (_method path &rest _) (push path paths)))
                 ((symbol-function 'run-at-time) #'ignore))
         (setq-local opencode-session-pending-permission
-                    '((:id "per_1" :session-id "ses_1") (:id "per_2" :session-id "ses_1")))
+                    (list (list :id "per_1" :session-id "ses_1")
+                          (list :id "per_2" :session-id "ses_1")))
         (opencode--send-permission-response "once" "per_2")
         (should (equal '("/api/session/ses_1/permission/per_2/reply") paths))
         (should (equal '("per_1") (mapcar (lambda (perm) (plist-get perm :id))

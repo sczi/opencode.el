@@ -83,16 +83,9 @@ of advantages over the official TUI:
      names from your code buffers. We set =dabbrev-select-buffers-function= in the
      chat windows, to include all other buffers from your project.
    - configure how your custom MCP and tools are displayed with =opencode-tool-formatters=
-   - I use with [[https://codeberg.org/sczi/eval-elisp-mcp][eval-elisp-mcp]] when developing in elisp.
+   - I use with [[https://github.com/sczi/eval-elisp-mcp][eval-elisp-mcp]] when developing in elisp.
    - For python development integrated with opencode.el, with features like AI
      autodebugging exceptions, check out [[https://codeberg.org/sczi/swanky-python/][Swanky Python]]
-
-* Demo
-A brief demo showing starting opencode, viewing a past session, sharing it,
-toggling an MCP, selecting the agent, model, and variant, performing some edits,
-receiving a notification when the response is finished if the session buffer
-isn't focused, reverting edits, and forking the session.
-#+HTML: <video src="/sczi/opencode.el/media/branch/main/screenshots/demo.webm" controls></video>
 
 * Installation
 When this package is a bit more stable I'll package it on MELPA, for now install
@@ -105,13 +98,13 @@ needed.
 ** Emacs use-package
 #+begin_src emacs-lisp
 (use-package opencode 
-  :vc (:url "https://codeberg.org/sczi/opencode.el.git" :rev :newest))
+  :vc (:url "https://github.com/sczi/opencode.el" :rev :newest))
 #+end_src
 ** In Doom Emacs
 add to =packages.el= and run =doom sync=
 #+begin_src emacs-lisp
 (package! opencode
-  :recipe (:host codeberg :repo "sczi/opencode.el"))
+  :recipe (:host github :repo "sczi/opencode.el"))
 #+end_src
 
 * Connecting
@@ -159,10 +152,9 @@ Shortcuts to act on the session at point:
 
 |   Key    | Description       |
 |----------+-------------------|
-|   <c>    |                   |
 |    =x=     | kill session      |
-|    a     | archive session   |
-|    u     | unarchive session |
+|    =a=     | archive session   |
+|    =u=     | unarchive session |
 |    =R=     | rename session    |
 | =RET= or =o= | open the session  |
 
@@ -172,11 +164,10 @@ Buffer-wide shortcuts:
 
 | Key | Description                                                                      |
 |-----+----------------------------------------------------------------------------------|
-| <c> |                                                                                  |
 |  =n=  | new session                                                                      |
 |  =M=  | toggle MCP - fuzzy completes on all available MCPs                               |
 |  =v=  | toggle verbose - whether to show subagent sessions, as a tree under their parent |
-|  A  | toggle display of archived sessions                                              |
+|  =A=  | toggle display of archived sessions                                              |
 
 When a session is busy, you will see a busy indicator (⏳) by its row in the
 table. When a session has raised a notification (response finished, form, or
@@ -212,7 +203,6 @@ pacman -Sy texlive-latex texlive-latexrecommended texlive-fontsrecommended dvisv
 
 |   Key   | Description                                                                                                                                                                                                                |
 |---------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-|   <c>   |                                                                                                                                                                                                                            |
 |   =RET=   | send input, while a request runs it steers it: the model sees it after its next step                                                                                                                                       |
 |  =C-RET=  | send input, queued while a request runs: it's shown pending, and sent when the request finishes                                                                                                                            |
 | =C-c C-y= | yank code block at point                                                                                                                                                                                                   |

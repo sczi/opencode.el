@@ -3,6 +3,7 @@
 ;; Copyright (C) 2025  Scott Zimmermann
 
 ;; Author: Scott Zimmermann <sczi@disroot.org>
+;; Assisted-by: Opus:5.5
 ;; Keywords: tools, llm, opencode
 ;; Package-Version: 0.5.0
 ;; Package-Requires: ((emacs "31.1") (magit "4.0") (plz "0.9") (plz-media-type "0.2.4") (plz-event-source "0.1.4"))
@@ -187,9 +188,9 @@ deselected, so only act on the currently selected frame."
         (when opencode-session-pending-permission
           (run-at-time 0 nil #'opencode--respond-permission))))))
 
-(add-hook 'window-selection-change-functions 'opencode--selection-change-hook)
+(add-hook 'window-selection-change-functions #'opencode--selection-change-hook)
 ;; Opening a session in the selected window changes only its buffer
-(add-hook 'window-buffer-change-functions 'opencode--selection-change-hook)
+(add-hook 'window-buffer-change-functions #'opencode--selection-change-hook)
 
 ;; Handles the case where the session buffer was already selected when the
 ;; request arrived but Emacs did not have OS focus at the time.

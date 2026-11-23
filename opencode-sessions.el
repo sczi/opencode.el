@@ -102,7 +102,7 @@ Accepts (\"name\" . buffer) to work as a read-buffer predicate."
   "Select among open session buffers."
   (interactive)
   (switch-to-buffer
-   (read-buffer "Switch to: " nil t 'opencode--session-buffer-p)))
+   (read-buffer "Switch to: " nil t #'opencode--session-buffer-p)))
 
 (defun opencode-consult-sessions (all)
   "Run `consult-line-multi' across open opencode sessions of the current project.
@@ -177,18 +177,18 @@ its last assistant message is fetched and shown in a temporary buffer."
                  (let ((buffer (preview-buffer)))
                    (setq previewed id)
                    (if-let* ((text (gethash id texts)))
-                       (fill session text)
-                     (fill session "_Loading…_")
+                       (cl-fill session text)
+                     (cl-fill session "_Loading…_")
                      (opencode-api-last-assistant-message (id)
                          messages
                        :else (lambda (error-msg)
                                (when (equal previewed id)
-                                 (fill session (format "_Couldn't fetch: %s_" error-msg))))
+                                 (cl-fill session (format "_Couldn't fetch: %s_" error-msg))))
                        (let ((text (or (opencode--message-text (car messages))
                                        "_No reply yet_")))
                          (puthash id text texts)
                          (when (equal previewed id)
-                           (fill session text)))))
+                           (cl-fill session text)))))
                    buffer)))))
       (lambda (action session)
         (prog1 (funcall buffer-state action
@@ -429,7 +429,7 @@ The result is a mode line construct, so percent signs from specs and a
 literal %% are escaped, and other specs are left for the mode line."
   (let ((result (format-spec (string-replace "%%" "%%%%" string)
                              (or specs (opencode--format-specs))
-                             'ignore))
+                             #'ignore))
         (start 0))
     (while (setq start (string-search "%" result start))
       (if (get-text-property start 'opencode--spec result)
@@ -677,7 +677,7 @@ from a session buffer whatever languages the project uses."
 (define-derived-mode opencode-session-mode comint-mode "OpenCode"
   "Major mode for interacting with an opencode session."
   (setq-local comint-use-prompt-regexp nil
-              comint-input-sender 'opencode--send-input
+              comint-input-sender #'opencode--send-input
               comint-highlight-input nil
               left-margin-width (1+ left-margin-width))
   (setq-local markdown-ts-hide-markup t

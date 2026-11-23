@@ -11,7 +11,7 @@
 
 ;;; Code:
 
-(require 'flycheck)
+(require 'flycheck nil t)
 (require 'opencode)
 
 (defun opencode--flycheck-report-diagnostics (file base-directory errors)

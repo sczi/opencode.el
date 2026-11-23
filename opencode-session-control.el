@@ -123,7 +123,7 @@ The table's copy may be stale, like from before a revert was staged."
   (declare-function evil-make-overriding-map "evil-core")
   (evil-make-overriding-map opencode-session-control-mode-map 'normal)
   (evil-define-key* 'normal opencode-session-control-mode-map
-    "gv" 'opencode-session-control-toggle-verbose)
+    "gv" #'opencode-session-control-toggle-verbose)
   (evil-define-key* 'visual opencode-session-control-mode-map
     "x" (opencode--session-control-command #'opencode-kill-session
                                            "Deleted" "Delete")

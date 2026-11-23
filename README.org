@@ -178,14 +178,16 @@ archived sessions, which are not displayed by default (toggle their display with
 
 * Chat Sessions
 [[file:screenshots/session.png]]
-[[file:screenshots/session_with_diff.png]]
 
 This is what session buffers look like. In the modeline at the bottom right we
-see the current agent, current model, model variant if one is selected (like
-low/medium/high thinking level), the percent of context used up so far, and an
-indicator for if the session is idle or busy. User prompts are shown with a blue
-margin highlight, information about tool calls in green, and reasoning in brown.
-These colors can be configured through the =opencode-*-margin-highlight= faces.
+see the current agent, current model, model variant if one is selected (the dots
+represent the possible thinking levels from low to max), the percent of context
+used up so far, and an indicator for if the session is idle or busy. User
+prompts are shown with a blue margin highlight, information about tool calls in
+green, and reasoning in brown. On the right pane, the title was too long to fit
+everything in the modeline, so it added a header line, and filled it with extra
+information like subscription usage. What is shown in the modeline and
+headerline is fully configurable.
 
 Reasoning, tool output, and the diffs of edits are folded with =hs-minor-mode=,
 leaving their first line visible. Click the ellipsis or use =hs-toggle-hiding=
@@ -243,6 +245,8 @@ raised a notification with =opencode-visit-last-idle=, or prompt for all session
 that haven't been visited since their last notification with =opencode-select-idle=.
 
 * Usage statistics
+#+CAPTION: usage statistics
+[[file:screenshots/stats.png]]
 =opencode-stats= shows statistics on model, project, and tool usage, along with a
 heatmap of activity and a graph of token usage over time. You can click on a bar
 in the graph or a square in the heatmap to go to that time period. When the time
@@ -251,6 +255,8 @@ active during that day, and clicking on a session will open it. A header at the
 top shows the keybindings you can use to change the time period or information shown.
 
 * Sidebar
+#+CAPTION: sidebar
+[[file:screenshots/sidebar.png]]
 =C-c s= toggles the display of a sidebar with information about the active session
 and the turn at point. =RET= on an MCP in the sidebar will toggle it. =RET= on a
 subagent or background shell in the Jobs section will open it, and =x= will cancel
@@ -297,10 +303,8 @@ define your own sidebar sections with =opencode-sidebar-define-section=.
 | opencode-stats               | Show usage statistics of opencode sessions for this year so far. They’re of all projects, or with a prefix argument PROJECT of the project of ‘default-directory’.  See ‘opencode-stats-mode’ for its keys.                                                                                                                                                                                                                                                                         |
 
 * Question Tool
-#+CAPTION: Single choice question
-[[file:screenshots/single_choice_question.png]]
-#+CAPTION: Multiple choice question
-[[file:screenshots/multiple_choice_question.png]]
+#+CAPTION: question
+[[file:screenshots/question.png]]
 
 OpenCode includes a question tool that models can use to ask clarifying
 questions of the user. If the session buffer is active when the questions are

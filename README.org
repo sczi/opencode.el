@@ -1,6 +1,6 @@
-#+TITLE: Emacs OpenCode UI
+#+TITLE: opencode.el
 #+OPTIONS: toc:nil
-/Jump to:/ [[#overview][Overview]] · [[#installation][Installation]] · [[#connecting][Connecting]] · [[#project-management][Project Management]] · [[#session-management][Session Management]] · [[#chat-sessions][Chat Sessions]] · [[#notifications][Notifications]] · [[#usage-statistics][Statistics]] · [[#sidebar][Sidebar]] · [[#commands][Commands]] · [[#question-tool][Question Tool]] · [[#multiple-opencode-connections-and-tramp][Multiple Connections and TRAMP]] · [[#security][Security]] · [[#bugs][Bugs]] · [[#contributing][Contributing]] · [[#comparison-to-agent-shell][Comparison to Agent Shell]] · [[#configuration][Configuration]]
+/Jump to:/ [[#overview][Overview]] · [[#installation][Installation]] · [[#global-shortcuts][Global Shortcuts]] · [[#connecting][Connecting]] · [[#project-management][Project Management]] · [[#session-management][Session Management]] · [[#chat-sessions][Chat Sessions]] · [[#notifications][Notifications]] · [[#usage-statistics][Statistics]] · [[#sidebar][Sidebar]] · [[#commands][Commands]] · [[#question-tool][Question Tool]] · [[#multiple-opencode-connections-and-tramp][Multiple Connections and TRAMP]] · [[#security][Security]] · [[#bugs][Bugs]] · [[#contributing][Contributing]] · [[#comparison-to-agent-shell][Comparison to Agent Shell]] · [[#configuration][Configuration]]
 
 * Overview
 :PROPERTIES:
@@ -113,6 +113,29 @@ add to =packages.el= and run =doom sync=
 #+begin_src emacs-lisp
 (package! opencode
   :recipe (:host github :repo "sczi/opencode.el"))
+#+end_src
+
+* Global Shortcuts
+:PROPERTIES:
+:CUSTOM_ID: global-shortcuts
+:END:
+I use the following global shortcuts for opencode.el in doom emacs:
+#+begin_src elisp
+(map! :map global-map
+      (:prefix ("M-g" . "gptel/opencode.el")
+               "f" 'opencode-add-file-dwim
+               "F" 'opencode-consult-sessions
+               "r" 'opencode-add-region
+               "d" 'opencode-add-defun
+               "b" 'opencode-add-buffer-dwim
+               "n" 'opencode-new-session
+               "o" 'opencode
+               "p" 'opencode-select-project
+               "w" 'opencode-new-worktree
+               "s" 'opencode-select-session
+               "S" 'opencode-select-open-session
+               "i" 'opencode-visit-last-idle
+               "I" 'opencode-select-idle))
 #+end_src
 
 * Connecting

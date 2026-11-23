@@ -1,6 +1,11 @@
 #+TITLE: Emacs OpenCode UI
 #+OPTIONS: toc:nil
+/Jump to:/ [[#overview][Overview]] · [[#installation][Installation]] · [[#connecting][Connecting]] · [[#project-management][Project Management]] · [[#session-management][Session Management]] · [[#chat-sessions][Chat Sessions]] · [[#notifications][Notifications]] · [[#usage-statistics][Statistics]] · [[#sidebar][Sidebar]] · [[#commands][Commands]] · [[#question-tool][Question Tool]] · [[#multiple-opencode-connections-and-tramp][Multiple Connections and TRAMP]] · [[#security][Security]] · [[#bugs][Bugs]] · [[#contributing][Contributing]] · [[#comparison-to-agent-shell][Comparison to Agent Shell]] · [[#configuration][Configuration]]
 
+* Overview
+:PROPERTIES:
+:CUSTOM_ID: overview
+:END:
 An emacs UI to [[https://opencode.ai/][opencode]] - an open source AI coding agent. This provides two sets
 of advantages over the official TUI:
 
@@ -88,6 +93,9 @@ of advantages over the official TUI:
      autodebugging exceptions, check out [[https://codeberg.org/sczi/swanky-python/][Swanky Python]]
 
 * Installation
+:PROPERTIES:
+:CUSTOM_ID: installation
+:END:
 When this package is a bit more stable I'll package it on MELPA, for now install
 from git. This package requires Emacs 31.1 with the =markdown= and =markdown-inline=
 Tree-sitter grammars (install with =M-x markdown-ts-mode-install-parsers=), plus
@@ -108,6 +116,9 @@ add to =packages.el= and run =doom sync=
 #+end_src
 
 * Connecting
+:PROPERTIES:
+:CUSTOM_ID: connecting
+:END:
 ** Automatic
 =M-x opencode= will try to connect to an opencode server at
 =opencode-host:opencode-port= or will start a headless opencode server with a
@@ -118,6 +129,9 @@ buffer for the current project.
 connect to.
 
 * Project Management
+:PROPERTIES:
+:CUSTOM_ID: project-management
+:END:
 In opencode, sessions are grouped by project, where each git repository is a
 different project. Different git worktrees for the same repository will be
 grouped in the same project. Sessions started in directories outside of any git
@@ -128,6 +142,9 @@ to run =opencode-reload-locations= for the OpenCode server to pick up the change
 project.
 
 * Session Management
+:PROPERTIES:
+:CUSTOM_ID: session-management
+:END:
 [[file:screenshots/session_management.png]]
 
 Here you see a table view with information on all sessions for a given project.
@@ -174,6 +191,9 @@ the session had an error, you'll see a ❌ instead of ✦. A 🗄 will be shown 
 archived sessions, which are not displayed by default (toggle their display with =A=).
 
 * Chat Sessions
+:PROPERTIES:
+:CUSTOM_ID: chat-sessions
+:END:
 [[file:screenshots/session.png]]
 
 This is what session buffers look like. In the modeline at the bottom right we
@@ -235,6 +255,9 @@ pacman -Sy texlive-latex texlive-latexrecommended texlive-fontsrecommended dvisv
 |    =@=    | reference a sub-agent                                                                                                                                                                                                      |
 
 * Notifications
+:PROPERTIES:
+:CUSTOM_ID: notifications
+:END:
 If a session buffer and frame is not active, emacs will show a notification when
 that session's response has finished, so that you can go work on other stuff and
 be notified when the agent has finished. You can visit the session that last
@@ -242,6 +265,9 @@ raised a notification with =opencode-visit-last-idle=, or prompt for all session
 that haven't been visited since their last notification with =opencode-select-idle=.
 
 * Usage statistics
+:PROPERTIES:
+:CUSTOM_ID: usage-statistics
+:END:
 #+CAPTION: usage statistics
 [[file:screenshots/stats.png]]
 =opencode-stats= shows statistics on model, project, and tool usage, along with a
@@ -252,6 +278,9 @@ active during that day, and clicking on a session will open it. A header at the
 top shows the keybindings you can use to change the time period or information shown.
 
 * Sidebar
+:PROPERTIES:
+:CUSTOM_ID: sidebar
+:END:
 #+CAPTION: sidebar
 [[file:screenshots/sidebar.png]]
 =C-c s= toggles the display of a sidebar with information about the active session
@@ -261,6 +290,9 @@ it. You can configure what is shown in the sidebar with =opencode-sidebar= and
 define your own sidebar sections with =opencode-sidebar-define-section=.
 
 * Commands
+:PROPERTIES:
+:CUSTOM_ID: commands
+:END:
 #+begin_src emacs-lisp :results table :colnames '("Command" "Description") :exports results
 (cl-loop for command in '(opencode opencode-connect opencode-disconnect
                           opencode-select-project opencode-select-session opencode-select-open-session
@@ -300,6 +332,9 @@ define your own sidebar sections with =opencode-sidebar-define-section=.
 | opencode-stats               | Show usage statistics of opencode sessions for this year so far. They’re of all projects, or with a prefix argument PROJECT of the project of ‘default-directory’.  See ‘opencode-stats-mode’ for its keys.                                                                                                                                                                                                                                                                         |
 
 * Question Tool
+:PROPERTIES:
+:CUSTOM_ID: question-tool
+:END:
 #+CAPTION: question
 [[file:screenshots/question.png]]
 
@@ -324,6 +359,9 @@ minibuffer. MCP elicitations aren't tied to a session so they're prompted right
 away.
 
 * Multiple OpenCode connections and TRAMP
+:PROPERTIES:
+:CUSTOM_ID: multiple-opencode-connections-and-tramp
+:END:
 You can configure =opencode-servers= with a list of different opencode servers.
 =opencode-default-server= is the one we connect to by default, or you can set
 project specific defaults with =opencode-project-servers=. If you are visiting a
@@ -345,6 +383,9 @@ password to connect to a server that is not already configured in
 =opencode-servers=.
 
 * Security
+:PROPERTIES:
+:CUSTOM_ID: security
+:END:
 Opencode's permission system, especially for bash, is not nearly as fine-grained
 as claude's. However, I don't think this really matters. Any coding agent with
 the ability to write and execute code can execute potentially malicious code by
@@ -363,15 +404,24 @@ opencode.el sets a random password for the opencode server we start, to guard
 against a [[https://cy.md/opencode-rce/][history]] of [[https://github.com/anomalyco/opencode/security/advisories/GHSA-c83v-7274-4vgp][vulnerabilities]] in [[https://securitylabs.datadoghq.com/articles/opencode-upgrade-remote-code-execution/][OpenCode's server]].
 
 * Bugs
+:PROPERTIES:
+:CUSTOM_ID: bugs
+:END:
 Known bugs in other packages that affect users of opencode.el are documented in
 [[file:Bugs.org][Bugs.org]]. For bugs in opencode.el itself, see the issue tracker.
 
 * Contributing
+:PROPERTIES:
+:CUSTOM_ID: contributing
+:END:
 PRs for relatively small changes or fixes are welcome. For large new features or
 changes, please instead open an issue with a markdown specification we can
 discuss.
 
 * Comparison to Agent Shell
+:PROPERTIES:
+:CUSTOM_ID: comparison-to-agent-shell
+:END:
 The most common question I get from people seeing this package for the first
 time, is how does it compare to the alternatives. I'll just compare it to [[https://github.com/xenodium/agent-shell][Agent
 Shell]], which is the most mature alternative and the most popular way to use
@@ -463,6 +513,9 @@ hit rate.
 ie different default servers for different projects
 
 * Configuration
+:PROPERTIES:
+:CUSTOM_ID: configuration
+:END:
 - =opencode-command= and =opencode-serve-command= can be used to configure how to
   run a headless opencode server
 - =opencode-host= and =opencode-port= are the default host and port to use with =M-x opencode-connect=

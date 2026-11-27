@@ -107,25 +107,30 @@ The mode line looks up the current model on every update."
               (table (opencode-connection-models-by-ref connection)))
     (gethash (cons (alist-get 'providerID ref) (alist-get 'id ref)) table)))
 
-(defun opencode--fetch-models (callback)
+(defun opencode--fetch-models (callback &optional else)
   "Fetch enabled models and the default model from server, for `default-directory'.
-Run CALLBACK once fetched."
+Run CALLBACK once fetched.  Call ELSE with the error message if given and a
+request fails."
   (opencode-api-models models
+    :else else
     (opencode--set-models (opencode--conn)
                           (seq-remove (lambda (model)
                                         (opencode--json-falsy (alist-get 'enabled model)))
                                       models))
     (opencode-api-default-model default
+      :else else
       (unless (opencode--find-model opencode-last-model)
         (setq opencode-last-model
               (unless (opencode--json-falsy default)
                 (opencode--model-ref default))))
       (funcall callback))))
 
-(defun opencode--fetch-agents (callback)
+(defun opencode--fetch-agents (callback &optional else)
   "Fetch available agents from server for `default-directory', excluding hidden ones.
-Run CALLBACK once fetched."
+Run CALLBACK once fetched.  Call ELSE with the error message if given and the
+request fails."
   (opencode-api-agents agents
+    :else else
     (setf (opencode-connection-agents (opencode--conn))
           (seq-filter (lambda (agent)
                         (opencode--json-falsy (alist-get 'hidden agent)))

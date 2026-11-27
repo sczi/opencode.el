@@ -232,19 +232,35 @@ The server isn't started if it isn't running."
 
 (defun opencode--connect (connection on-connect)
   "Connect to CONNECTION's running server, then call ON-CONNECT.
-It becomes the default connection.  CONNECTION must be disconnected."
+It becomes the default connection.  CONNECTION must be disconnected.
+ON-CONNECT runs in the current buffer, and not at all if it's killed first
+or fetching the models or agents fails, but the connection stops loading
+either way, so it's usable after."
   (opencode--subscribe-events connection)
   (opencode--set-default-connection connection)
   (setf (opencode-connection-loading connection) t)
-  (let ((opencode--dispatching-connection connection))
-    (opencode--wait-for-plugins
-     (lambda ()
-       (opencode--fetch-models
-        (lambda ()
-          (opencode--fetch-agents
-           (lambda ()
-             (setf (opencode-connection-loading connection) nil)
-             (funcall on-connect))))))))
+  (let* ((buffer (current-buffer))
+         (directory default-directory)
+         (fail (lambda (error-msg)
+                 (setf (opencode-connection-loading connection) nil)
+                 (message "Loading opencode %s failed: %s"
+                          (opencode-connection-name connection) error-msg)))
+         (done (lambda ()
+                 (setf (opencode-connection-loading connection) nil)
+                 (when (buffer-live-p buffer)
+                   (with-current-buffer buffer
+                     (let ((default-directory directory))
+                       (funcall on-connect)))))))
+    ;; Responses are only handled in the buffer they were requested from if
+    ;; it's live, so one the user may kill would leave the connection loading
+    (with-current-buffer (get-buffer-create " *opencode-connect*")
+      (let ((default-directory directory)
+            (opencode--dispatching-connection connection))
+        (opencode--wait-for-plugins
+         (lambda ()
+           (opencode--fetch-models
+            (lambda () (opencode--fetch-agents done fail))
+            fail))))))
   (message "Connected to opencode %s at %s"
            (opencode-connection-name connection) (opencode-connection-url connection)))
 
@@ -340,9 +356,11 @@ The server answers catalog reads like models and agents with whatever is
 loaded so far, and lists no plugins until the location is first activated,
 so this waits for that as opencode's own CLI does.  It gives up waiting at
 DEADLINE, a `float-time', which defaults to 5 seconds from now.  CALLBACK
-runs with the same `default-directory'."
+runs in the current buffer, if it's still live, with the same
+`default-directory'."
   (let* ((deadline (or deadline (+ (float-time) 5)))
          (connection (opencode--conn))
+         (buffer (current-buffer))
          (directory default-directory))
     (opencode-api-plugins plugins
       :else (lambda (_error) (funcall callback))
@@ -350,9 +368,11 @@ runs with the same `default-directory'."
           (funcall callback)
         (run-at-time 0.025 nil
                      (lambda ()
-                       (let ((opencode--dispatching-connection connection)
-                             (default-directory directory))
-                         (opencode--wait-for-plugins callback deadline))))))))
+                       (when (buffer-live-p buffer)
+                         (with-current-buffer buffer
+                           (let ((opencode--dispatching-connection connection)
+                                 (default-directory directory))
+                             (opencode--wait-for-plugins callback deadline))))))))))
 
 ;;; Connection commands
 

@@ -109,7 +109,7 @@ The mode line looks up the current model on every update."
 
 (defun opencode--fetch-models (callback)
   "Fetch enabled models and the default model from server, for `default-directory'.
-Run CALLBACK once fetched, with the same `default-directory'."
+Run CALLBACK once fetched."
   (opencode-api-models models
     (opencode--set-models (opencode--conn)
                           (seq-remove (lambda (model)
@@ -124,7 +124,7 @@ Run CALLBACK once fetched, with the same `default-directory'."
 
 (defun opencode--fetch-agents (callback)
   "Fetch available agents from server for `default-directory', excluding hidden ones.
-Run CALLBACK once fetched, with the same `default-directory'."
+Run CALLBACK once fetched."
   (opencode-api-agents agents
     (setf (opencode-connection-agents (opencode--conn))
           (seq-filter (lambda (agent)

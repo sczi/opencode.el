@@ -46,10 +46,12 @@ Shows the _tag and message of the server's JSON error body, if it has one."
       (format "error requesting %s: %s" path err))))
 
 (defun opencode-api--in-directory (directory fn)
-  "Return a function calling FN with `default-directory' bound to DIRECTORY."
-  (lambda (&rest args)
-    (let ((default-directory directory))
-      (apply fn args))))
+  "Return a function calling FN with `default-directory' bound to DIRECTORY.
+Return nil if FN is nil."
+  (when fn
+    (lambda (&rest args)
+      (let ((default-directory directory))
+        (apply fn args)))))
 
 (cl-defun opencode-api--request (method path &key (body nil body-p) raw then else
                                         (restore-directory t))
@@ -67,14 +69,11 @@ bound to what it is now.  Pass nil when they set the buffer's own
          (connection (opencode--conn))
          ;; Without it the server uses its default location
          (directory (opencode--to-server-path default-directory connection))
-         (wrap (lambda (fn)
-                 (when fn
-                   (let ((fn (opencode--in-command-context fn)))
-                     (if restore-directory
-                         (opencode-api--in-directory default-directory fn)
-                       fn)))))
-         (then (funcall wrap then))
-         (else (funcall wrap else)))
+         (then (and then (opencode--in-command-context then)))
+         (else (and else (opencode--in-command-context else))))
+    (when restore-directory
+      (setq then (opencode-api--in-directory default-directory then)
+            else (opencode-api--in-directory default-directory else)))
     (opencode-api--log "REQUEST" path)
     (when body-p
       (opencode-api--log "REQUEST BODY" body))

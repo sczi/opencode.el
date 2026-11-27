@@ -254,12 +254,16 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
             (if (eq type 'command.updated) 'slash-commands 'skills)
             (opencode--from-server-path (map-nested-elt event '(location directory)))))
           ;; Connecting fetches them once its plugins have loaded
-          (model.updated
+          ((model.updated agent.updated)
            (unless (opencode-connection-loading (opencode--conn))
-             (opencode--fetch-models #'ignore)))
-          (agent.updated
-           (unless (opencode-connection-loading (opencode--conn))
-             (opencode--fetch-agents #'ignore)))
+             ;; Fetched for the location that changed
+             (let ((default-directory
+                    (if-let* ((directory (map-nested-elt event '(location directory))))
+                        (file-name-as-directory (opencode--from-server-path directory))
+                      default-directory)))
+               (if (eq type 'model.updated)
+                   (opencode--fetch-models #'ignore)
+                 (opencode--fetch-agents #'ignore)))))
           (form.created (opencode--form-request .form))
           ((form.replied form.cancelled)
            (opencode--form-settled .id))

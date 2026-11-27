@@ -80,6 +80,7 @@ and the buffers tied to it keep working."
   (password nil :documentation "Password generated for or entered for it, if any.")
   (process nil :documentation "Server process when started by Emacs.")
   (stream nil :documentation "SSE event stream process, non-nil when connected.")
+  (loading nil :documentation "Non-nil while connecting, until its models and agents are fetched.")
   (agents nil :documentation "Available agents excluding hidden agents.")
   (models nil :documentation "Enabled models.")
   (models-by-ref nil :documentation "Hash table of models by (providerID . id).

@@ -19,6 +19,9 @@
 (require 'opencode-sidebar)
 (require 'plz-event-source)
 
+(declare-function opencode--fetch-models "opencode-servers")
+(declare-function opencode--fetch-agents "opencode-servers")
+
 (defcustom opencode-session-deleted-functions nil
   "Hook run when an opencode session is deleted.
 This is an abnormal hook. Each function receives one argument, SESSION-ID."
@@ -44,7 +47,7 @@ This is an abnormal hook. Each function receives one argument, SESSION-ID."
     "permission.asked" "permission.replied"
     "form.created" "form.replied" "form.cancelled" "tui.toast.show"
     "mcp.status.changed"
-    "command.updated" "skill.updated")
+    "command.updated" "skill.updated" "model.updated" "agent.updated")
   "Types of the events to subscribe to.")
 
 (defun opencode--session-finished (session-id ended &optional interrupted)
@@ -253,6 +256,13 @@ INTERRUPTED means it was interrupted rather than finishing on its own."
            (opencode--directory-cache-updated
             (if (eq type 'command.updated) 'slash-commands 'skills)
             (opencode--from-server-path (map-nested-elt event '(location directory)))))
+          ;; Connecting fetches them once its plugins have loaded
+          (model.updated
+           (unless (opencode-connection-loading (opencode--conn))
+             (opencode--fetch-models #'ignore)))
+          (agent.updated
+           (unless (opencode-connection-loading (opencode--conn))
+             (opencode--fetch-agents #'ignore)))
           (form.created (opencode--form-request .form))
           ((form.replied form.cancelled)
            (opencode--form-settled .id))

@@ -127,9 +127,9 @@ Each element is (display-name model-ref provider-id)."
   (interactive)
   (unless opencode-session-agent
     (user-error "not in a session"))
-  (when-let* ((ref (opencode--annotated-completion
-                    "Model: "
-                    (opencode--collect-all-models))))
+  (when-let* ((models (or (opencode--collect-all-models)
+                          (user-error "No models loaded from the opencode server")))
+              (ref (opencode--annotated-completion "Model: " models)))
     (let ((variant (map-nested-elt opencode-session-agent '(model variant))))
       (when (opencode--model-variant-p (opencode--find-model ref) variant)
         (setf (alist-get 'variant ref) variant))

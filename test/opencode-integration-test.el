@@ -51,6 +51,25 @@ provider is shown, then a prompt."
                              (opencode-test-output)))
     (should (opencode-test-error-p "Bad request from provider"))))
 
+(ert-deftest opencode-integration-connect-loads-catalog-test ()
+  "Connecting from a directory the server hasn't loaded waits for its config.
+The server answers with whatever's loaded so far, so until it's loaded the
+config's models and default agent would be missing.  Sessions can't be
+opened until they're fetched."
+  (opencode-test-with-server
+    (let ((default-directory (opencode-test-make-project
+                              '((".opencode/opencode.json"
+                                 . "{\"default_agent\": \"plan\"}\n"))))
+          connected)
+      (opencode--disconnect opencode-test--connection)
+      (opencode--connect opencode-test--connection (lambda () (setq connected t)))
+      (should-error (opencode-new-session) :type 'user-error)
+      (opencode-test-wait-until connected)
+      (should (opencode--find-model '((providerID . "sim") (id . "sim-model"))))
+      (should (equal "plan" (alist-get 'id (opencode--default-agent))))
+      (with-current-buffer (opencode-test-new-session default-directory)
+        (should (equal "plan" (alist-get 'id opencode-session-agent)))))))
+
 (ert-deftest opencode-integration-stats-test ()
   "The stats of the session's project show its prompts, steps, model and tools.
 Today's stats list its sessions with their steps, and RET opens one."

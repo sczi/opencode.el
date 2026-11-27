@@ -207,6 +207,7 @@ may start with :else HANDLER to handle errors."
  (models "/api/model")
  (default-model "/api/model/default")
  (agents "/api/agent")
+ (plugins "/api/plugin")
  (commands "/api/command")
  (skills "/api/skill")
  (mcps "/api/mcp")

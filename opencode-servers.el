@@ -186,6 +186,10 @@ allows it.  ON-CONNECT runs with CONNECTION as its current connection."
                    (funcall on-connect))))))
     (opencode--disconnect-if-stream-dead connection)
     (cond
+     ((and (opencode-connection-connected-p connection)
+           (opencode-connection-loading connection))
+      (user-error "OpenCode server %s is still connecting"
+                  (opencode-connection-name connection)))
      ((opencode-connection-connected-p connection)
       (funcall run))
      ((opencode--server-running-p connection)
@@ -231,8 +235,16 @@ The server isn't started if it isn't running."
 It becomes the default connection.  CONNECTION must be disconnected."
   (opencode--subscribe-events connection)
   (opencode--set-default-connection connection)
+  (setf (opencode-connection-loading connection) t)
   (let ((opencode--dispatching-connection connection))
-    (opencode--fetch-models (lambda () (opencode--fetch-agents on-connect))))
+    (opencode--wait-for-plugins
+     (lambda ()
+       (opencode--fetch-models
+        (lambda ()
+          (opencode--fetch-agents
+           (lambda ()
+             (setf (opencode-connection-loading connection) nil)
+             (funcall on-connect))))))))
   (message "Connected to opencode %s at %s"
            (opencode-connection-name connection) (opencode-connection-url connection)))
 
@@ -305,7 +317,8 @@ If another connection is connected, it becomes the default."
     (when (process-live-p process)
       (set-process-sentinel process nil)
       (kill-process process)))
-  (setf (opencode-connection-slash-commands connection) nil
+  (setf (opencode-connection-loading connection) nil
+        (opencode-connection-slash-commands connection) nil
         (opencode-connection-skills connection) nil
         (opencode-connection-locations connection) nil)
   (when (eq connection opencode-default-connection)
@@ -321,30 +334,58 @@ killed, so the stream's callbacks never run."
               ((not (process-live-p stream))))
     (opencode--disconnect connection "event stream process died")))
 
+(defun opencode--wait-for-plugins (callback &optional deadline)
+  "Call CALLBACK once the server lists plugins for `default-directory'.
+The server answers catalog reads like models and agents with whatever is
+loaded so far, and lists no plugins until the location is first activated,
+so this waits for that as opencode's own CLI does.  It gives up waiting at
+DEADLINE, a `float-time', which defaults to 5 seconds from now.  CALLBACK
+runs with the same `default-directory'."
+  (let* ((deadline (or deadline (+ (float-time) 5)))
+         (connection (opencode--conn))
+         (directory default-directory)
+         (done (lambda ()
+                 (let ((default-directory directory))
+                   (funcall callback)))))
+    (opencode-api-plugins plugins
+      :else (lambda (_error) (funcall done))
+      (if (or plugins (> (float-time) deadline))
+          (funcall done)
+        (run-at-time 0.025 nil
+                     (lambda ()
+                       (let ((opencode--dispatching-connection connection)
+                             (default-directory directory))
+                         (opencode--wait-for-plugins callback deadline))))))))
+
 (defun opencode--fetch-models (callback)
-  "Fetch enabled models and the default model from server.
-Run CALLBACK once fetched."
-  (opencode-api-models models
-    (opencode--set-models (opencode--conn)
-                          (seq-remove (lambda (model)
-                                        (opencode--json-falsy (alist-get 'enabled model)))
-                                      models))
-    (opencode-api-default-model default
-      (unless (opencode--find-model opencode-last-model)
-        (setq opencode-last-model
-              (unless (opencode--json-falsy default)
-                (opencode--model-ref default))))
-      (funcall callback))))
+  "Fetch enabled models and the default model from server, for `default-directory'.
+Run CALLBACK once fetched, with the same `default-directory'."
+  (let ((directory default-directory))
+    (opencode-api-models models
+      (opencode--set-models (opencode--conn)
+                            (seq-remove (lambda (model)
+                                          (opencode--json-falsy (alist-get 'enabled model)))
+                                        models))
+      (let ((default-directory directory))
+        (opencode-api-default-model default
+          (unless (opencode--find-model opencode-last-model)
+            (setq opencode-last-model
+                  (unless (opencode--json-falsy default)
+                    (opencode--model-ref default))))
+          (let ((default-directory directory))
+            (funcall callback)))))))
 
 (defun opencode--fetch-agents (callback)
-  "Fetch available agents from server and filter out hidden agents.
-Run CALLBACK once fetched."
-  (opencode-api-agents agents
-    (setf (opencode-connection-agents (opencode--conn))
-          (seq-filter (lambda (agent)
-                        (opencode--json-falsy (alist-get 'hidden agent)))
-                      agents))
-    (funcall callback)))
+  "Fetch available agents from server for `default-directory', excluding hidden ones.
+Run CALLBACK once fetched, with the same `default-directory'."
+  (let ((directory default-directory))
+    (opencode-api-agents agents
+      (setf (opencode-connection-agents (opencode--conn))
+            (seq-filter (lambda (agent)
+                          (opencode--json-falsy (alist-get 'hidden agent)))
+                        agents))
+      (let ((default-directory directory))
+        (funcall callback)))))
 
 ;;; Connection commands
 

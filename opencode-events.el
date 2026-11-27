@@ -19,9 +19,6 @@
 (require 'opencode-sidebar)
 (require 'plz-event-source)
 
-(declare-function opencode--fetch-models "opencode-servers")
-(declare-function opencode--fetch-agents "opencode-servers")
-
 (defcustom opencode-session-deleted-functions nil
   "Hook run when an opencode session is deleted.
 This is an abnormal hook. Each function receives one argument, SESSION-ID."

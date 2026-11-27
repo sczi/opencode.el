@@ -354,31 +354,6 @@ runs with the same `default-directory'."
                              (default-directory directory))
                          (opencode--wait-for-plugins callback deadline))))))))
 
-(defun opencode--fetch-models (callback)
-  "Fetch enabled models and the default model from server, for `default-directory'.
-Run CALLBACK once fetched, with the same `default-directory'."
-  (opencode-api-models models
-    (opencode--set-models (opencode--conn)
-                          (seq-remove (lambda (model)
-                                        (opencode--json-falsy (alist-get 'enabled model)))
-                                      models))
-    (opencode-api-default-model default
-      (unless (opencode--find-model opencode-last-model)
-        (setq opencode-last-model
-              (unless (opencode--json-falsy default)
-                (opencode--model-ref default))))
-      (funcall callback))))
-
-(defun opencode--fetch-agents (callback)
-  "Fetch available agents from server for `default-directory', excluding hidden ones.
-Run CALLBACK once fetched, with the same `default-directory'."
-  (opencode-api-agents agents
-    (setf (opencode-connection-agents (opencode--conn))
-          (seq-filter (lambda (agent)
-                        (opencode--json-falsy (alist-get 'hidden agent)))
-                      agents))
-    (funcall callback)))
-
 ;;; Connection commands
 
 (defun opencode--cycle-connection (step)

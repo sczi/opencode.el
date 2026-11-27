@@ -55,19 +55,24 @@ provider is shown, then a prompt."
   "Connecting from a directory the server hasn't loaded waits for its config.
 The server answers with whatever's loaded so far, so until it's loaded the
 config's models and default agent would be missing.  Sessions can't be
-opened until they're fetched."
+opened until they're fetched.
+
+They're fetched with the `default-directory' connecting was started with,
+also after it's no longer bound, as API callbacks run with the
+`default-directory' of their request."
   (opencode-test-with-server
-    (let ((default-directory (opencode-test-make-project
-                              '((".opencode/opencode.json"
-                                 . "{\"default_agent\": \"plan\"}\n"))))
+    (let ((project (opencode-test-make-project
+                    '((".opencode/opencode.json"
+                       . "{\"default_agent\": \"plan\"}\n"))))
           connected)
       (opencode--disconnect opencode-test--connection)
-      (opencode--connect opencode-test--connection (lambda () (setq connected t)))
-      (should-error (opencode-new-session) :type 'user-error)
+      (let ((default-directory project))
+        (opencode--connect opencode-test--connection (lambda () (setq connected t)))
+        (should-error (opencode-new-session) :type 'user-error))
       (opencode-test-wait-until connected)
       (should (opencode--find-model '((providerID . "sim") (id . "sim-model"))))
       (should (equal "plan" (alist-get 'id (opencode--default-agent))))
-      (with-current-buffer (opencode-test-new-session default-directory)
+      (with-current-buffer (opencode-test-new-session project)
         (should (equal "plan" (alist-get 'id opencode-session-agent)))))))
 
 (ert-deftest opencode-integration-stats-test ()
@@ -715,9 +720,12 @@ otherwise is tested by `opencode-relocation-target-test'."
           ;; Switching to its buffer moves it back
           (setq asked nil)
           (with-current-buffer (funcall deleted-session "-switch")
+            ;; Requested from the project, as from the deleted worktree it'd fail,
+            ;; but opened with the buffer's own directory, the deleted worktree
             (let ((default-directory project))
               (opencode-api-session (opencode-session-id)
                   session
+                :restore-directory nil
                 (opencode-open-session session)))
             (opencode-test-wait-until (equal project default-directory))
             (should (string-search "no longer exists" asked)))))

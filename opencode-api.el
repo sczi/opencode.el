@@ -45,20 +45,36 @@ Shows the _tag and message of the server's JSON error body, if it has one."
         (format "error requesting %s: %s: %s" path (alist-get '_tag body) message)
       (format "error requesting %s: %s" path err))))
 
-(cl-defun opencode-api--request (method path &key (body nil body-p) raw then else)
+(defun opencode-api--in-directory (directory fn)
+  "Return a function calling FN with `default-directory' bound to DIRECTORY."
+  (lambda (&rest args)
+    (let ((default-directory directory))
+      (apply fn args))))
+
+(cl-defun opencode-api--request (method path &key (body nil body-p) raw then else
+                                        (restore-directory t))
   "Request PATH with METHOD, sending BODY encoded as JSON if given.
 Call THEN with the result in the buffer current now, unless it's been killed.
 The result's {data} envelope is removed unless RAW is non-nil.
 Call ELSE with the error message if given, in that buffer if it's still live,
 otherwise signal it.
 The request goes to the server of `opencode-current-connection', which THEN
-and ELSE run with as their current connection too."
+and ELSE run with as their current connection too.
+Unless RESTORE-DIRECTORY is nil, THEN and ELSE run with `default-directory'
+bound to what it is now.  Pass nil when they set the buffer's own
+`default-directory', which the binding would undo."
   (let* ((buffer (current-buffer))
          (connection (opencode--conn))
          ;; Without it the server uses its default location
          (directory (opencode--to-server-path default-directory connection))
-         (then (and then (opencode--in-command-context then)))
-         (else (and else (opencode--in-command-context else))))
+         (wrap (lambda (fn)
+                 (when fn
+                   (let ((fn (opencode--in-command-context fn)))
+                     (if restore-directory
+                         (opencode-api--in-directory default-directory fn)
+                       fn)))))
+         (then (funcall wrap then))
+         (else (funcall wrap else)))
     (opencode-api--log "REQUEST" path)
     (when body-p
       (opencode-api--log "REQUEST BODY" body))
@@ -161,22 +177,28 @@ and archived ones only if INCLUDE-ARCHIVED is non-nil."
 (eval-and-compile
   (defun opencode-api--expand (method path args data return-var body)
     "Return a request with METHOD for PATH formatted with ARGS, sending DATA.
-BODY is run with the result bound to RETURN-VAR.  If BODY starts with
-:else HANDLER, HANDLER is called with the error message on failure."
-    (let ((else (when (eq (car body) :else)
-                  (prog1 (cadr body) (setq body (cddr body))))))
+BODY is run with the result bound to RETURN-VAR.  BODY may start with
+keyword options: :else HANDLER, to call HANDLER with the error message on
+failure, and :restore-directory nil, to not bind `default-directory' in
+BODY and HANDLER to what it was when the request was made."
+    (let (options)
+      (while (keywordp (car body))
+        (unless (memq (car body) '(:else :restore-directory))
+          (error "Unknown opencode api option %s" (car body)))
+        (setq options (append options (list (car body) (cadr body)))
+              body (cddr body)))
       `(opencode-api--request
         ',method ,(if args `(format ,path ,@args) path)
         ,@(when data `(:body ,data))
         :then (lambda (,return-var) ,@body)
-        ,@(when else `(:else ,else))))))
+        ,@options))))
 
 (defmacro opencode-api--define-wrappers (&rest endpoints)
   "Define a macro for each of ENDPOINTS, which are ([METHOD] [nodata] NAME PATH).
 METHOD defaults to get.  The macro opencode-api-NAME takes the ARGS to format
 PATH with if it has any, the DATA to send if it's a post or patch that isn't
 nodata, then a variable to bind the result to and a body to run.  The body
-may start with :else HANDLER to handle errors."
+may start with the options of `opencode-api--expand'."
   `(progn
      ,@(mapcar
         (lambda (endpoint)
@@ -270,20 +292,29 @@ handle errors."
     `(opencode-api--fetch-all-messages
       ,@args (lambda (,return-var) ,@body) ,@(when else (list else)))))
 
-(defun opencode-api--cached-location (then)
+(defun opencode-api--cached-location (then &optional directory)
   "Call THEN with the location of `default-directory'.
 Only the first call for a directory requests it from the server, which also
-caches it until `opencode-reload-locations'."
-  (let ((directory (directory-file-name (expand-file-name default-directory)))
-        (connection (opencode--conn)))
+caches it until `opencode-reload-locations'.  With DIRECTORY, look up its
+location instead, and run THEN with the caller's own `default-directory',
+so THEN may set it."
+  (let* ((given directory)
+         (directory (directory-file-name (expand-file-name
+                                          (or directory default-directory))))
+         (connection (opencode--conn)))
     (if-let* ((location (alist-get directory (opencode-connection-locations connection)
                                    nil nil #'equal)))
         (funcall then location)
-      (opencode-api-location location
-        (setf (alist-get directory (opencode-connection-locations connection)
-                         nil nil #'equal)
-              location)
-        (funcall then location)))))
+      ;; Bound only while sending the request, as the response comes later
+      (let ((default-directory (if given
+                                   (file-name-as-directory directory)
+                                 default-directory)))
+        (opencode-api-location location
+          :restore-directory (not given)
+          (setf (alist-get directory (opencode-connection-locations connection)
+                           nil nil #'equal)
+                location)
+          (funcall then location))))))
 
 (provide 'opencode-api)
 ;;; opencode-api.el ends here

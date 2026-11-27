@@ -1141,27 +1141,26 @@ session, in the buffer current now."
   (let ((default-directory (expand-file-name "~/")))
     (opencode-api-session (session-id)
         session
-      (let ((default-directory (expand-file-name "~/")))
-        (opencode-api-projects projects
-          (let-alist session
-            (let ((missing (opencode--from-server-path .location.directory))
-                  (target (opencode--relocation-target session projects)))
-              (unless target
-                (user-error "This session's directory %s no longer exists, nor does its project's"
-                            (abbreviate-file-name missing)))
-              (unless (y-or-n-p (format "This session's directory %s no longer exists, move it to %s? "
-                                        (abbreviate-file-name missing)
-                                        (abbreviate-file-name target)))
-                (user-error "Session not moved, its directory %s no longer exists"
-                            (abbreviate-file-name missing)))
-              (let ((default-directory target))
-                (opencode-api-move-session (session-id)
-                    `((directory . ,(directory-file-name (opencode--to-server-path target))))
-                    _result
-                  (let ((default-directory target))
-                    (opencode-api-session (session-id)
-                        moved
-                      (funcall then moved))))))))))))
+      (opencode-api-projects projects
+        (let-alist session
+          (let ((missing (opencode--from-server-path .location.directory))
+                (target (opencode--relocation-target session projects)))
+            (unless target
+              (user-error "This session's directory %s no longer exists, nor does its project's"
+                          (abbreviate-file-name missing)))
+            (unless (y-or-n-p (format "This session's directory %s no longer exists, move it to %s? "
+                                      (abbreviate-file-name missing)
+                                      (abbreviate-file-name target)))
+              (user-error "Session not moved, its directory %s no longer exists"
+                          (abbreviate-file-name missing)))
+            (let ((default-directory target))
+              (opencode-api-move-session (session-id)
+                  `((directory . ,(directory-file-name (opencode--to-server-path target))))
+                  _result
+                (opencode-api-session (session-id)
+                    moved
+                  :restore-directory nil
+                  (funcall then moved))))))))))
 
 (defun opencode--relocate-session-buffer (then)
   "Offer to move the current buffer's session, if its directory no longer exists.

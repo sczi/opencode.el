@@ -43,7 +43,9 @@ finish or error before any API call.
 a real server (below).  Don't mock the API, or hand-write events or responses to
 fake a server; those test against our guess of the protocol, not the real one.
 
-If a unit test needs a fake server to work, make it an integration test.
+If a unit test needs a fake server to work, make it an integration test. When
+possible, prefer unit tests, or modifying an existing integration test, instead
+of creating a new integration test.
 
 ### Tests against a real server
 

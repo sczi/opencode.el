@@ -343,14 +343,11 @@ DEADLINE, a `float-time', which defaults to 5 seconds from now.  CALLBACK
 runs with the same `default-directory'."
   (let* ((deadline (or deadline (+ (float-time) 5)))
          (connection (opencode--conn))
-         (directory default-directory)
-         (done (lambda ()
-                 (let ((default-directory directory))
-                   (funcall callback)))))
+         (directory default-directory))
     (opencode-api-plugins plugins
-      :else (lambda (_error) (funcall done))
+      :else (lambda (_error) (funcall callback))
       (if (or plugins (> (float-time) deadline))
-          (funcall done)
+          (funcall callback)
         (run-at-time 0.025 nil
                      (lambda ()
                        (let ((opencode--dispatching-connection connection)
@@ -360,32 +357,27 @@ runs with the same `default-directory'."
 (defun opencode--fetch-models (callback)
   "Fetch enabled models and the default model from server, for `default-directory'.
 Run CALLBACK once fetched, with the same `default-directory'."
-  (let ((directory default-directory))
-    (opencode-api-models models
-      (opencode--set-models (opencode--conn)
-                            (seq-remove (lambda (model)
-                                          (opencode--json-falsy (alist-get 'enabled model)))
-                                        models))
-      (let ((default-directory directory))
-        (opencode-api-default-model default
-          (unless (opencode--find-model opencode-last-model)
-            (setq opencode-last-model
-                  (unless (opencode--json-falsy default)
-                    (opencode--model-ref default))))
-          (let ((default-directory directory))
-            (funcall callback)))))))
+  (opencode-api-models models
+    (opencode--set-models (opencode--conn)
+                          (seq-remove (lambda (model)
+                                        (opencode--json-falsy (alist-get 'enabled model)))
+                                      models))
+    (opencode-api-default-model default
+      (unless (opencode--find-model opencode-last-model)
+        (setq opencode-last-model
+              (unless (opencode--json-falsy default)
+                (opencode--model-ref default))))
+      (funcall callback))))
 
 (defun opencode--fetch-agents (callback)
   "Fetch available agents from server for `default-directory', excluding hidden ones.
 Run CALLBACK once fetched, with the same `default-directory'."
-  (let ((directory default-directory))
-    (opencode-api-agents agents
-      (setf (opencode-connection-agents (opencode--conn))
-            (seq-filter (lambda (agent)
-                          (opencode--json-falsy (alist-get 'hidden agent)))
-                        agents))
-      (let ((default-directory directory))
-        (funcall callback)))))
+  (opencode-api-agents agents
+    (setf (opencode-connection-agents (opencode--conn))
+          (seq-filter (lambda (agent)
+                        (opencode--json-falsy (alist-get 'hidden agent)))
+                      agents))
+    (funcall callback)))
 
 ;;; Connection commands
 

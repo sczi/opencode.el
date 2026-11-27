@@ -1533,6 +1533,11 @@ mode line."
             (should (eq (car buffers) (cadr buffers)))
             (should (equal "/src/repo/"
                            (buffer-local-value 'default-directory (car buffers))))
+            ;; From its own buffer, with the location cached, it's still moved.
+            (with-current-buffer (car buffers)
+              (opencode-open-project "/src/worktree/"))
+            (should (equal "/src/worktree/"
+                           (buffer-local-value 'default-directory (car buffers))))
             ;; Same name, different project: it shows the one last opened.
             (opencode-open-project "/other/repo/")
             (should (eq (car buffers) (cadr buffers)))

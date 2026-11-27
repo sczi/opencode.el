@@ -746,9 +746,7 @@ The server decides the project: the git repository containing DIRECTORY, or
 DIRECTORY itself outside git.  Worktrees of a project share one buffer, and
 new sessions started from it go in the root of the worktree it was last
 opened for.  It's on the current connection's server."
-  (let* ((directory (file-name-as-directory directory))
-         (default-directory directory)
-         (connection (opencode--conn)))
+  (let ((connection (opencode--conn)))
     (opencode-api--cached-location
      (lambda (location)
        (let-alist location
@@ -770,7 +768,9 @@ opened for.  It's on the current connection's server."
                  opencode--project-root default-directory
                  opencode-session-control-project-id .project.id)
            (opencode-sessions-redisplay)
-           (opencode--switch-to-buffer (current-buffer))))))))
+           (opencode--switch-to-buffer (current-buffer)))))
+     ;; Not bound to DIRECTORY, so the buffer's own can be set if it's current
+     directory)))
 
 (defun opencode--read-project ()
   "Read a project of the current connection's server and open it."

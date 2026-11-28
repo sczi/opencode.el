@@ -293,19 +293,21 @@ so it can be inspected when tests fail."
     script))
 
 (defun opencode-uv-pytest (_files done)
-  "Run pytest with uv, then call DONE with any diagnostics."
-  (opencode-run-command-diagnostic
-   '("uv" "run" "python3" "-m" "pytest")
-   done))
+  "Run pytest with uv from the project root, then call DONE with any diagnostics."
+  (let ((default-directory (opencode--project-root)))
+    (opencode-run-command-diagnostic
+     '("uv" "run" "python3" "-m" "pytest")
+     done)))
 
 (defun opencode-emacs-ert (_files done)
-  "Run ERT, then call DONE with any diagnostics.
+  "Run ERT from the project root, then call DONE with any diagnostics.
 It isn't run in remote sessions, as it runs this Emacs."
-  (if (file-remote-p default-directory)
-      (funcall done)
-    (opencode-run-command-diagnostic
-     (list (opencode--emacs-ert-script))
-     done)))
+  (let ((default-directory (opencode--project-root)))
+    (if (file-remote-p default-directory)
+        (funcall done)
+      (opencode-run-command-diagnostic
+       (list (opencode--emacs-ert-script))
+       done))))
 
 (defun opencode--reload-elisp-file (file &optional _ranges)
   "Reload elisp FILE after LLM edits.
